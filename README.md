@@ -4007,3 +4007,37 @@ flowchart LR
 ```
 
 **First audit findings (2026-10-13):** **Guest** (VLAN 3) and **No Trust** (VLAN 2) have network isolation **off**, and Guest has mDNS forwarding on. Threat Watch's first pull showed `192.168.1.2` (nova-core) hitting ETPRO SCAN signatures on outbound port 5900 to Cloudflare and GitHub addresses on 10-11; the gateway blocked them as low risk.
+
+## Grafana: 56 Dashboards Folded into 9 Pages (2026-10-13)
+
+Jordan prefers larger pages with more graphs over more pages with fewer, so `scripts/nova_grafana_consolidate.py` now builds **9 pages** from the 56 dashboards:
+
+- Fleet & Platform (home page)
+- Home
+- Energy & Power
+- Network
+- Radio, Airspace & Bluetooth
+- Security
+- Data & Storage
+- Nova — Mind
+- Nova — Work
+
+Each former dashboard is an expanded section, and a link bar along the top jumps between pages. The originals are saved in `grafana/sources/` (18 had existed only in Grafana's database), so the repo now holds every dashboard.
+
+- **Merge rules:** identical queries appear once per page; clashing template variables are renamed per section.
+- **Fixed:** the two Smart Plugs "Rack cost" panels, whose SQL had lost its quotes.
+- **Retired:** *Home Scenes Activity* (empty for 30 days).
+
+`nova_grafana_coverage.py` now writes to `grafana/sources/`. `nova_cluster_render` renders the Nova Cluster section at the top of `nova-fleet`, and `nova_dashboard_look` inspects the pages themselves (the renderer caps at 3000 px).
+
+```mermaid
+flowchart LR
+    gen["nova_grafana_coverage.py"] --> src[("grafana/sources/<br/>56 dashboards")]
+    ui["snapshot of UI-only dashboards"] --> src
+    src --> con["nova_grafana_consolidate.py<br/>PAGES · dedupe · var renames"]
+    con --> pages[("grafana/dashboards/<br/>9 pages")]
+    pages -->|install -m 644| graf["Grafana on nova-core<br/>home = nova-fleet"]
+    graf --> look["nova_dashboard_look<br/>(vision check)"]
+    graf --> tv["nova_cluster_render<br/>(Apple TV PNG)"]
+```
+

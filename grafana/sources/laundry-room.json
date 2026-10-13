@@ -1,0 +1,351 @@
+{
+ "panels": [
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 18,
+      "lineWidth": 2,
+      "showPoints": "never"
+     },
+     "unit": "watt"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 0
+   },
+   "id": 1,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max",
+      "mean"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, watts AS value, device_name AS metric FROM telemetry.energy WHERE $__timeFilter(ts) AND device_name IN ('laundry_washer','laundry_dryer') ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Washer & Dryer \u2014 Power Draw (W)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 18,
+      "lineWidth": 2,
+      "showPoints": "never"
+     },
+     "unit": "watt"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 12,
+    "x": 0,
+    "y": 9
+   },
+   "id": 2,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max",
+      "mean"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, watts AS value, device_name AS metric FROM telemetry.energy WHERE $__timeFilter(ts) AND device_name IN ('laundry_cam_1','laundry_cam_2') ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Laundry Cameras \u2014 Power (W)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "blue",
+      "mode": "fixed"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "blue",
+        "value": null
+       }
+      ]
+     },
+     "unit": "watt"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 12,
+    "y": 9
+   },
+   "id": 3,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "value_and_name"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, watts AS value FROM telemetry.energy WHERE device_name='laundry_washer' ORDER BY ts DESC LIMIT 200",
+     "refId": "A"
+    }
+   ],
+   "title": "Washer",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "orange",
+      "mode": "fixed"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "orange",
+        "value": null
+       }
+      ]
+     },
+     "unit": "watt"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 18,
+    "y": 9
+   },
+   "id": 4,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "value_and_name"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, watts AS value FROM telemetry.energy WHERE device_name='laundry_dryer' ORDER BY ts DESC LIMIT 200",
+     "refId": "A"
+    }
+   ],
+   "title": "Dryer",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "green",
+      "mode": "fixed"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "watt"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 3,
+    "w": 6,
+    "x": 12,
+    "y": 13
+   },
+   "id": 5,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "value_and_name"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, watts AS value FROM telemetry.energy WHERE device_name='laundry_cam_1' ORDER BY ts DESC LIMIT 200",
+     "refId": "A"
+    }
+   ],
+   "title": "Cam 1",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "green",
+      "mode": "fixed"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "watt"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 3,
+    "w": 6,
+    "x": 18,
+    "y": 13
+   },
+   "id": 6,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "value_and_name"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, watts AS value FROM telemetry.energy WHERE device_name='laundry_cam_2' ORDER BY ts DESC LIMIT 200",
+     "refId": "A"
+    }
+   ],
+   "title": "Cam 2",
+   "type": "stat"
+  }
+ ],
+ "refresh": "30s",
+ "schemaVersion": 39,
+ "tags": [
+  "energy",
+  "laundry",
+  "zigbee"
+ ],
+ "time": {
+  "from": "now-3h",
+  "to": "now"
+ },
+ "timezone": "browser",
+ "title": "Laundry Room \u2014 Power",
+ "uid": "laundry-room",
+ "_folder": "General"
+}

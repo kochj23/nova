@@ -1,0 +1,4071 @@
+{
+ "uid": "nova-data",
+ "title": "Data & Storage",
+ "tags": [
+  "nova",
+  "nova-page"
+ ],
+ "timezone": "browser",
+ "schemaVersion": 39,
+ "editable": true,
+ "graphTooltip": 1,
+ "time": {
+  "from": "now-7d",
+  "to": "now"
+ },
+ "refresh": "5m",
+ "templating": {
+  "list": [
+   {
+    "current": {
+     "text": "nova_ops",
+     "value": "nova-ops-pg"
+    },
+    "hide": 0,
+    "label": "Datasource",
+    "name": "datasource",
+    "query": "grafana-postgresql-datasource",
+    "refresh": 1,
+    "type": "datasource"
+   }
+  ]
+ },
+ "panels": [
+  {
+   "type": "row",
+   "title": "Data Platform Health",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 24,
+    "h": 1
+   },
+   "id": 1
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 1000
+       },
+       {
+        "color": "red",
+        "value": 5000
+       }
+      ]
+     },
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 0,
+    "y": 1
+   },
+   "id": 2,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT MAX(replay_lag_ms) AS value FROM telemetry.replication_health WHERE ts >= (SELECT MAX(ts) - INTERVAL '5 minutes' FROM telemetry.replication_health)",
+     "refId": "A"
+    }
+   ],
+   "title": "Max replica lag (ms)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "green",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 6,
+    "y": 1
+   },
+   "id": 3,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT COUNT(*) AS value FROM telemetry.replication_health WHERE state='streaming' AND ts >= (SELECT MAX(ts) - INTERVAL '5 minutes' FROM telemetry.replication_health)",
+     "refId": "A"
+    }
+   ],
+   "title": "Replicas streaming",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 7
+       },
+       {
+        "color": "green",
+        "value": 30
+       }
+      ]
+     },
+     "unit": "d"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 12,
+    "y": 1
+   },
+   "id": 4,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT MIN(days_until_full) AS value FROM telemetry.disk_forecast WHERE ts >= (SELECT MAX(ts) - INTERVAL '5 minutes' FROM telemetry.disk_forecast)",
+     "refId": "A"
+    }
+   ],
+   "title": "Soonest disk full (days)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 14
+       },
+       {
+        "color": "green",
+        "value": 30
+       }
+      ]
+     },
+     "unit": "d"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 18,
+    "y": 1
+   },
+   "id": 5,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT MIN(days_until_expiry) AS value FROM telemetry.cert_expiry WHERE ts >= (SELECT MAX(ts) - INTERVAL '5 minutes' FROM telemetry.cert_expiry)",
+     "refId": "A"
+    }
+   ],
+   "title": "Soonest cert expiry (days)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 15,
+      "spanNulls": true
+     },
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 6
+   },
+   "id": 6,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, replay_lag_ms AS value, application_name AS metric FROM telemetry.replication_health WHERE $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Replication lag (ms)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 15
+   },
+   "id": 7,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT application_name, client_addr, state, sync_state, replay_lag_ms FROM telemetry.replication_health WHERE ts >= (SELECT MAX(ts) - INTERVAL '5 minutes' FROM telemetry.replication_health) ORDER BY replay_lag_ms DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Replica status",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 23
+   },
+   "id": 8,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT host, volume, ROUND(used_pct::numeric, 1) AS \"Used %\", ROUND(days_until_full::numeric, 1) AS \"Days to full\" FROM telemetry.disk_forecast WHERE ts >= (SELECT MAX(ts) - INTERVAL '5 minutes' FROM telemetry.disk_forecast) ORDER BY days_until_full ASC LIMIT 30",
+     "refId": "A"
+    }
+   ],
+   "title": "Disk fill forecast",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Days left"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-background"
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "red",
+           "value": null
+          },
+          {
+           "color": "yellow",
+           "value": 14
+          },
+          {
+           "color": "green",
+           "value": 30
+          }
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 23
+   },
+   "id": 9,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT endpoint, host, days_until_expiry AS \"Days left\" FROM telemetry.cert_expiry WHERE ts >= (SELECT MAX(ts) - INTERVAL '5 minutes' FROM telemetry.cert_expiry) ORDER BY days_until_expiry ASC",
+     "refId": "A"
+    }
+   ],
+   "title": "TLS cert expiry",
+   "type": "table"
+  },
+  {
+   "type": "row",
+   "title": "PostgreSQL - nova_ops cluster",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 32,
+    "w": 24,
+    "h": 1
+   },
+   "id": 10
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 33
+   },
+   "id": 11,
+   "panels": [],
+   "title": "Overview",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Time since the primary's postmaster started.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 0,
+    "y": 34
+   },
+   "id": 12,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT extract(epoch FROM now()-pg_postmaster_start_time())::bigint AS uptime",
+     "refId": "A"
+    }
+   ],
+   "title": "Uptime",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Current backends vs max_connections (100).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "max": 100,
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 70
+       },
+       {
+        "color": "red",
+        "value": 90
+       }
+      ]
+     },
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 4,
+    "y": 34
+   },
+   "id": 13,
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "showThresholdMarkers": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT count(*) AS conns FROM pg_stat_activity",
+     "refId": "A"
+    }
+   ],
+   "title": "Connections / max",
+   "type": "gauge"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "shared-buffer hit ratio across all databases. <99% amber, <90% red.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "max": 100,
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 90
+       },
+       {
+        "color": "green",
+        "value": 99
+       }
+      ]
+     },
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 8,
+    "y": 34
+   },
+   "id": 14,
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "showThresholdMarkers": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT round(100.0*sum(blks_hit)/nullif(sum(blks_hit+blks_read),0),2) AS cache_hit FROM pg_stat_database",
+     "refId": "A"
+    }
+   ],
+   "title": "Cache hit ratio",
+   "type": "gauge"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Number of replicas in 'streaming' state (expect 3: .2/.7/.10).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 1
+       },
+       {
+        "color": "green",
+        "value": 3
+       }
+      ]
+     },
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 12,
+    "y": 34
+   },
+   "id": 15,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT count(*) AS replicas FROM pg_stat_replication WHERE state='streaming'",
+     "refId": "A"
+    }
+   ],
+   "title": "Replicas streaming",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Sessions currently blocked waiting on a lock.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 1
+       },
+       {
+        "color": "red",
+        "value": 5
+       }
+      ]
+     },
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 16,
+    "y": 34
+   },
+   "id": 16,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT count(*) AS blocked FROM pg_stat_activity WHERE wait_event_type='Lock'",
+     "refId": "A"
+    }
+   ],
+   "title": "Blocked (waiting on lock)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Cumulative deadlocks since server start.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 20,
+    "y": 34
+   },
+   "id": 17,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT sum(deadlocks) AS deadlocks FROM pg_stat_database",
+     "refId": "A"
+    }
+   ],
+   "title": "Deadlocks (total)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Backend counts by state from pg_stat_activity.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 70
+       },
+       {
+        "color": "red",
+        "value": 90
+       }
+      ]
+     },
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 12,
+    "x": 0,
+    "y": 38
+   },
+   "id": 18,
+   "options": {
+    "displayMode": "gradient",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "showUnfilled": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT\n  count(*) FILTER (WHERE state='active') AS \"active\",\n  count(*) FILTER (WHERE state='idle') AS \"idle\",\n  count(*) FILTER (WHERE state='idle in transaction') AS \"idle in transaction\",\n  count(*) FILTER (WHERE state='idle in transaction (aborted)') AS \"idle in txn (aborted)\",\n  count(*) AS \"total\"\nFROM pg_stat_activity",
+     "refId": "A"
+    }
+   ],
+   "title": "Connections by state",
+   "type": "bargauge"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "On-disk size per database (pg_database_size).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "decbytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 12,
+    "x": 12,
+    "y": 38
+   },
+   "id": 19,
+   "options": {
+    "displayMode": "gradient",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "/^bytes$/",
+     "values": false
+    },
+    "showUnfilled": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT datname, pg_database_size(datname) AS bytes FROM pg_database WHERE datistemplate=false ORDER BY bytes DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Database sizes",
+   "type": "bargauge"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 43
+   },
+   "id": 20,
+   "panels": [],
+   "title": "Throughput  (live rate - per-interval deltas)",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Live commits / rollbacks / deadlocks per second, per-interval delta of pg_stat_database summed across DBs (telemetry.pg_stat_db, nova_pg_stat_poller).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "lineWidth": 2,
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "ops"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 0,
+    "y": 44
+   },
+   "id": 21,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max",
+      "mean"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawSql": "WITH d AS (\n  SELECT ts, datname,\n    (xact_commit - lag(xact_commit) OVER w) AS d_xact_commit,\n    (xact_rollback - lag(xact_rollback) OVER w) AS d_xact_rollback,\n    (deadlocks - lag(deadlocks) OVER w) AS d_deadlocks,\n    extract(epoch FROM ts - lag(ts) OVER w) AS secs\n  FROM telemetry.pg_stat_db\n  WHERE $__timeFilter(ts)\n  WINDOW w AS (PARTITION BY datname ORDER BY ts)\n)\nSELECT ts AS time, 'commits/s' AS metric, sum(d_xact_commit/secs) AS value\nFROM d WHERE secs > 0 AND d_xact_commit >= 0 GROUP BY ts\nUNION ALL\nSELECT ts AS time, 'rollbacks/s' AS metric, sum(d_xact_rollback/secs) AS value\nFROM d WHERE secs > 0 AND d_xact_rollback >= 0 GROUP BY ts\nUNION ALL\nSELECT ts AS time, 'deadlocks/s' AS metric, sum(d_deadlocks/secs) AS value\nFROM d WHERE secs > 0 AND d_deadlocks >= 0 GROUP BY ts\nORDER BY time",
+     "refId": "A"
+    }
+   ],
+   "title": "Transaction rate",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Live rows inserted / updated / deleted per second (per-interval delta, summed across DBs).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "lineWidth": 2,
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "ops"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 8,
+    "y": 44
+   },
+   "id": 22,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max",
+      "mean"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawSql": "WITH d AS (\n  SELECT ts, datname,\n    (tup_inserted - lag(tup_inserted) OVER w) AS d_tup_inserted,\n    (tup_updated - lag(tup_updated) OVER w) AS d_tup_updated,\n    (tup_deleted - lag(tup_deleted) OVER w) AS d_tup_deleted,\n    extract(epoch FROM ts - lag(ts) OVER w) AS secs\n  FROM telemetry.pg_stat_db\n  WHERE $__timeFilter(ts)\n  WINDOW w AS (PARTITION BY datname ORDER BY ts)\n)\nSELECT ts AS time, 'inserted/s' AS metric, sum(d_tup_inserted/secs) AS value\nFROM d WHERE secs > 0 AND d_tup_inserted >= 0 GROUP BY ts\nUNION ALL\nSELECT ts AS time, 'updated/s' AS metric, sum(d_tup_updated/secs) AS value\nFROM d WHERE secs > 0 AND d_tup_updated >= 0 GROUP BY ts\nUNION ALL\nSELECT ts AS time, 'deleted/s' AS metric, sum(d_tup_deleted/secs) AS value\nFROM d WHERE secs > 0 AND d_tup_deleted >= 0 GROUP BY ts\nORDER BY time",
+     "refId": "A"
+    }
+   ],
+   "title": "Tuple write rate",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Live rows returned (scanned) / fetched per second (per-interval delta, summed across DBs).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "lineWidth": 2,
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "ops"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 16,
+    "y": 44
+   },
+   "id": 23,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max",
+      "mean"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawSql": "WITH d AS (\n  SELECT ts, datname,\n    (tup_returned - lag(tup_returned) OVER w) AS d_tup_returned,\n    (tup_fetched - lag(tup_fetched) OVER w) AS d_tup_fetched,\n    extract(epoch FROM ts - lag(ts) OVER w) AS secs\n  FROM telemetry.pg_stat_db\n  WHERE $__timeFilter(ts)\n  WINDOW w AS (PARTITION BY datname ORDER BY ts)\n)\nSELECT ts AS time, 'returned/s' AS metric, sum(d_tup_returned/secs) AS value\nFROM d WHERE secs > 0 AND d_tup_returned >= 0 GROUP BY ts\nUNION ALL\nSELECT ts AS time, 'fetched/s' AS metric, sum(d_tup_fetched/secs) AS value\nFROM d WHERE secs > 0 AND d_tup_fetched >= 0 GROUP BY ts\nORDER BY time",
+     "refId": "A"
+    }
+   ],
+   "title": "Tuple read rate",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Live buffer cache hits / disk block reads per second (per-interval delta, summed across DBs).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "lineWidth": 2,
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "ops"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 8,
+    "x": 0,
+    "y": 51
+   },
+   "id": 24,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max",
+      "mean"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawSql": "WITH d AS (\n  SELECT ts, datname,\n    (blks_hit - lag(blks_hit) OVER w) AS d_blks_hit,\n    (blks_read - lag(blks_read) OVER w) AS d_blks_read,\n    extract(epoch FROM ts - lag(ts) OVER w) AS secs\n  FROM telemetry.pg_stat_db\n  WHERE $__timeFilter(ts)\n  WINDOW w AS (PARTITION BY datname ORDER BY ts)\n)\nSELECT ts AS time, 'cache hits/s' AS metric, sum(d_blks_hit/secs) AS value\nFROM d WHERE secs > 0 AND d_blks_hit >= 0 GROUP BY ts\nUNION ALL\nSELECT ts AS time, 'disk reads/s' AS metric, sum(d_blks_read/secs) AS value\nFROM d WHERE secs > 0 AND d_blks_read >= 0 GROUP BY ts\nORDER BY time",
+     "refId": "A"
+    }
+   ],
+   "title": "Disk block rate",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Live temp files created per second (per-interval delta) \u2014 sustained > 0 means work_mem spills.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "lineWidth": 2,
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "ops"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 8,
+    "x": 8,
+    "y": 51
+   },
+   "id": 25,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max",
+      "mean"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawSql": "WITH d AS (\n  SELECT ts, datname,\n    (temp_files - lag(temp_files) OVER w) AS d_temp_files,\n    extract(epoch FROM ts - lag(ts) OVER w) AS secs\n  FROM telemetry.pg_stat_db\n  WHERE $__timeFilter(ts)\n  WINDOW w AS (PARTITION BY datname ORDER BY ts)\n)\nSELECT ts AS time, 'temp files/s' AS metric, sum(d_temp_files/secs) AS value\nFROM d WHERE secs > 0 AND d_temp_files >= 0 GROUP BY ts\nORDER BY time",
+     "refId": "A"
+    }
+   ],
+   "title": "Temp file rate",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Live temp bytes written per second (per-interval delta, summed across DBs).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "lineWidth": 2,
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "Bps"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 8,
+    "x": 16,
+    "y": 51
+   },
+   "id": 26,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max",
+      "mean"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawSql": "WITH d AS (\n  SELECT ts, datname,\n    (temp_bytes - lag(temp_bytes) OVER w) AS d_temp_bytes,\n    extract(epoch FROM ts - lag(ts) OVER w) AS secs\n  FROM telemetry.pg_stat_db\n  WHERE $__timeFilter(ts)\n  WINDOW w AS (PARTITION BY datname ORDER BY ts)\n)\nSELECT ts AS time, 'temp bytes/s' AS metric, sum(d_temp_bytes/secs) AS value\nFROM d WHERE secs > 0 AND d_temp_bytes >= 0 GROUP BY ts\nORDER BY time",
+     "refId": "A"
+    }
+   ],
+   "title": "Temp bytes rate",
+   "type": "timeseries"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 55
+   },
+   "id": 27,
+   "panels": [],
+   "title": "Replication",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "One row per connected replica from pg_stat_replication. Lag shown in WAL bytes behind primary.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "align": "auto",
+      "cellOptions": {
+       "type": "auto"
+      }
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "sent lag"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "decbytes"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "write lag"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "decbytes"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "flush lag"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "decbytes"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "replay lag"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "decbytes"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "state"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-background"
+        }
+       },
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "options": {
+           "streaming": {
+            "color": "green",
+            "index": 0
+           }
+          },
+          "type": "value"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "sync"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-background"
+        }
+       },
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "options": {
+           "async": {
+            "color": "blue",
+            "index": 2
+           },
+           "quorum": {
+            "color": "green",
+            "index": 1
+           },
+           "sync": {
+            "color": "green",
+            "index": 0
+           }
+          },
+          "type": "value"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 14,
+    "x": 0,
+    "y": 56
+   },
+   "id": 28,
+   "options": {
+    "cellHeight": "sm",
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT\n  client_addr AS \"replica\",\n  application_name AS \"app\",\n  state,\n  sync_state AS \"sync\",\n  pg_wal_lsn_diff(pg_current_wal_lsn(), sent_lsn)   AS \"sent lag\",\n  pg_wal_lsn_diff(pg_current_wal_lsn(), write_lsn)  AS \"write lag\",\n  pg_wal_lsn_diff(pg_current_wal_lsn(), flush_lsn)  AS \"flush lag\",\n  pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn) AS \"replay lag\"\nFROM pg_stat_replication ORDER BY client_addr",
+     "refId": "A"
+    }
+   ],
+   "title": "Replicas - live state",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Replay lag in WAL bytes per replica. Amber >1MB, red >64MB.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 1048576
+       },
+       {
+        "color": "red",
+        "value": 67108864
+       }
+      ]
+     },
+     "unit": "decbytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 10,
+    "x": 14,
+    "y": 56
+   },
+   "id": 29,
+   "options": {
+    "displayMode": "gradient",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "/^bytes$/",
+     "values": false
+    },
+    "showUnfilled": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT client_addr AS replica,\n  greatest(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn),0) AS bytes\nFROM pg_stat_replication ORDER BY client_addr",
+     "refId": "A"
+    }
+   ],
+   "title": "Replay lag (bytes) per replica",
+   "type": "bargauge"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Historical replay lag (ms) per replica, sampled by nova_replication_monitor into telemetry.replication_health.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "custom": {
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "lineWidth": 2,
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 64
+   },
+   "id": 30,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max",
+      "mean"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, replay_lag_ms AS value, client_addr AS metric\nFROM telemetry.replication_health\nWHERE $__timeFilter(ts)\nORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Replication replay lag (ms) - history",
+   "type": "timeseries"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 72
+   },
+   "id": 31,
+   "panels": [],
+   "title": "Activity & Locks",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Client backend queries currently active, longest first. Duration amber >60s, red >5m.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "align": "auto",
+      "cellOptions": {
+       "type": "auto"
+      }
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "duration"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "s"
+       },
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-text"
+        }
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "green",
+           "value": null
+          },
+          {
+           "color": "orange",
+           "value": 60
+          },
+          {
+           "color": "red",
+           "value": 300
+          }
+         ]
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "query"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 520
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 16,
+    "x": 0,
+    "y": 73
+   },
+   "id": 32,
+   "options": {
+    "cellHeight": "sm",
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT\n  extract(epoch FROM now()-query_start)::numeric(12,1) AS \"duration\",\n  pid, usename AS \"user\", datname AS \"db\", state,\n  wait_event_type AS \"wait\",\n  left(regexp_replace(query, '\\s+', ' ', 'g'), 120) AS \"query\"\nFROM pg_stat_activity\nWHERE state='active' AND pid<>pg_backend_pid() AND backend_type='client backend'\nORDER BY query_start ASC NULLS LAST\nLIMIT 20",
+     "refId": "A"
+    }
+   ],
+   "title": "Longest-running active queries",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Current lock count grouped by lock mode from pg_locks.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 16,
+    "y": 73
+   },
+   "id": 33,
+   "options": {
+    "displayMode": "gradient",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "/^locks$/",
+     "values": false
+    },
+    "showUnfilled": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT mode, count(*) AS locks FROM pg_locks GROUP BY mode ORDER BY count(*) DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Locks by mode",
+   "type": "bargauge"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 81
+   },
+   "id": 34,
+   "panels": [],
+   "title": "Storage",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Top tables by total on-disk size (heap + indexes + toast).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "align": "auto",
+      "cellOptions": {
+       "type": "auto"
+      }
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "total"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "decbytes"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "heap"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "decbytes"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "indexes"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "decbytes"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "total"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "mode": "gradient",
+         "type": "gauge"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 14,
+    "x": 0,
+    "y": 82
+   },
+   "id": 35,
+   "options": {
+    "cellHeight": "sm",
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT\n  schemaname||'.'||relname AS \"table\",\n  pg_total_relation_size(relid) AS \"total\",\n  pg_table_size(relid)          AS \"heap\",\n  pg_indexes_size(relid)        AS \"indexes\",\n  n_live_tup                    AS \"live rows\"\nFROM pg_stat_user_tables\nORDER BY pg_total_relation_size(relid) DESC\nLIMIT 20",
+     "refId": "A"
+    }
+   ],
+   "title": "Largest tables",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Top indexes by on-disk size.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "decbytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 10,
+    "x": 14,
+    "y": 82
+   },
+   "id": 36,
+   "options": {
+    "displayMode": "gradient",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "/^bytes$/",
+     "values": false
+    },
+    "showUnfilled": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT schemaname||'.'||indexrelname AS idx, pg_relation_size(indexrelid) AS bytes\nFROM pg_stat_user_indexes\nORDER BY pg_relation_size(indexrelid) DESC\nLIMIT 12",
+     "refId": "A"
+    }
+   ],
+   "title": "Largest indexes",
+   "type": "bargauge"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 91
+   },
+   "id": 37,
+   "panels": [],
+   "title": "Maintenance & Bloat",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Dead-tuple ratio and last (auto)vacuum/analyze per table. High dead % signals bloat / vacuum lag.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "align": "auto",
+      "cellOptions": {
+       "type": "auto"
+      }
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "dead %"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "percent"
+       },
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "mode": "gradient",
+         "type": "color-background"
+        }
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "green",
+           "value": null
+          },
+          {
+           "color": "orange",
+           "value": 10
+          },
+          {
+           "color": "red",
+           "value": 25
+          }
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 92
+   },
+   "id": 38,
+   "options": {
+    "cellHeight": "sm",
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT\n  schemaname||'.'||relname AS \"table\",\n  n_live_tup AS \"live\",\n  n_dead_tup AS \"dead\",\n  round(100.0*n_dead_tup/nullif(n_live_tup+n_dead_tup,0),1) AS \"dead %\",\n  last_vacuum AS \"last vacuum\",\n  last_autovacuum AS \"last autovacuum\",\n  last_analyze AS \"last analyze\",\n  last_autoanalyze AS \"last autoanalyze\"\nFROM pg_stat_user_tables\nWHERE n_live_tup+n_dead_tup > 0\nORDER BY n_dead_tup DESC\nLIMIT 25",
+     "refId": "A"
+    }
+   ],
+   "title": "Dead tuples & last vacuum / analyze",
+   "type": "table"
+  },
+  {
+   "type": "row",
+   "title": "Storage (UNAS)",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 101,
+    "w": 24,
+    "h": 1
+   },
+   "id": 39
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "max": 100,
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": 0
+       },
+       {
+        "color": "yellow",
+        "value": 80
+       },
+       {
+        "color": "red",
+        "value": 90
+       }
+      ]
+     },
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 0,
+    "y": 102
+   },
+   "options": {
+    "showThresholdLabels": false,
+    "showThresholdMarkers": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT used_pct AS value FROM telemetry.storage_metrics WHERE host='192.168.1.69' AND component_type='volume' AND used_pct IS NOT NULL ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Pool Used %",
+   "type": "gauge",
+   "id": 40
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 18,
+    "x": 6,
+    "y": 102
+   },
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT DISTINCT ON (component_id) component_id AS \"Disk\", component_name AS \"Model\", round(temp_c::numeric,0) AS \"Temp C\", smart_status AS \"SMART\", (extra->>'power_on_hours') AS \"Power-on h\", (extra->>'reallocated') AS \"Realloc\", ts AS \"Last seen\" FROM telemetry.storage_metrics WHERE host='192.168.1.69' AND source='unas-ssh' AND component_type='disk' AND ts>now()-interval '1 hour' ORDER BY component_id, ts DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Disk Status (latest)",
+   "type": "table",
+   "id": 41
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 15,
+      "lineInterpolation": "smooth",
+      "showPoints": "never",
+      "spanNulls": true,
+      "thresholdsStyle": {
+       "mode": "line"
+      }
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": 0
+       },
+       {
+        "color": "yellow",
+        "value": 50
+       },
+       {
+        "color": "red",
+        "value": 58
+       }
+      ]
+     },
+     "unit": "celsius"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 110
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, component_id AS metric, temp_c AS value FROM telemetry.storage_metrics WHERE host='192.168.1.69' AND source='unas-ssh' AND component_type='disk' AND temp_c IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Disk Temperatures",
+   "type": "timeseries",
+   "id": 42
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 15,
+      "lineInterpolation": "smooth",
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 110
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, 'pool' AS metric, used_pct AS value FROM telemetry.storage_metrics WHERE host='192.168.1.69' AND component_type='volume' AND used_pct IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Pool Used % over time",
+   "type": "timeseries",
+   "id": 43
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 0,
+    "y": 119
+   },
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT DISTINCT ON (component_id) component_id AS \"Array\", status AS \"State\", CASE WHEN healthy THEN 'OK' ELSE 'DEGRADED' END AS \"Health\", ts AS \"Last seen\" FROM telemetry.storage_metrics WHERE host='192.168.1.69' AND source='unas-ssh' AND component_type='raid' AND ts>now()-interval '1 hour' ORDER BY component_id, ts DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "RAID / Array Status (latest)",
+   "type": "table",
+   "id": 44
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 15,
+      "lineInterpolation": "smooth",
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 16,
+    "x": 8,
+    "y": 119
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT timestamp AS time, 'CPU used' AS metric, metric_value AS value FROM snmp_metrics WHERE device_name='unas-pro' AND metric_name='cpu_used_pct' AND $__timeFilter(timestamp) ORDER BY timestamp",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT t.timestamp AS time, 'RAM used' AS metric, CASE WHEN tot.metric_value>0 THEN 100.0*(tot.metric_value-t.metric_value)/tot.metric_value ELSE 0 END AS value FROM snmp_metrics t JOIN snmp_metrics tot ON tot.timestamp=t.timestamp AND tot.device_name=t.device_name AND tot.metric_name='mem_total_real' WHERE t.device_name='unas-pro' AND t.metric_name='mem_avail_real' AND $__timeFilter(t.timestamp) ORDER BY t.timestamp",
+     "refId": "A"
+    }
+   ],
+   "title": "CPU & Memory %",
+   "type": "timeseries",
+   "id": 45
+  },
+  {
+   "type": "row",
+   "title": "Storage SNMP (Synology)",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 126,
+    "w": 24,
+    "h": 1
+   },
+   "id": 46
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 5
+     },
+     "unit": "celsius"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 127
+   },
+   "id": 47,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT timestamp AS time, split_part(unit, '|', 2) AS metric, metric_value AS value FROM snmp_metrics WHERE metric_name LIKE 'syno_disk_temp.%' AND $__timeFilter(timestamp) ORDER BY timestamp",
+     "refId": "A"
+    }
+   ],
+   "title": "Disk Temperatures",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Status"
+      },
+      "properties": [
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "options": {
+           "1": {
+            "color": "green",
+            "text": "Normal"
+           },
+           "2": {
+            "color": "blue",
+            "text": "Initialized"
+           },
+           "3": {
+            "color": "yellow",
+            "text": "NotInit"
+           },
+           "4": {
+            "color": "red",
+            "text": "SystemPartFailed"
+           },
+           "5": {
+            "color": "red",
+            "text": "Crashed"
+           }
+          },
+          "type": "value"
+         }
+        ]
+       },
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-text"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Temp C"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "celsius"
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 127
+   },
+   "id": 48,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "WITH latest AS (SELECT metric_name, metric_value, unit, split_part(metric_name, '.', 2) AS idx, row_number() OVER (PARTITION BY metric_name ORDER BY timestamp DESC) rn FROM snmp_metrics WHERE metric_name ~ '^syno_disk_(status|temp)\\.' AND timestamp > now() - interval '20 min') SELECT split_part(MAX(unit) FILTER (WHERE metric_name LIKE 'syno_disk_status%'), '|', 2) AS \"Disk\", MAX(metric_value) FILTER (WHERE metric_name LIKE 'syno_disk_status%') AS \"Status\", MAX(metric_value) FILTER (WHERE metric_name LIKE 'syno_disk_temp%') AS \"Temp C\" FROM latest WHERE rn = 1 GROUP BY idx ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Disk Status (latest)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "max": 100,
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 75
+       },
+       {
+        "color": "red",
+        "value": 90
+       }
+      ]
+     },
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 136
+   },
+   "id": 49,
+   "options": {
+    "displayMode": "gradient",
+    "orientation": "horizontal",
+    "showUnfilled": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "WITH latest AS (SELECT metric_name, metric_value, unit, split_part(metric_name, '.', 2) AS idx, row_number() OVER (PARTITION BY metric_name ORDER BY timestamp DESC) rn FROM snmp_metrics WHERE metric_name ~ '^syno_raid_(total|free)_bytes\\.' AND timestamp > now() - interval '20 min') SELECT split_part(MAX(unit), '|', 2) AS metric, CASE WHEN MAX(metric_value) FILTER (WHERE metric_name LIKE '%total%') > 0 THEN 100.0 * (MAX(metric_value) FILTER (WHERE metric_name LIKE '%total%') - MAX(metric_value) FILTER (WHERE metric_name LIKE '%free%')) / MAX(metric_value) FILTER (WHERE metric_name LIKE '%total%') ELSE 0 END AS value FROM latest WHERE rn = 1 GROUP BY idx ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Volume / Pool Used %",
+   "type": "bargauge"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Status"
+      },
+      "properties": [
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "options": {
+           "1": {
+            "color": "green",
+            "text": "Normal"
+           },
+           "11": {
+            "color": "red",
+            "text": "Degraded"
+           },
+           "12": {
+            "color": "red",
+            "text": "Crashed"
+           },
+           "2": {
+            "color": "yellow",
+            "text": "Repairing"
+           },
+           "3": {
+            "color": "yellow",
+            "text": "Migrating"
+           }
+          },
+          "type": "value"
+         }
+        ]
+       },
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-text"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Total"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "bytes"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Free"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "bytes"
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 136
+   },
+   "id": 50,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "WITH latest AS (SELECT metric_name, metric_value, unit, split_part(metric_name, '.', 2) AS idx, row_number() OVER (PARTITION BY metric_name ORDER BY timestamp DESC) rn FROM snmp_metrics WHERE metric_name ~ '^syno_raid_(status|total_bytes|free_bytes)\\.' AND timestamp > now() - interval '20 min') SELECT split_part(MAX(unit) FILTER (WHERE metric_name LIKE 'syno_raid_status%'), '|', 2) AS \"Volume\", MAX(metric_value) FILTER (WHERE metric_name LIKE 'syno_raid_status%') AS \"Status\", MAX(metric_value) FILTER (WHERE metric_name LIKE '%total%') AS \"Total\", MAX(metric_value) FILTER (WHERE metric_name LIKE '%free%') AS \"Free\" FROM latest WHERE rn = 1 GROUP BY idx ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "RAID / Volume Status (latest)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 5
+     },
+     "max": 100,
+     "min": 0,
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 145
+   },
+   "id": 51,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT u.timestamp AS time, u.device_name || ' ' || COALESCE(d.unit, u.metric_name) AS metric, CASE WHEN s.metric_value > 0 THEN 100.0 * u.metric_value / s.metric_value ELSE 0 END AS value FROM snmp_metrics u JOIN snmp_metrics s ON s.device_name = u.device_name AND s.timestamp = u.timestamp AND s.metric_name = 'disk_storage_size.' || split_part(u.metric_name, '.', 2) LEFT JOIN snmp_metrics d ON d.device_name = u.device_name AND d.metric_name = 'disk_storage_descr.' || split_part(u.metric_name, '.', 2) AND d.timestamp = u.timestamp WHERE u.metric_name LIKE 'disk_storage_used.%' AND s.metric_value > 0 AND $__timeFilter(u.timestamp) ORDER BY u.timestamp",
+     "refId": "A"
+    }
+   ],
+   "title": "hrStorage Used % (HOST-RESOURCES, all SNMP hosts)",
+   "type": "timeseries"
+  },
+  {
+   "type": "row",
+   "title": "Nova / NAS Backup",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 154,
+    "w": 24,
+    "h": 1
+   },
+   "id": 52
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "mappings": [
+      {
+       "options": {
+        "0": {
+         "color": "green",
+         "index": 0,
+         "text": "OK"
+        }
+       },
+       "type": "value"
+      },
+      {
+       "options": {
+        "from": 1,
+        "result": {
+         "color": "red",
+         "index": 1,
+         "text": "FAILED"
+        },
+        "to": 1000000
+       },
+       "type": "range"
+      }
+     ],
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 8,
+    "x": 0,
+    "y": 155
+   },
+   "id": 53,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, rc FROM telemetry.backup_runs ORDER BY ts DESC LIMIT 1;",
+     "refId": "A"
+    }
+   ],
+   "title": "Last Run Status",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 1,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 26
+       },
+       {
+        "color": "red",
+        "value": 49
+       }
+      ]
+     },
+     "unit": "h"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 8,
+    "x": 8,
+    "y": 155
+   },
+   "id": 54,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT EXTRACT(EPOCH FROM (now() - max(ts))) / 3600.0 AS \"Hours\" FROM telemetry.backup_runs WHERE rc = 0;",
+     "refId": "A"
+    }
+   ],
+   "title": "Hours Since Last Successful Backup",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 8,
+    "x": 16,
+    "y": 155
+   },
+   "id": 55,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, errors FROM telemetry.backup_runs ORDER BY ts DESC LIMIT 1;",
+     "refId": "A"
+    }
+   ],
+   "title": "Errors (Last Run)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 40,
+      "lineWidth": 2
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 160
+   },
+   "id": 56,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, files AS \"Files\", job AS metric FROM telemetry.backup_runs WHERE $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "Files Transferred Over Time",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 40,
+      "lineWidth": 2
+     },
+     "unit": "bytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 160
+   },
+   "id": 57,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, bytes AS \"Bytes\", job AS metric FROM telemetry.backup_runs WHERE $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "Bytes Transferred Over Time",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "lineWidth": 2
+     },
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 168
+   },
+   "id": 58,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, elapsed_s AS \"Elapsed (s)\", job AS metric FROM telemetry.backup_runs WHERE $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "Run Duration Over Time",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 168
+   },
+   "id": 59,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "right",
+     "values": [
+      "value"
+     ]
+    },
+    "pieType": "donut",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT CASE WHEN rc = 0 THEN 'OK' ELSE 'Failed' END AS metric, count(*) AS value FROM telemetry.backup_runs WHERE $__timeFilter(ts) GROUP BY 1;",
+     "refId": "A"
+    }
+   ],
+   "title": "Runs by Result (window)",
+   "type": "piechart"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Bytes"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "bytes"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Elapsed"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "s"
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 176
+   },
+   "id": 60,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS \"Time\", job AS \"Job\", rc AS \"RC\", ok AS \"OK\", errors AS \"Errors\", files AS \"Files\", bytes AS \"Bytes\", elapsed_s AS \"Elapsed\" FROM telemetry.backup_runs ORDER BY ts DESC LIMIT 20;",
+     "refId": "A"
+    }
+   ],
+   "title": "Recent Runs (last ~20)",
+   "type": "table"
+  },
+  {
+   "type": "row",
+   "title": "Nova Backup \u2014 diff-sync service",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 185,
+    "w": 24,
+    "h": 1
+   },
+   "id": 61
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 1,
+     "thresholds": {
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 24
+       },
+       {
+        "color": "red",
+        "value": 36
+       }
+      ]
+     },
+     "unit": "h"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 0,
+    "y": 186
+   },
+   "id": 62,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT EXTRACT(EPOCH FROM (now()-max(ts)))/3600.0 AS \"hours\" FROM telemetry.backup_runs WHERE job LIKE 'nova-backup%' AND ok",
+     "refId": "A"
+    }
+   ],
+   "title": "Hours since last successful backup",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "green",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 8,
+    "y": 186
+   },
+   "id": 63,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(*) AS \"runs\" FROM telemetry.backup_runs WHERE job LIKE 'nova-backup%' AND ok AND ts > now()-interval '7 days'",
+     "refId": "A"
+    }
+   ],
+   "title": "Successful runs (7d)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "blue",
+      "mode": "fixed"
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 16,
+    "y": 186
+   },
+   "id": 64,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT COALESCE(sum(files),0) AS \"files\" FROM telemetry.backup_runs WHERE job LIKE 'nova-backup%' AND ts > now()-interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "Files synced (24h)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 50
+     },
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 193
+   },
+   "id": 65,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, elapsed_s AS value, job AS metric FROM telemetry.backup_runs WHERE $__timeFilter(ts) AND job LIKE 'nova-backup%' ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Run duration (s) by job",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 50
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 193
+   },
+   "id": 66,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, files AS value, job AS metric FROM telemetry.backup_runs WHERE $__timeFilter(ts) AND job LIKE 'nova-backup%' ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Files transferred per run",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 202
+   },
+   "id": 67,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT ts AS \"Time\", job AS \"Job\", rc AS \"rc\", files AS \"Files\", pg_size_pretty(bytes::bigint) AS \"Bytes\", elapsed_s AS \"Sec\", ok AS \"OK\" FROM telemetry.backup_runs WHERE job LIKE 'nova-backup%' ORDER BY ts DESC LIMIT 25",
+     "refId": "A"
+    }
+   ],
+   "title": "Recent backup runs",
+   "type": "table"
+  },
+  {
+   "type": "row",
+   "title": "NAS Deduplicator",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 211,
+    "w": 24,
+    "h": 1
+   },
+   "id": 68
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "orange",
+      "mode": "fixed"
+     },
+     "unit": "decgbytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 6,
+    "x": 0,
+    "y": 212
+   },
+   "id": 69,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT COALESCE(round(sum(size_bytes)/1e9,1),0) FROM nas_dedup_proposals WHERE status='proposed'",
+     "refId": "A"
+    }
+   ],
+   "title": "Reclaimable (GB, pending approval)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "blue",
+      "mode": "fixed"
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 6,
+    "x": 6,
+    "y": 212
+   },
+   "id": 70,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(*) FROM nas_dedup_proposals WHERE status='proposed'",
+     "refId": "A"
+    }
+   ],
+   "title": "Duplicate files proposed",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 6,
+    "x": 12,
+    "y": 212
+   },
+   "id": 71,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(*) FROM nas_dedup_proposals WHERE status='manual_review'",
+     "refId": "A"
+    }
+   ],
+   "title": "Google-internal (manual review)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "green",
+      "mode": "fixed"
+     },
+     "unit": "decgbytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 6,
+    "x": 18,
+    "y": 212
+   },
+   "id": 72,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT COALESCE(sum(freed_gb),0) FROM nas_dedup_runs WHERE mode='apply'",
+     "refId": "A"
+    }
+   ],
+   "title": "Freed to date (GB)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "purple",
+      "mode": "fixed"
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 8,
+    "x": 0,
+    "y": 218
+   },
+   "id": 73,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(*) FROM nas_files",
+     "refId": "A"
+    }
+   ],
+   "title": "Files inventoried",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 60
+     },
+     "unit": "decgbytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 16,
+    "x": 8,
+    "y": 218
+   },
+   "id": 74,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, reclaimable_gb AS value, 'reclaimable' AS metric FROM nas_dedup_runs WHERE reclaimable_gb IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Reclaimable GB per scan",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 11,
+    "w": 24,
+    "x": 0,
+    "y": 226
+   },
+   "id": 75,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT round(size_bytes/1e6,1) AS \"MB\", set_size AS \"Copies\", path AS \"Delete\", keeper_path AS \"Keep\" FROM nas_dedup_proposals WHERE status='proposed' ORDER BY size_bytes DESC LIMIT 50",
+     "refId": "A"
+    }
+   ],
+   "title": "Biggest reclaimable duplicates (keep vs delete)",
+   "type": "table"
+  },
+  {
+   "type": "row",
+   "title": "Media Gardener & Backup Reaper",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 237,
+    "w": 24,
+    "h": 1
+   },
+   "id": 76
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "green",
+      "mode": "fixed"
+     },
+     "unit": "decgbytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 6,
+    "x": 0,
+    "y": 238
+   },
+   "id": 77,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT COALESCE(sum(proposed_gb),0) AS gb FROM media_gardener_runs WHERE mode='apply'",
+     "refId": "A"
+    }
+   ],
+   "title": "Total reclaimed (GB)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "blue",
+      "mode": "fixed"
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 6,
+    "x": 6,
+    "y": 238
+   },
+   "id": 78,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT COALESCE(sum(proposed_videos),0) AS videos FROM media_gardener_runs WHERE mode='apply'",
+     "refId": "A"
+    }
+   ],
+   "title": "Videos pruned",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 6,
+    "x": 12,
+    "y": 238
+   },
+   "id": 79,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(*) AS pending FROM media_prune_proposals WHERE status='proposed'",
+     "refId": "A"
+    }
+   ],
+   "title": "Pending prune proposals",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 6,
+    "x": 18,
+    "y": 238
+   },
+   "id": 80,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(*) FILTER (WHERE status='proposed') AS reapable FROM backup_orphans",
+     "refId": "A"
+    }
+   ],
+   "title": "UNAS orphans (reaper)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 60
+     },
+     "unit": "decgbytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 244
+   },
+   "id": 81,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, proposed_gb AS value, mode AS metric FROM media_gardener_runs WHERE $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Reclaim over time (GB per run)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 253
+   },
+   "id": 82,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT ts AS \"Time\", mode AS \"Mode\", proposed_videos AS \"Videos\", proposed_gb AS \"GB\" FROM media_gardener_runs ORDER BY ts DESC LIMIT 25",
+     "refId": "A"
+    }
+   ],
+   "title": "Gardener runs",
+   "type": "table"
+  }
+ ],
+ "links": [
+  {
+   "type": "dashboards",
+   "tags": [
+    "nova-page"
+   ],
+   "asDropdown": false,
+   "title": "Pages",
+   "includeVars": false,
+   "keepTime": true
+  }
+ ],
+ "description": "Generated by scripts/nova_grafana_consolidate.py from grafana/sources: data-platform, nova-postgres, storage-unas, snmp-storage, nova-nas-backup, nova-backup-service, nas-dedup, media-gardener. Edit the sources, not this file."
+}

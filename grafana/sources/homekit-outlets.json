@@ -1,0 +1,399 @@
+{
+ "panels": [
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "blue",
+        "value": 0
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 0,
+    "y": 0
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) FILTER (WHERE power_state) AS value FROM (SELECT DISTINCT ON (uid) room,accessory,outlet,power_state,in_use,ts FROM telemetry.homekit_outlets WHERE ts>now()-interval '15 min' ORDER BY uid, ts DESC) s",
+     "refId": "A"
+    }
+   ],
+   "title": "Outlets ON now",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": 0
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 6,
+    "y": 0
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) FILTER (WHERE in_use) AS value FROM (SELECT DISTINCT ON (uid) room,accessory,outlet,power_state,in_use,ts FROM telemetry.homekit_outlets WHERE ts>now()-interval '15 min' ORDER BY uid, ts DESC) s",
+     "refId": "A"
+    }
+   ],
+   "title": "Outlets in use now",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "blue",
+        "value": 0
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 12,
+    "y": 0
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS value FROM (SELECT DISTINCT ON (uid) room,accessory,outlet,power_state,in_use,ts FROM telemetry.homekit_outlets WHERE ts>now()-interval '15 min' ORDER BY uid, ts DESC) s",
+     "refId": "A"
+    }
+   ],
+   "title": "Outlets tracked",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "blue",
+        "value": 0
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 18,
+    "y": 0
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(DISTINCT room) AS value FROM (SELECT DISTINCT ON (uid) room,accessory,outlet,power_state,in_use,ts FROM telemetry.homekit_outlets WHERE ts>now()-interval '15 min' ORDER BY uid, ts DESC) s",
+     "refId": "A"
+    }
+   ],
+   "title": "Rooms",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 16,
+    "x": 0,
+    "y": 4
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__timeGroup(ts,'5m') AS time, count(*) FILTER (WHERE in_use) AS \"In use\", count(*) FILTER (WHERE power_state) AS \"Powered\" FROM telemetry.homekit_outlets WHERE $__timeFilter(ts) GROUP BY 1 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Outlets in use over time",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 8,
+    "x": 16,
+    "y": 4
+   },
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "values": [
+      "value",
+      "percent"
+     ]
+    },
+    "pieType": "donut",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT room AS metric, count(*) FILTER (WHERE in_use) AS value FROM (SELECT DISTINCT ON (uid) room,accessory,outlet,power_state,in_use,ts FROM telemetry.homekit_outlets WHERE ts>now()-interval '15 min' ORDER BY uid, ts DESC) s GROUP BY room HAVING count(*) FILTER (WHERE in_use)>0",
+     "refId": "A"
+    }
+   ],
+   "title": "In-use by room",
+   "type": "piechart"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 16,
+    "x": 0,
+    "y": 13
+   },
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT room AS \"Room\", accessory AS \"Accessory\", outlet AS \"Outlet\", CASE WHEN power_state THEN '\ud83d\udfe2 on' ELSE '\u26ab off' END AS \"Power\", CASE WHEN in_use THEN 'yes' ELSE '\u2014' END AS \"In use\" FROM (SELECT DISTINCT ON (uid) room,accessory,outlet,power_state,in_use,ts FROM telemetry.homekit_outlets WHERE ts>now()-interval '15 min' ORDER BY uid, ts DESC) s ORDER BY power_state DESC, room",
+     "refId": "A"
+    }
+   ],
+   "title": "Current outlet state",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 8,
+    "x": 16,
+    "y": 13
+   },
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS \"Time\", device_id AS \"Device\", event AS \"Event\" FROM telemetry.device_power_events WHERE $__timeFilter(ts) ORDER BY ts DESC LIMIT 20",
+     "refId": "A"
+    }
+   ],
+   "title": "Power events",
+   "type": "table"
+  }
+ ],
+ "refresh": "5m",
+ "schemaVersion": 39,
+ "tags": [
+  "homekit",
+  "outlets",
+  "nova"
+ ],
+ "time": {
+  "from": "now-24h",
+  "to": "now"
+ },
+ "timezone": "browser",
+ "title": "HomeKit Outlets",
+ "uid": "homekit-outlets",
+ "_folder": "General"
+}

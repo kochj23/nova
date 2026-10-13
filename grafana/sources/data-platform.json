@@ -1,0 +1,388 @@
+{
+ "panels": [
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 1000
+       },
+       {
+        "color": "red",
+        "value": 5000
+       }
+      ]
+     },
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 0,
+    "y": 0
+   },
+   "id": 1,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT MAX(replay_lag_ms) AS value FROM telemetry.replication_health WHERE ts >= (SELECT MAX(ts) - INTERVAL '5 minutes' FROM telemetry.replication_health)",
+     "refId": "A"
+    }
+   ],
+   "title": "Max replica lag (ms)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "green",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 6,
+    "y": 0
+   },
+   "id": 2,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT COUNT(*) AS value FROM telemetry.replication_health WHERE state='streaming' AND ts >= (SELECT MAX(ts) - INTERVAL '5 minutes' FROM telemetry.replication_health)",
+     "refId": "A"
+    }
+   ],
+   "title": "Replicas streaming",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 7
+       },
+       {
+        "color": "green",
+        "value": 30
+       }
+      ]
+     },
+     "unit": "d"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 12,
+    "y": 0
+   },
+   "id": 3,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT MIN(days_until_full) AS value FROM telemetry.disk_forecast WHERE ts >= (SELECT MAX(ts) - INTERVAL '5 minutes' FROM telemetry.disk_forecast)",
+     "refId": "A"
+    }
+   ],
+   "title": "Soonest disk full (days)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 14
+       },
+       {
+        "color": "green",
+        "value": 30
+       }
+      ]
+     },
+     "unit": "d"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 18,
+    "y": 0
+   },
+   "id": 4,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT MIN(days_until_expiry) AS value FROM telemetry.cert_expiry WHERE ts >= (SELECT MAX(ts) - INTERVAL '5 minutes' FROM telemetry.cert_expiry)",
+     "refId": "A"
+    }
+   ],
+   "title": "Soonest cert expiry (days)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 15,
+      "spanNulls": true
+     },
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 5
+   },
+   "id": 5,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, replay_lag_ms AS value, application_name AS metric FROM telemetry.replication_health WHERE $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Replication lag (ms)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 14
+   },
+   "id": 6,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT application_name, client_addr, state, sync_state, replay_lag_ms FROM telemetry.replication_health WHERE ts >= (SELECT MAX(ts) - INTERVAL '5 minutes' FROM telemetry.replication_health) ORDER BY replay_lag_ms DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Replica status",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 22
+   },
+   "id": 7,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT host, volume, ROUND(used_pct::numeric, 1) AS \"Used %\", ROUND(days_until_full::numeric, 1) AS \"Days to full\" FROM telemetry.disk_forecast WHERE ts >= (SELECT MAX(ts) - INTERVAL '5 minutes' FROM telemetry.disk_forecast) ORDER BY days_until_full ASC LIMIT 30",
+     "refId": "A"
+    }
+   ],
+   "title": "Disk fill forecast",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Days left"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-background"
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "red",
+           "value": null
+          },
+          {
+           "color": "yellow",
+           "value": 14
+          },
+          {
+           "color": "green",
+           "value": 30
+          }
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 22
+   },
+   "id": 8,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT endpoint, host, days_until_expiry AS \"Days left\" FROM telemetry.cert_expiry WHERE ts >= (SELECT MAX(ts) - INTERVAL '5 minutes' FROM telemetry.cert_expiry) ORDER BY days_until_expiry ASC",
+     "refId": "A"
+    }
+   ],
+   "title": "TLS cert expiry",
+   "type": "table"
+  }
+ ],
+ "refresh": "1m",
+ "schemaVersion": 39,
+ "tags": [
+  "nova",
+  "postgres",
+  "replication",
+  "disk",
+  "tls"
+ ],
+ "time": {
+  "from": "now-24h",
+  "to": "now"
+ },
+ "timezone": "browser",
+ "title": "Data Platform Health",
+ "uid": "data-platform",
+ "_folder": "Nova Starter"
+}

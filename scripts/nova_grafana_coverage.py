@@ -6,9 +6,10 @@ their tables. This builds one provisioned dashboard per area from the live schem
 collapsed row with "new rows (24h)", "rows per hour (7d)" and "latest rows" (a few short columns,
 long text truncated). The Radio & Wi-Fi dashboard also gets purpose-built panels up top.
 
-Output: grafana/dashboards/nova-tools-<area>.json in the repo (NAS share); copy to nova-core's
-~/grafana/dashboards for Grafana to pick up -- with mode 644 (install -m 644 ...): scp keeps the
-share's 0700 and Grafana (uid 472) then skips the file silently. Re-run after adding a tool: put its
+Output: grafana/sources/nova-tools-<area>.json in the repo (NAS share). Since 2026-10-13 these are SOURCES:
+nova_grafana_consolidate.py folds them into the big pages in grafana/dashboards/, which are what get deployed to
+nova-core's ~/grafana/dashboards -- with mode 644 (install -m 644 ...): scp keeps the share's 0700 and Grafana
+(uid 472) then skips the file silently. Re-run after adding a tool: put its
 tables in GROUPS.
 
   nova_grafana_coverage.py [--out DIR]
@@ -183,7 +184,7 @@ def build(cur, key, title, tables):
 def main():
     import psycopg2
     out = sys.argv[sys.argv.index("--out") + 1] if "--out" in sys.argv else \
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "grafana", "dashboards")
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "grafana", "sources")   # -> nova_grafana_consolidate.py
     try:
         import nova_dsn; dsn = nova_dsn.pg_dsn("nova_ops")
     except ImportError:

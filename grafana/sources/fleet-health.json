@@ -1,0 +1,426 @@
+{
+ "panels": [
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": 0
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 0,
+    "y": 0
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) FILTER (WHERE status='up') AS value FROM (SELECT DISTINCT ON (service_name) service_name,status,latency_ms,checked_at FROM public.health_checks WHERE checked_at>now()-interval '15 min' ORDER BY service_name, checked_at DESC) s",
+     "refId": "A"
+    }
+   ],
+   "title": "Services UP now",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": 0
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 6,
+    "y": 0
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) FILTER (WHERE status<>'up') AS value FROM (SELECT DISTINCT ON (service_name) service_name,status,latency_ms,checked_at FROM public.health_checks WHERE checked_at>now()-interval '15 min' ORDER BY service_name, checked_at DESC) s",
+     "refId": "A"
+    }
+   ],
+   "title": "Services DOWN now",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": 0
+       },
+       {
+        "color": "yellow",
+        "value": 95
+       },
+       {
+        "color": "green",
+        "value": 99
+       }
+      ]
+     },
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 12,
+    "y": 0
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT round(100.0*avg(CASE WHEN up THEN 1 ELSE 0 END),2) AS value FROM public.sla_snapshots WHERE $__timeFilter(ts)",
+     "refId": "A"
+    }
+   ],
+   "title": "Overall availability (range)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "blue",
+        "value": 0
+       }
+      ]
+     },
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 18,
+    "y": 0
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT round(avg(latency_ms)) AS value FROM (SELECT DISTINCT ON (service_name) service_name,status,latency_ms,checked_at FROM public.health_checks WHERE checked_at>now()-interval '15 min' ORDER BY service_name, checked_at DESC) s WHERE status='up'",
+     "refId": "A"
+    }
+   ],
+   "title": "Avg check latency now (ms)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 4
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT checked_at AS time, service_name AS metric, latency_ms AS value FROM public.health_checks WHERE $__timeFilter(checked_at) AND latency_ms IS NOT NULL AND service_name IN (SELECT service_name FROM public.health_checks WHERE checked_at>now()-interval '1h' GROUP BY 1 ORDER BY avg(latency_ms) DESC NULLS LAST LIMIT 8) ORDER BY checked_at",
+     "refId": "A"
+    }
+   ],
+   "title": "Service check latency (ms) \u2014 top services",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 4
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__timeGroup(ts,'15m') AS time, service AS metric, 100.0*avg(CASE WHEN up THEN 1 ELSE 0 END) AS value FROM public.sla_snapshots WHERE $__timeFilter(ts) GROUP BY 1, service ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "SLA uptime % over time (by service)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 12,
+    "x": 0,
+    "y": 13
+   },
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT service_name AS \"Service\", CASE WHEN status='up' THEN '\ud83d\udfe2 up' ELSE '\ud83d\udd34 '||status END AS \"Status\", latency_ms AS \"Latency ms\", checked_at AS \"Checked\" FROM (SELECT DISTINCT ON (service_name) service_name,status,latency_ms,checked_at FROM public.health_checks WHERE checked_at>now()-interval '15 min' ORDER BY service_name, checked_at DESC) s ORDER BY (status='up'), service_name",
+     "refId": "A"
+    }
+   ],
+   "title": "Current health (per service)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "continuous-GrYlRd"
+     },
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 12,
+    "x": 12,
+    "y": 13
+   },
+   "options": {
+    "displayMode": "gradient",
+    "orientation": "horizontal",
+    "valueMode": "text"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT service AS metric, round(100.0*avg(CASE WHEN up THEN 1 ELSE 0 END),1) AS value FROM public.sla_snapshots WHERE $__timeFilter(ts) GROUP BY service ORDER BY value ASC",
+     "refId": "A"
+    }
+   ],
+   "title": "Uptime % per service (range)",
+   "type": "bargauge"
+  }
+ ],
+ "refresh": "5m",
+ "schemaVersion": 39,
+ "tags": [
+  "health",
+  "sla",
+  "nova"
+ ],
+ "time": {
+  "from": "now-24h",
+  "to": "now"
+ },
+ "timezone": "browser",
+ "title": "Fleet Health & SLA",
+ "uid": "fleet-health",
+ "_folder": "General"
+}

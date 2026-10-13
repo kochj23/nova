@@ -1,0 +1,506 @@
+{
+ "annotations": {
+  "list": []
+ },
+ "panels": [
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 0
+   },
+   "id": 1,
+   "panels": [],
+   "title": "Airwaves \u2014 Transmission Volume",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 70,
+      "lineWidth": 2,
+      "showPoints": "never",
+      "stacking": {
+       "mode": "normal"
+      }
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 1
+   },
+   "id": 2,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT date_trunc('day',created_at) AS time, source AS metric, count(*) AS value FROM memories WHERE source IN ('fire','rail','chp','scanner','atc','cb') AND $__timeFilter(created_at) GROUP BY 1,2 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Transmissions per beat per day",
+   "type": "timeseries"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 10
+   },
+   "id": 3,
+   "panels": [],
+   "title": "Last 24 Hours \u2014 by Beat",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 4,
+    "x": 0,
+    "y": 11
+   },
+   "id": 4,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"Fire\" FROM memories WHERE source='fire' AND created_at > now()-interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "Fire",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 4,
+    "x": 4,
+    "y": 11
+   },
+   "id": 5,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"Rail\" FROM memories WHERE source='rail' AND created_at > now()-interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "Rail",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 4,
+    "x": 8,
+    "y": 11
+   },
+   "id": 6,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"CHP\" FROM memories WHERE source='chp' AND created_at > now()-interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "CHP",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 4,
+    "x": 12,
+    "y": 11
+   },
+   "id": 7,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"Scanner\" FROM memories WHERE source='scanner' AND created_at > now()-interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "Scanner",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 4,
+    "x": 16,
+    "y": 11
+   },
+   "id": 8,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"ATC\" FROM memories WHERE source='atc' AND created_at > now()-interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "ATC",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 4,
+    "x": 20,
+    "y": 11
+   },
+   "id": 9,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"CB\" FROM memories WHERE source='cb' AND created_at > now()-interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "CB",
+   "type": "stat"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 16
+   },
+   "id": 10,
+   "panels": [],
+   "title": "Distribution",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 8,
+    "x": 0,
+    "y": 17
+   },
+   "id": 11,
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true,
+     "values": [
+      "value"
+     ]
+    },
+    "pieType": "donut",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": true
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT source AS metric, count(*) AS value FROM memories WHERE source IN ('fire','rail','chp','scanner','atc','cb') AND created_at > now()-interval '7 days' GROUP BY 1 ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Share by beat (last 7d)",
+   "type": "piechart"
+  },
+  {
+   "datasource": null,
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 16,
+    "x": 8,
+    "y": 17
+   },
+   "id": 12,
+   "options": {
+    "content": "### Scanner / Airwaves \u2014 Dormant\n\nThis dashboard is **dormant until the Uniden SDS200's network audio is streaming**; panels populate automatically once transmissions are transcribed into the `fire` / `rail` / `chp` / `scanner` / `atc` / `cb` beats.\n\nZero data here is expected \u2014 the airwaves light up the moment audio begins flowing.",
+    "mode": "markdown"
+   },
+   "title": "Status",
+   "type": "text"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 26
+   },
+   "id": 13,
+   "panels": [],
+   "title": "Latest Transmissions",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "align": "auto",
+      "filterable": true
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 24,
+    "x": 0,
+    "y": 27
+   },
+   "id": 14,
+   "options": {
+    "cellHeight": "sm",
+    "footer": {
+     "countRows": false,
+     "fields": "",
+     "reducer": [
+      "sum"
+     ],
+     "show": false
+    },
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT created_at, source AS beat, left(text,90) AS transmission FROM memories WHERE source IN ('fire','rail','chp','scanner','atc','cb') ORDER BY created_at DESC LIMIT 25",
+     "refId": "A"
+    }
+   ],
+   "title": "Latest transmissions",
+   "type": "table"
+  }
+ ],
+ "refresh": "5m",
+ "schemaVersion": 39,
+ "tags": [
+  "nova",
+  "scanner",
+  "airwaves",
+  "sds200",
+  "radio"
+ ],
+ "templating": {
+  "list": []
+ },
+ "time": {
+  "from": "now-30d",
+  "to": "now"
+ },
+ "timezone": "browser",
+ "title": "Nova \u2014 Scanner / Airwaves",
+ "uid": "nova-scanner",
+ "_folder": "Nova Starter"
+}

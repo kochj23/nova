@@ -1,0 +1,252 @@
+{
+ "panels": [
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 1,
+     "thresholds": {
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 24
+       },
+       {
+        "color": "red",
+        "value": 36
+       }
+      ]
+     },
+     "unit": "h"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 0,
+    "y": 0
+   },
+   "id": 1,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT EXTRACT(EPOCH FROM (now()-max(ts)))/3600.0 AS \"hours\" FROM telemetry.backup_runs WHERE job LIKE 'nova-backup%' AND ok",
+     "refId": "A"
+    }
+   ],
+   "title": "Hours since last successful backup",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "green",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 8,
+    "y": 0
+   },
+   "id": 2,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(*) AS \"runs\" FROM telemetry.backup_runs WHERE job LIKE 'nova-backup%' AND ok AND ts > now()-interval '7 days'",
+     "refId": "A"
+    }
+   ],
+   "title": "Successful runs (7d)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "blue",
+      "mode": "fixed"
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 16,
+    "y": 0
+   },
+   "id": 3,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT COALESCE(sum(files),0) AS \"files\" FROM telemetry.backup_runs WHERE job LIKE 'nova-backup%' AND ts > now()-interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "Files synced (24h)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 50
+     },
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 7
+   },
+   "id": 4,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, elapsed_s AS value, job AS metric FROM telemetry.backup_runs WHERE $__timeFilter(ts) AND job LIKE 'nova-backup%' ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Run duration (s) by job",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 50
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 7
+   },
+   "id": 5,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, files AS value, job AS metric FROM telemetry.backup_runs WHERE $__timeFilter(ts) AND job LIKE 'nova-backup%' ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Files transferred per run",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 16
+   },
+   "id": 6,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT ts AS \"Time\", job AS \"Job\", rc AS \"rc\", files AS \"Files\", pg_size_pretty(bytes::bigint) AS \"Bytes\", elapsed_s AS \"Sec\", ok AS \"OK\" FROM telemetry.backup_runs WHERE job LIKE 'nova-backup%' ORDER BY ts DESC LIMIT 25",
+     "refId": "A"
+    }
+   ],
+   "title": "Recent backup runs",
+   "type": "table"
+  }
+ ],
+ "refresh": "1m",
+ "schemaVersion": 39,
+ "tags": [
+  "nova",
+  "backup"
+ ],
+ "time": {
+  "from": "now-7d",
+  "to": "now"
+ },
+ "timezone": "browser",
+ "title": "Nova Backup \u2014 diff-sync service",
+ "uid": "nova-backup-service",
+ "_folder": "Nova Starter"
+}

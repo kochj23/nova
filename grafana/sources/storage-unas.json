@@ -1,0 +1,329 @@
+{
+ "panels": [
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "max": 100,
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": 0
+       },
+       {
+        "color": "yellow",
+        "value": 80
+       },
+       {
+        "color": "red",
+        "value": 90
+       }
+      ]
+     },
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 0,
+    "y": 0
+   },
+   "options": {
+    "showThresholdLabels": false,
+    "showThresholdMarkers": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT used_pct AS value FROM telemetry.storage_metrics WHERE host='192.168.1.69' AND component_type='volume' AND used_pct IS NOT NULL ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Pool Used %",
+   "type": "gauge"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 18,
+    "x": 6,
+    "y": 0
+   },
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT DISTINCT ON (component_id) component_id AS \"Disk\", component_name AS \"Model\", round(temp_c::numeric,0) AS \"Temp C\", smart_status AS \"SMART\", (extra->>'power_on_hours') AS \"Power-on h\", (extra->>'reallocated') AS \"Realloc\", ts AS \"Last seen\" FROM telemetry.storage_metrics WHERE host='192.168.1.69' AND source='unas-ssh' AND component_type='disk' AND ts>now()-interval '1 hour' ORDER BY component_id, ts DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Disk Status (latest)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 15,
+      "lineInterpolation": "smooth",
+      "showPoints": "never",
+      "spanNulls": true,
+      "thresholdsStyle": {
+       "mode": "line"
+      }
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": 0
+       },
+       {
+        "color": "yellow",
+        "value": 50
+       },
+       {
+        "color": "red",
+        "value": 58
+       }
+      ]
+     },
+     "unit": "celsius"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 8
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, component_id AS metric, temp_c AS value FROM telemetry.storage_metrics WHERE host='192.168.1.69' AND source='unas-ssh' AND component_type='disk' AND temp_c IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Disk Temperatures",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 15,
+      "lineInterpolation": "smooth",
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 8
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, 'pool' AS metric, used_pct AS value FROM telemetry.storage_metrics WHERE host='192.168.1.69' AND component_type='volume' AND used_pct IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Pool Used % over time",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 0,
+    "y": 17
+   },
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT DISTINCT ON (component_id) component_id AS \"Array\", status AS \"State\", CASE WHEN healthy THEN 'OK' ELSE 'DEGRADED' END AS \"Health\", ts AS \"Last seen\" FROM telemetry.storage_metrics WHERE host='192.168.1.69' AND source='unas-ssh' AND component_type='raid' AND ts>now()-interval '1 hour' ORDER BY component_id, ts DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "RAID / Array Status (latest)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 15,
+      "lineInterpolation": "smooth",
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 16,
+    "x": 8,
+    "y": 17
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT timestamp AS time, 'CPU used' AS metric, metric_value AS value FROM snmp_metrics WHERE device_name='unas-pro' AND metric_name='cpu_used_pct' AND $__timeFilter(timestamp) ORDER BY timestamp",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT t.timestamp AS time, 'RAM used' AS metric, CASE WHEN tot.metric_value>0 THEN 100.0*(tot.metric_value-t.metric_value)/tot.metric_value ELSE 0 END AS value FROM snmp_metrics t JOIN snmp_metrics tot ON tot.timestamp=t.timestamp AND tot.device_name=t.device_name AND tot.metric_name='mem_total_real' WHERE t.device_name='unas-pro' AND t.metric_name='mem_avail_real' AND $__timeFilter(t.timestamp) ORDER BY t.timestamp",
+     "refId": "A"
+    }
+   ],
+   "title": "CPU & Memory %",
+   "type": "timeseries"
+  }
+ ],
+ "refresh": "5m",
+ "schemaVersion": 39,
+ "tags": [
+  "storage",
+  "unas",
+  "nova"
+ ],
+ "time": {
+  "from": "now-12h",
+  "to": "now"
+ },
+ "timezone": "browser",
+ "title": "Storage (UNAS)",
+ "uid": "storage-unas",
+ "_folder": "General"
+}

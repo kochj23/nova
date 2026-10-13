@@ -1,0 +1,493 @@
+{
+ "annotations": {
+  "list": []
+ },
+ "panels": [
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "mappings": [
+      {
+       "options": {
+        "0": {
+         "color": "green",
+         "index": 0,
+         "text": "OK"
+        }
+       },
+       "type": "value"
+      },
+      {
+       "options": {
+        "from": 1,
+        "result": {
+         "color": "red",
+         "index": 1,
+         "text": "FAILED"
+        },
+        "to": 1000000
+       },
+       "type": "range"
+      }
+     ],
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 8,
+    "x": 0,
+    "y": 0
+   },
+   "id": 1,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, rc FROM telemetry.backup_runs ORDER BY ts DESC LIMIT 1;",
+     "refId": "A"
+    }
+   ],
+   "title": "Last Run Status",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 1,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 26
+       },
+       {
+        "color": "red",
+        "value": 49
+       }
+      ]
+     },
+     "unit": "h"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 8,
+    "x": 8,
+    "y": 0
+   },
+   "id": 2,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT EXTRACT(EPOCH FROM (now() - max(ts))) / 3600.0 AS \"Hours\" FROM telemetry.backup_runs WHERE rc = 0;",
+     "refId": "A"
+    }
+   ],
+   "title": "Hours Since Last Successful Backup",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 8,
+    "x": 16,
+    "y": 0
+   },
+   "id": 3,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, errors FROM telemetry.backup_runs ORDER BY ts DESC LIMIT 1;",
+     "refId": "A"
+    }
+   ],
+   "title": "Errors (Last Run)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 40,
+      "lineWidth": 2
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 5
+   },
+   "id": 4,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, files AS \"Files\", job AS metric FROM telemetry.backup_runs WHERE $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "Files Transferred Over Time",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 40,
+      "lineWidth": 2
+     },
+     "unit": "bytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 5
+   },
+   "id": 5,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, bytes AS \"Bytes\", job AS metric FROM telemetry.backup_runs WHERE $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "Bytes Transferred Over Time",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "lineWidth": 2
+     },
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 13
+   },
+   "id": 6,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, elapsed_s AS \"Elapsed (s)\", job AS metric FROM telemetry.backup_runs WHERE $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "Run Duration Over Time",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 13
+   },
+   "id": 7,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "right",
+     "values": [
+      "value"
+     ]
+    },
+    "pieType": "donut",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT CASE WHEN rc = 0 THEN 'OK' ELSE 'Failed' END AS metric, count(*) AS value FROM telemetry.backup_runs WHERE $__timeFilter(ts) GROUP BY 1;",
+     "refId": "A"
+    }
+   ],
+   "title": "Runs by Result (window)",
+   "type": "piechart"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Bytes"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "bytes"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Elapsed"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "s"
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 21
+   },
+   "id": 8,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS \"Time\", job AS \"Job\", rc AS \"RC\", ok AS \"OK\", errors AS \"Errors\", files AS \"Files\", bytes AS \"Bytes\", elapsed_s AS \"Elapsed\" FROM telemetry.backup_runs ORDER BY ts DESC LIMIT 20;",
+     "refId": "A"
+    }
+   ],
+   "title": "Recent Runs (last ~20)",
+   "type": "table"
+  }
+ ],
+ "refresh": "5m",
+ "schemaVersion": 39,
+ "tags": [
+  "nova",
+  "backup",
+  "nas",
+  "synology",
+  "unas"
+ ],
+ "templating": {
+  "list": []
+ },
+ "time": {
+  "from": "now-24h",
+  "to": "now"
+ },
+ "timezone": "browser",
+ "title": "Nova / NAS Backup",
+ "uid": "nova-nas-backup",
+ "_folder": "Nova Starter"
+}

@@ -1,0 +1,3475 @@
+{
+ "uid": "nova-net",
+ "title": "Network",
+ "tags": [
+  "nova",
+  "nova-page"
+ ],
+ "timezone": "browser",
+ "schemaVersion": 39,
+ "editable": true,
+ "graphTooltip": 1,
+ "time": {
+  "from": "now-24h",
+  "to": "now"
+ },
+ "refresh": "5m",
+ "templating": {
+  "list": [
+   {
+    "current": {
+     "text": "All",
+     "value": "$__all"
+    },
+    "datasource": {
+     "type": "grafana-postgresql-datasource",
+     "uid": "nova-ops-pg"
+    },
+    "includeAll": true,
+    "multi": true,
+    "name": "device",
+    "query": "SELECT DISTINCT device_name FROM snmp_metrics WHERE metric_name LIKE 'if_hc_in_octets.%' ORDER BY 1",
+    "refresh": 2,
+    "type": "query"
+   }
+  ]
+ },
+ "panels": [
+  {
+   "type": "row",
+   "title": "Nova Network",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 24,
+    "h": 1
+   },
+   "id": 1
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 15,
+      "lineWidth": 2
+     },
+     "unit": "bps"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 1
+   },
+   "id": 2,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, value AS \"WAN Download\" FROM telemetry.unifi_metrics WHERE metric = 'unifi_wan_rx_bps' AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    },
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, value AS \"WAN Upload\" FROM telemetry.unifi_metrics WHERE metric = 'unifi_wan_tx_bps' AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "B"
+    }
+   ],
+   "title": "WAN Throughput (Down/Up)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "mappings": [
+      {
+       "options": {
+        "0": {
+         "color": "red",
+         "text": "DOWN"
+        },
+        "1": {
+         "color": "green",
+         "text": "UP"
+        }
+       },
+       "type": "value"
+      }
+     ],
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "green",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 12,
+    "y": 1
+   },
+   "id": 3,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, value FROM telemetry.unifi_metrics WHERE metric = 'unifi_wan_up' ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "WAN Status",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 1,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 30
+       },
+       {
+        "color": "red",
+        "value": 60
+       }
+      ]
+     },
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 16,
+    "y": 1
+   },
+   "id": 4,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, value FROM telemetry.unifi_metrics WHERE metric = 'unifi_wan_latency_ms' ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "WAN Latency",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 100
+       },
+       {
+        "color": "green",
+        "value": 300
+       }
+      ]
+     },
+     "unit": "Mbits"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 20,
+    "y": 1
+   },
+   "id": 5,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value_and_name"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, value AS \"Download\" FROM telemetry.unifi_metrics WHERE metric = 'unifi_wan_speedtest_down_mbps' ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    },
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, value AS \"Upload\" FROM telemetry.unifi_metrics WHERE metric = 'unifi_wan_speedtest_up_mbps' ORDER BY ts DESC LIMIT 1",
+     "refId": "B"
+    }
+   ],
+   "title": "Latest Speedtest",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "lineWidth": 2
+     },
+     "max": 100,
+     "min": 0,
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 12,
+    "x": 12,
+    "y": 5
+   },
+   "id": 6,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, value AS \"GW CPU %\" FROM telemetry.unifi_metrics WHERE metric = 'unifi_wan_gw_cpu_pct' AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    },
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, value AS \"GW Mem %\" FROM telemetry.unifi_metrics WHERE metric = 'unifi_wan_gw_mem_pct' AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "B"
+    }
+   ],
+   "title": "Gateway CPU / Memory",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 40,
+      "lineWidth": 1,
+      "stacking": {
+       "mode": "normal"
+      }
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 9
+   },
+   "id": 7,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last"
+     ],
+     "displayMode": "table",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, metadata->>'band' AS metric, value FROM telemetry.unifi_metrics WHERE metric = 'unifi_clients_by_band' AND metadata->>'band' <> 'other' AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Clients by Band (stacked)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "blue",
+        "value": null
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 12,
+    "y": 9
+   },
+   "id": 8,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, value FROM telemetry.unifi_metrics WHERE metric = 'unifi_clients_total' AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Total Clients",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "purple",
+        "value": null
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 18,
+    "y": 9
+   },
+   "id": 9,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value_and_name"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, value AS \"Wired\" FROM telemetry.unifi_metrics WHERE metric = 'unifi_clients_wired' ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    },
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, value AS \"Wireless\" FROM telemetry.unifi_metrics WHERE metric = 'unifi_clients_wireless' ORDER BY ts DESC LIMIT 1",
+     "refId": "B"
+    }
+   ],
+   "title": "Wired / Wireless",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "continuous-GrYlRd"
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 12,
+    "x": 12,
+    "y": 13
+   },
+   "id": 10,
+   "options": {
+    "displayMode": "gradient",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT m.metadata->>'device' AS metric, m.value FROM telemetry.unifi_metrics m JOIN (SELECT metadata->>'device' AS device, max(ts) AS mts FROM telemetry.unifi_metrics WHERE metric='unifi_ap_clients' GROUP BY 1) latest ON latest.device = m.metadata->>'device' AND latest.mts = m.ts WHERE m.metric = 'unifi_ap_clients' ORDER BY m.value DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Clients per AP (latest)",
+   "type": "bargauge"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 5,
+      "lineWidth": 2
+     },
+     "max": 100,
+     "min": 0,
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 12,
+    "x": 0,
+    "y": 17
+   },
+   "id": 11,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "min"
+     ],
+     "displayMode": "table",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, (metadata->>'device') || ' ' || (metadata->>'band') AS metric, value FROM telemetry.unifi_metrics WHERE metric = 'unifi_ap_radio_satisfaction' AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "AP Radio Satisfaction %",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 12,
+    "x": 12,
+    "y": 19
+   },
+   "id": 12,
+   "options": {
+    "showHeader": true,
+    "sortBy": [
+     {
+      "desc": true,
+      "displayName": "Total Errors"
+     }
+    ]
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "WITH latest AS (SELECT metric, metadata->>'device' AS device, metadata->>'port_name' AS port_name, (metadata->>'port')::int AS port, value, ts, row_number() OVER (PARTITION BY metric, metadata->>'device', metadata->>'port' ORDER BY ts DESC) rn FROM telemetry.unifi_metrics WHERE metric IN ('unifi_port_rx_errors','unifi_port_tx_errors','unifi_port_rx_dropped','unifi_port_tx_dropped')) SELECT device AS \"Device\", port AS \"Port\", port_name AS \"Port Name\", COALESCE(max(value) FILTER (WHERE metric='unifi_port_rx_errors'),0) AS \"RX Err\", COALESCE(max(value) FILTER (WHERE metric='unifi_port_tx_errors'),0) AS \"TX Err\", COALESCE(max(value) FILTER (WHERE metric='unifi_port_rx_dropped'),0) AS \"RX Drop\", COALESCE(max(value) FILTER (WHERE metric='unifi_port_tx_dropped'),0) AS \"TX Drop\", COALESCE(sum(value),0) AS \"Total Errors\" FROM latest WHERE rn=1 GROUP BY device, port, port_name HAVING COALESCE(sum(value),0) > 0 ORDER BY \"Total Errors\" DESC LIMIT 15",
+     "refId": "A"
+    }
+   ],
+   "title": "Switch Port Errors (Top Offenders)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "max": 100,
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 75
+       },
+       {
+        "color": "red",
+        "value": 90
+       }
+      ]
+     },
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 0,
+    "y": 24
+   },
+   "id": 13,
+   "options": {
+    "orientation": "auto",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "showThresholdLabels": false,
+    "showThresholdMarkers": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "WITH latest AS (SELECT source, component_id, component_name, used_pct, row_number() OVER (PARTITION BY source, component_id ORDER BY ts DESC) rn FROM telemetry.storage_metrics WHERE used_pct IS NOT NULL AND component_type IN ('volume','system','share')) SELECT source || ' / ' || component_name AS metric, used_pct AS value FROM latest WHERE rn=1 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Storage Volume Used %",
+   "type": "gauge"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "max": 70,
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 45
+       },
+       {
+        "color": "red",
+        "value": 55
+       }
+      ]
+     },
+     "unit": "celsius"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 8,
+    "y": 24
+   },
+   "id": 14,
+   "options": {
+    "displayMode": "gradient",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "WITH latest AS (SELECT source, component_id, component_name, temp_c, row_number() OVER (PARTITION BY source, component_id ORDER BY ts DESC) rn FROM telemetry.storage_metrics WHERE temp_c IS NOT NULL AND component_type='disk') SELECT component_id || ' (' || component_name || ')' AS metric, temp_c AS value FROM latest WHERE rn=1 ORDER BY temp_c DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Disk Temperatures (Synology)",
+   "type": "bargauge"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "SMART"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-background"
+        }
+       },
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "options": {
+           "failed": {
+            "color": "red",
+            "index": 2
+           },
+           "normal": {
+            "color": "green",
+            "index": 0
+           },
+           "warning": {
+            "color": "orange",
+            "index": 1
+           }
+          },
+          "type": "value"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 16,
+    "y": 24
+   },
+   "id": 15,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "WITH latest AS (SELECT source, component_id, component_name, smart_status, temp_c, row_number() OVER (PARTITION BY source, component_id ORDER BY ts DESC) rn FROM telemetry.storage_metrics WHERE component_type='disk') SELECT component_id AS \"Disk\", component_name AS \"Model\", smart_status AS \"SMART\", temp_c AS \"Temp C\" FROM latest WHERE rn=1 ORDER BY (smart_status='normal'), component_id",
+     "refId": "A"
+    }
+   ],
+   "title": "Disk SMART Status",
+   "type": "table"
+  },
+  {
+   "type": "row",
+   "title": "Network Clients & WAN",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 31,
+    "w": 24,
+    "h": 1
+   },
+   "id": 16
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 50
+       },
+       {
+        "color": "red",
+        "value": 150
+       }
+      ]
+     },
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 0,
+    "y": 32
+   },
+   "id": 17,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT latency_ms FROM telemetry.wan_quality WHERE latency_ms IS NOT NULL ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "WAN latency (ms)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 1
+       },
+       {
+        "color": "red",
+        "value": 5
+       }
+      ]
+     },
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 6,
+    "y": 32
+   },
+   "id": 18,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT packet_loss_pct FROM telemetry.wan_quality WHERE packet_loss_pct IS NOT NULL ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "WAN packet loss %",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 50
+       },
+       {
+        "color": "green",
+        "value": 200
+       }
+      ]
+     },
+     "unit": "Mbits"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 12,
+    "y": 32
+   },
+   "id": 19,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT down_mbps FROM telemetry.wan_quality WHERE down_mbps IS NOT NULL ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "WAN down (Mbps)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 18,
+    "y": 32
+   },
+   "id": 20,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(DISTINCT client_mac) AS active_clients FROM telemetry.network WHERE ts >= now() - interval '5 minutes'",
+     "refId": "A"
+    }
+   ],
+   "title": "Active clients",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 15,
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 37
+   },
+   "id": 21,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, latency_ms AS value, 'latency ms' AS metric FROM telemetry.wan_quality WHERE latency_ms IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, packet_loss_pct AS value, 'packet loss %' AS metric FROM telemetry.wan_quality WHERE packet_loss_pct IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "B"
+    }
+   ],
+   "title": "WAN latency & packet loss",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 20,
+      "spanNulls": true
+     },
+     "unit": "Mbits"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 37
+   },
+   "id": 22,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, down_mbps AS value, 'down Mbps' AS metric FROM telemetry.wan_quality WHERE down_mbps IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, up_mbps AS value, 'up Mbps' AS metric FROM telemetry.wan_quality WHERE up_mbps IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "B"
+    }
+   ],
+   "title": "WAN throughput (Mbps)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 12,
+    "x": 0,
+    "y": 46
+   },
+   "id": 23,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT client_name, ip, round((max(rx_bytes)+max(tx_bytes))/1e9, 2) AS gb, max(signal_dbm) AS signal_dbm FROM telemetry.network WHERE ts >= now() - interval '24 hours' GROUP BY client_name, ip ORDER BY gb DESC LIMIT 25",
+     "refId": "A"
+    }
+   ],
+   "title": "Top clients by traffic (24h)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 5,
+      "spanNulls": true
+     },
+     "unit": "dBm"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 12,
+    "x": 12,
+    "y": 46
+   },
+   "id": 24,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, signal_dbm AS value, client_name AS metric FROM telemetry.network WHERE is_wired = false AND signal_dbm IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "WiFi signal (dBm) by client",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 56
+   },
+   "id": 25,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT ap_name, count(DISTINCT client_mac) AS clients FROM telemetry.network WHERE ts >= now() - interval '5 minutes' GROUP BY ap_name ORDER BY clients DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Clients per AP",
+   "type": "table"
+  },
+  {
+   "type": "row",
+   "title": "Device Health (SNMP)",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 65,
+    "w": 24,
+    "h": 1
+   },
+   "id": 26
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10
+     },
+     "max": 100,
+     "min": 0,
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 66
+   },
+   "id": 27,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT timestamp AS time, device_name AS metric, metric_value AS value FROM snmp_metrics WHERE metric_name = 'cpu_used_pct' AND $__timeFilter(timestamp) ORDER BY timestamp",
+     "refId": "A"
+    }
+   ],
+   "title": "CPU Utilization % (UCD ssCpu)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 66
+   },
+   "id": 28,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT timestamp AS time, device_name AS metric, metric_value AS value FROM snmp_metrics WHERE metric_name = 'hr_cpu_load_avg' AND $__timeFilter(timestamp) ORDER BY timestamp",
+     "refId": "A"
+    }
+   ],
+   "title": "Load Average (5 min)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10
+     },
+     "max": 100,
+     "min": 0,
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 75
+   },
+   "id": 29,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT t.timestamp AS time, t.device_name AS metric, CASE WHEN t.metric_value > 0 THEN 100.0 * (t.metric_value - a.metric_value) / t.metric_value ELSE 0 END AS value FROM snmp_metrics t JOIN snmp_metrics a ON a.device_name = t.device_name AND a.metric_name = 'mem_avail_real' AND a.timestamp = t.timestamp WHERE t.metric_name = 'mem_total_real' AND $__timeFilter(t.timestamp) ORDER BY t.timestamp",
+     "refId": "A"
+    }
+   ],
+   "title": "Memory Used % (real)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10
+     },
+     "unit": "celsius"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 75
+   },
+   "id": 30,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT timestamp AS time, device_name || ' system' AS metric, metric_value AS value FROM snmp_metrics WHERE metric_name = 'sys_temp' AND $__timeFilter(timestamp) ORDER BY timestamp",
+     "refId": "A"
+    }
+   ],
+   "title": "Temperatures (Synology system + UDM)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 84
+   },
+   "id": 31,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "WITH latest AS (SELECT device_name, metric_value, row_number() OVER (PARTITION BY device_name ORDER BY timestamp DESC) rn FROM snmp_metrics WHERE metric_name = 'hr_cpu_load_avg' AND timestamp > now() - interval '15 min') SELECT device_name AS \"Device\", round(metric_value::numeric, 1) AS \"Avg CPU %\" FROM latest WHERE rn = 1 ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Per-CPU Load % (hrProcessorLoad, latest)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "dtdurations"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 84
+   },
+   "id": 32,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "WITH latest AS (SELECT device_name, metric_value, row_number() OVER (PARTITION BY device_name ORDER BY timestamp DESC) rn FROM snmp_metrics WHERE metric_name = 'sys_uptime' AND timestamp > now() - interval '20 min') SELECT device_name AS \"Device\", metric_value / 100 AS \"Uptime\" FROM latest WHERE rn = 1 ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Uptime (latest)",
+   "type": "table"
+  },
+  {
+   "type": "row",
+   "title": "Switch & AP Ports (SNMP)",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 92,
+    "w": 24,
+    "h": 1
+   },
+   "id": 33
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10
+     },
+     "unit": "bps"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 93
+   },
+   "id": 34,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT m.timestamp AS time, m.device_name || ' ' || COALESCE(n.unit, 'if' || split_part(m.metric_name, '.', 2)) AS metric, m.metric_value AS value FROM snmp_metrics m LEFT JOIN LATERAL (SELECT unit FROM snmp_metrics WHERE device_name = m.device_name AND metric_name = 'if_name.' || split_part(m.metric_name, '.', 2) ORDER BY timestamp DESC LIMIT 1) n ON true WHERE m.metric_name LIKE 'if_in_bps.%' AND m.device_name IN ($device) AND $__timeFilter(m.timestamp) ORDER BY m.timestamp",
+     "refId": "A"
+    }
+   ],
+   "title": "Port RX (download) bps",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10
+     },
+     "unit": "bps"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 93
+   },
+   "id": 35,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT m.timestamp AS time, m.device_name || ' ' || COALESCE(n.unit, 'if' || split_part(m.metric_name, '.', 2)) AS metric, m.metric_value AS value FROM snmp_metrics m LEFT JOIN LATERAL (SELECT unit FROM snmp_metrics WHERE device_name = m.device_name AND metric_name = 'if_name.' || split_part(m.metric_name, '.', 2) ORDER BY timestamp DESC LIMIT 1) n ON true WHERE m.metric_name LIKE 'if_out_bps.%' AND m.device_name IN ($device) AND $__timeFilter(m.timestamp) ORDER BY m.timestamp",
+     "refId": "A"
+    }
+   ],
+   "title": "Port TX (upload) bps",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 102
+   },
+   "id": 36,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "WITH latest AS (SELECT device_name, metric_name, metric_value, split_part(metric_name, '.', 2) AS idx, row_number() OVER (PARTITION BY device_name, metric_name ORDER BY timestamp DESC) rn FROM snmp_metrics WHERE metric_name ~ '^if_(in|out)_(errors|discards)\\.' AND timestamp > now() - interval '20 min') SELECT l.device_name AS \"Device\", COALESCE(n.unit, 'if' || l.idx) AS \"Port\", SUM(l.metric_value) FILTER (WHERE l.metric_name LIKE 'if_in_errors%') AS \"RX Errors\", SUM(l.metric_value) FILTER (WHERE l.metric_name LIKE 'if_out_errors%') AS \"TX Errors\", SUM(l.metric_value) FILTER (WHERE l.metric_name LIKE 'if_in_discards%') AS \"RX Discards\", SUM(l.metric_value) FILTER (WHERE l.metric_name LIKE 'if_out_discards%') AS \"TX Discards\" FROM latest l LEFT JOIN LATERAL (SELECT unit FROM snmp_metrics WHERE device_name = l.device_name AND metric_name = 'if_name.' || l.idx ORDER BY timestamp DESC LIMIT 1) n ON true WHERE l.rn = 1 GROUP BY l.device_name, l.idx, n.unit HAVING SUM(l.metric_value) > 0 ORDER BY 3 DESC NULLS LAST, 1, 2",
+     "refId": "A"
+    }
+   ],
+   "title": "Port Errors & Discards (latest, non-zero)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Status"
+      },
+      "properties": [
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "options": {
+           "1": {
+            "color": "green",
+            "text": "UP"
+           },
+           "2": {
+            "color": "red",
+            "text": "DOWN"
+           }
+          },
+          "type": "value"
+         }
+        ]
+       },
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-text"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 102
+   },
+   "id": 37,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "WITH latest AS (SELECT device_name, metric_name, metric_value, split_part(metric_name, '.', 2) AS idx, row_number() OVER (PARTITION BY device_name, metric_name ORDER BY timestamp DESC) rn FROM snmp_metrics WHERE metric_name ~ '^if_(oper_status|speed_mbps)\\.' AND device_name IN ($device) AND timestamp > now() - interval '20 min') SELECT l.device_name AS \"Device\", COALESCE(n.unit, 'if' || l.idx) AS \"Port\", MAX(l.metric_value) FILTER (WHERE l.metric_name LIKE 'if_oper_status%') AS \"Status\", MAX(l.metric_value) FILTER (WHERE l.metric_name LIKE 'if_speed_mbps%') AS \"Speed Mbps\" FROM latest l LEFT JOIN LATERAL (SELECT unit FROM snmp_metrics WHERE device_name = l.device_name AND metric_name = 'if_name.' || l.idx ORDER BY timestamp DESC LIMIT 1) n ON true WHERE l.rn = 1 GROUP BY l.device_name, l.idx, n.unit ORDER BY 1, 2",
+     "refId": "A"
+    }
+   ],
+   "title": "Port Link Status & Speed (latest)",
+   "type": "table"
+  },
+  {
+   "type": "row",
+   "title": "Nova-DNS \u2014 network devices",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 111,
+    "w": 24,
+    "h": 1
+   },
+   "id": 38
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "blue",
+      "mode": "fixed"
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 6,
+    "x": 0,
+    "y": 112
+   },
+   "id": 39,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(*) AS \"devices\" FROM dns_records",
+     "refId": "A"
+    }
+   ],
+   "title": "Devices mapped",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "green",
+      "mode": "fixed"
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 6,
+    "x": 6,
+    "y": 112
+   },
+   "id": 40,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(*) AS \"active\" FROM dns_records WHERE updated_at > now()-interval '15 minutes'",
+     "refId": "A"
+    }
+   ],
+   "title": "Active now (<15m)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "blue",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 6,
+    "x": 12,
+    "y": 112
+   },
+   "id": 41,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(*) AS \"new\" FROM dns_records WHERE first_seen > now()-interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "New (24h)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "gray",
+      "mode": "fixed"
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 6,
+    "x": 18,
+    "y": 112
+   },
+   "id": 42,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(*) AS \"stale\" FROM dns_records WHERE updated_at < now()-interval '7 days'",
+     "refId": "A"
+    }
+   ],
+   "title": "Stale (>7d unseen)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 60
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 118
+   },
+   "id": 43,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT date_trunc('day', first_seen) AS time, count(*) AS value, 'new devices' AS metric FROM dns_records WHERE $__timeFilter(first_seen) GROUP BY 1 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "New devices discovered (per day)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 12,
+    "w": 24,
+    "x": 0,
+    "y": 127
+   },
+   "id": 44,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT name||'.nova' AS \"Name\", ip AS \"IP\", mac AS \"MAC\", first_seen AS \"First seen\", updated_at AS \"Last seen\", CASE WHEN locked THEN 'yes' ELSE '' END AS \"Locked\" FROM dns_records ORDER BY updated_at DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "All devices (.nova)",
+   "type": "table"
+  },
+  {
+   "type": "row",
+   "title": "Nova \u2014 UniFi \u2014 Threat Watch, Stalker, House Arrest",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 139,
+    "w": 24,
+    "h": 1
+   },
+   "id": 45
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 0,
+    "y": 140
+   },
+   "id": 46,
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) FROM unifi_threat_events WHERE ts > now() - interval '24 hours' AND NOT ignored",
+     "refId": "A"
+    }
+   ],
+   "title": "IPS events (24h)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 4,
+    "y": 140
+   },
+   "id": 47,
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) FROM unifi_threat_events WHERE ts > now() - interval '24 hours' AND risk='high' AND action <> 'block' AND NOT ignored",
+     "refId": "A"
+    }
+   ],
+   "title": "High-risk, NOT blocked (24h)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 8,
+    "y": 140
+   },
+   "id": 48,
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) FROM unifi_client_state WHERE online",
+     "refId": "A"
+    }
+   ],
+   "title": "Clients online",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 12,
+    "y": 140
+   },
+   "id": 49,
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) FROM unifi_client_events WHERE kind='roam' AND ts > now() - interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "Roams (24h)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 16,
+    "y": 140
+   },
+   "id": 50,
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) FROM unifi_toolkit_ledger WHERE kind IN ('policy','acl') AND released_at IS NULL",
+     "refId": "A"
+    }
+   ],
+   "title": "House Arrest rules active",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 20,
+    "y": 140
+   },
+   "id": 51,
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT jsonb_array_length(findings) FROM unifi_network_audit ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Posture findings (latest audit)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 144
+   },
+   "id": 52,
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__timeGroupAlias(ts, 1h), count(*) FILTER (WHERE risk='high') AS high, count(*) FILTER (WHERE risk='medium') AS medium, count(*) FILTER (WHERE risk='low') AS low FROM unifi_threat_events WHERE $__timeFilter(ts) AND NOT ignored GROUP BY 1 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Threat Watch \u2014 IPS events by risk",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 144
+   },
+   "id": 53,
+   "options": {
+    "cellHeight": "sm",
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT src_ip::text AS source, max(src_country) AS cc, count(*) AS events, max(risk) AS worst, count(*) FILTER (WHERE action <> 'block') AS not_blocked, max(ts) AS last FROM unifi_threat_events WHERE ts > now() - interval '7 days' AND NOT ignored GROUP BY 1 ORDER BY 3 DESC LIMIT 15",
+     "refId": "A"
+    }
+   ],
+   "title": "Threat Watch \u2014 top attackers (7d)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 152
+   },
+   "id": 54,
+   "options": {
+    "cellHeight": "sm",
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts, risk, action, left(signature, 90) AS signature, src_ip::text AS src, src_country AS cc, dst_ip::text AS dst, dst_port FROM unifi_threat_events WHERE NOT ignored ORDER BY ts DESC LIMIT 50",
+     "refId": "A"
+    }
+   ],
+   "title": "Threat Watch \u2014 latest events",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 12,
+    "x": 0,
+    "y": 160
+   },
+   "id": 55,
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__timeGroupAlias(hour, 1h), count(DISTINCT mac) AS clients FROM unifi_client_presence WHERE $__timeFilter(hour) GROUP BY 1 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Network Pulse \u2014 distinct clients per hour",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 12,
+    "x": 12,
+    "y": 160
+   },
+   "id": 56,
+   "options": {
+    "cellHeight": "sm",
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ap, count(*) AS clients, count(*) FILTER (WHERE NOT is_wired) AS wifi FROM unifi_client_state WHERE online GROUP BY 1 ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Network Pulse \u2014 clients per AP / port (now)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 12,
+    "x": 0,
+    "y": 167
+   },
+   "id": 57,
+   "options": {
+    "cellHeight": "sm",
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT t.label, t.mac, s.online, s.ap, s.essid, s.signal, s.ip, s.last_seen FROM unifi_tracked_devices t LEFT JOIN unifi_client_state s USING (mac) ORDER BY t.label",
+     "refId": "A"
+    }
+   ],
+   "title": "Wi-Fi Stalker \u2014 tracked devices",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 12,
+    "x": 12,
+    "y": 167
+   },
+   "id": 58,
+   "options": {
+    "cellHeight": "sm",
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT e.ts, e.kind, coalesce(s.name, s.hostname, e.mac) AS device, e.from_ap, e.to_ap FROM unifi_client_events e LEFT JOIN unifi_client_state s USING (mac) ORDER BY e.ts DESC LIMIT 50",
+     "refId": "A"
+    }
+   ],
+   "title": "Wi-Fi Stalker \u2014 latest connect / roam / leave",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 12,
+    "x": 0,
+    "y": 174
+   },
+   "id": 59,
+   "options": {
+    "cellHeight": "sm",
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT f->>'severity' AS severity, f->>'where' AS network, f->>'finding' AS finding, f->>'detail' AS detail FROM (SELECT findings FROM unifi_network_audit ORDER BY ts DESC LIMIT 1) a, jsonb_array_elements(a.findings) f",
+     "refId": "A"
+    }
+   ],
+   "title": "House Arrest \u2014 network posture findings (latest audit)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 12,
+    "x": 12,
+    "y": 174
+   },
+   "id": 60,
+   "options": {
+    "cellHeight": "sm",
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts, action, dry_run, ok, actor, left(args::text, 120) AS args FROM unifi_toolkit_actions ORDER BY ts DESC LIMIT 30",
+     "refId": "A"
+    }
+   ],
+   "title": "House Arrest \u2014 every write (and preview)",
+   "type": "table"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 181
+   },
+   "id": 61,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 182
+     },
+     "id": 62,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT left(\"flow_id\"::text, 120) AS \"flow_id\", \"ts\", left(\"risk\"::text, 120) AS \"risk\", left(\"action\"::text, 120) AS \"action\", left(\"signature\"::text, 120) AS \"signature\", left(\"signature_id\"::text, 120) AS \"signature_id\", left(\"category\"::text, 120) AS \"category\", \"src_ip\" FROM \"unifi_threat_events\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_threat_events \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 190
+     },
+     "id": 63,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"unifi_threat_events\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_threat_events \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 190
+     },
+     "id": 64,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"unifi_threat_events\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_threat_events \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "unifi_threat_events",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 182
+   },
+   "id": 65,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 183
+     },
+     "id": 66,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"cidr\", left(\"max_risk\"::text, 120) AS \"max_risk\", left(\"note\"::text, 120) AS \"note\", \"created_at\" FROM \"unifi_threat_ignore\" ORDER BY \"created_at\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_threat_ignore \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 191
+     },
+     "id": 67,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"unifi_threat_ignore\" WHERE \"created_at\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_threat_ignore \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 191
+     },
+     "id": 68,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"created_at\", 1h), count(*) AS rows FROM \"unifi_threat_ignore\" WHERE $__timeFilter(\"created_at\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_threat_ignore \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "unifi_threat_ignore",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 183
+   },
+   "id": 69,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 184
+     },
+     "id": 70,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"ts\", left(\"mac\"::text, 120) AS \"mac\", left(\"kind\"::text, 120) AS \"kind\", left(\"from_ap\"::text, 120) AS \"from_ap\", left(\"to_ap\"::text, 120) AS \"to_ap\", left(\"detail\"::text, 120) AS \"detail\" FROM \"unifi_client_events\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_client_events \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 192
+     },
+     "id": 71,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"unifi_client_events\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_client_events \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 192
+     },
+     "id": 72,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"unifi_client_events\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_client_events \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "unifi_client_events",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 184
+   },
+   "id": 73,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 185
+     },
+     "id": 74,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT left(\"mac\"::text, 120) AS \"mac\", left(\"name\"::text, 120) AS \"name\", left(\"hostname\"::text, 120) AS \"hostname\", left(\"ip\"::text, 120) AS \"ip\", left(\"oui\"::text, 120) AS \"oui\", \"is_wired\", left(\"ap\"::text, 120) AS \"ap\", left(\"essid\"::text, 120) AS \"essid\" FROM \"unifi_client_state\" ORDER BY \"updated_at\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_client_state \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 193
+     },
+     "id": 75,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"unifi_client_state\" WHERE \"updated_at\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_client_state \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 193
+     },
+     "id": 76,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"updated_at\", 1h), count(*) AS rows FROM \"unifi_client_state\" WHERE $__timeFilter(\"updated_at\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_client_state \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "unifi_client_state",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 185
+   },
+   "id": 77,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 186
+     },
+     "id": 78,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT left(\"mac\"::text, 120) AS \"mac\", \"hour\", left(\"ap\"::text, 120) AS \"ap\", \"samples\" FROM \"unifi_client_presence\" LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_client_presence \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 194
+     },
+     "id": 79,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"unifi_client_presence\"",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_client_presence \u2014 total rows",
+     "type": "stat"
+    }
+   ],
+   "title": "unifi_client_presence (no time column)",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 186
+   },
+   "id": 80,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 187
+     },
+     "id": 81,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT left(\"mac\"::text, 120) AS \"mac\", left(\"label\"::text, 120) AS \"label\", \"alert\", \"added_at\" FROM \"unifi_tracked_devices\" LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_tracked_devices \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 195
+     },
+     "id": 82,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"unifi_tracked_devices\"",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_tracked_devices \u2014 total rows",
+     "type": "stat"
+    }
+   ],
+   "title": "unifi_tracked_devices (no time column)",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 187
+   },
+   "id": 83,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 188
+     },
+     "id": 84,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"ts\", left(\"digest\"::text, 120) AS \"digest\", left(\"findings\"::text, 120) AS \"findings\", left(\"lockdowns\"::text, 120) AS \"lockdowns\", left(\"matrix\"::text, 120) AS \"matrix\" FROM \"unifi_network_audit\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_network_audit \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 196
+     },
+     "id": 85,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"unifi_network_audit\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_network_audit \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 196
+     },
+     "id": 86,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"unifi_network_audit\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_network_audit \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "unifi_network_audit",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 188
+   },
+   "id": 87,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 189
+     },
+     "id": 88,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT left(\"obj_id\"::text, 120) AS \"obj_id\", left(\"kind\"::text, 120) AS \"kind\", left(\"label\"::text, 120) AS \"label\", left(\"payload\"::text, 120) AS \"payload\", left(\"before\"::text, 120) AS \"before\", \"created_at\", \"released_at\" FROM \"unifi_toolkit_ledger\" ORDER BY \"created_at\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_toolkit_ledger \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 197
+     },
+     "id": 89,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"unifi_toolkit_ledger\" WHERE \"created_at\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_toolkit_ledger \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 197
+     },
+     "id": 90,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"created_at\", 1h), count(*) AS rows FROM \"unifi_toolkit_ledger\" WHERE $__timeFilter(\"created_at\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_toolkit_ledger \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "unifi_toolkit_ledger",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 189
+   },
+   "id": 91,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 190
+     },
+     "id": 92,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"ts\", left(\"action\"::text, 120) AS \"action\", left(\"args\"::text, 120) AS \"args\", \"dry_run\", \"ok\", left(\"result\"::text, 120) AS \"result\", left(\"host\"::text, 120) AS \"host\" FROM \"unifi_toolkit_actions\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_toolkit_actions \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 198
+     },
+     "id": 93,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"unifi_toolkit_actions\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_toolkit_actions \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 198
+     },
+     "id": 94,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"unifi_toolkit_actions\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "unifi_toolkit_actions \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "unifi_toolkit_actions",
+   "type": "row"
+  }
+ ],
+ "links": [
+  {
+   "type": "dashboards",
+   "tags": [
+    "nova-page"
+   ],
+   "asDropdown": false,
+   "title": "Pages",
+   "includeVars": false,
+   "keepTime": true
+  }
+ ],
+ "description": "Generated by scripts/nova_grafana_consolidate.py from grafana/sources: nova-network, network-clients, snmp-device-health, snmp-switch-ports, nova-dns, nova-tools-unifi. Edit the sources, not this file."
+}

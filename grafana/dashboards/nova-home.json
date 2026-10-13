@@ -1,0 +1,4875 @@
+{
+ "uid": "nova-home",
+ "title": "Home",
+ "tags": [
+  "nova",
+  "nova-page"
+ ],
+ "timezone": "browser",
+ "schemaVersion": 39,
+ "editable": true,
+ "graphTooltip": 1,
+ "time": {
+  "from": "now-24h",
+  "to": "now"
+ },
+ "refresh": "5m",
+ "templating": {
+  "list": []
+ },
+ "panels": [
+  {
+   "type": "row",
+   "title": "Home / Overview",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 24,
+    "h": 1
+   },
+   "id": 1
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "green",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 0,
+    "y": 1
+   },
+   "id": 2,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"Up\" FROM node_status WHERE status = 'up';",
+     "refId": "A"
+    }
+   ],
+   "title": "Fleet Nodes Up",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 6,
+    "y": 1
+   },
+   "id": 3,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"Down\" FROM node_status WHERE status <> 'up' OR status IS NULL;",
+     "refId": "A"
+    }
+   ],
+   "title": "Fleet Nodes Down",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "green",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 12,
+    "y": 1
+   },
+   "id": 4,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"Up\" FROM service_registry WHERE status = 'up';",
+     "refId": "A"
+    }
+   ],
+   "title": "Services Up",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 18,
+    "y": 1
+   },
+   "id": 5,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"Down\" FROM service_registry WHERE status = 'down';",
+     "refId": "A"
+    }
+   ],
+   "title": "Services Down",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 1,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "blue",
+        "value": null
+       },
+       {
+        "color": "green",
+        "value": 50
+       },
+       {
+        "color": "orange",
+        "value": 85
+       },
+       {
+        "color": "red",
+        "value": 100
+       }
+      ]
+     },
+     "unit": "fahrenheit"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 0,
+    "y": 5
+   },
+   "id": 6,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, temp_f FROM telemetry.weather ORDER BY ts DESC LIMIT 1;",
+     "refId": "A"
+    }
+   ],
+   "title": "Outdoor Temp",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "humidity"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 6,
+    "y": 5
+   },
+   "id": 7,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, humidity FROM telemetry.weather ORDER BY ts DESC LIMIT 1;",
+     "refId": "A"
+    }
+   ],
+   "title": "Outdoor Humidity",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 12,
+    "x": 12,
+    "y": 5
+   },
+   "id": 8,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT person AS \"Person\", room AS \"Room\", activity_state AS \"Activity\", round(confidence::numeric,2) AS \"Confidence\", last_confirmed AS \"Last Seen\" FROM presence_state ORDER BY person;",
+     "refId": "A"
+    }
+   ],
+   "title": "Who's Home (Presence)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 10
+   },
+   "id": 9,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT node_name AS \"Node\", status AS \"Status\", host(node_ip) AS \"IP\", os_family AS \"OS\", load_avg_1m AS \"Load 1m\", round(memory_percent::numeric,1) AS \"Mem %\", round(disk_percent::numeric,1) AS \"Disk %\", last_heartbeat AS \"Heartbeat\" FROM node_status ORDER BY node_name;",
+     "refId": "A"
+    }
+   ],
+   "title": "Fleet Node Status",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 10
+   },
+   "id": 10,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT service_name AS \"Service\", node_name AS \"Node\", host(host) AS \"Host\", port AS \"Port\", status AS \"Status\", last_heartbeat AS \"Heartbeat\" FROM service_registry ORDER BY (status='up') DESC, service_name;",
+     "refId": "A"
+    }
+   ],
+   "title": "Service Registry",
+   "type": "table"
+  },
+  {
+   "type": "row",
+   "title": "Home & Sensors",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 18,
+    "w": 24,
+    "h": 1
+   },
+   "id": 11
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "lineWidth": 2
+     },
+     "unit": "fahrenheit"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 19
+   },
+   "id": 12,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, temp_f AS \"Outdoor Temp\", feels_like_f AS \"Feels Like\", dew_point_f AS \"Dew Point\", temp_indoor_f AS \"Indoor Temp\" FROM telemetry.weather WHERE $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "Outdoor Temperature (F)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "lineWidth": 2
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Pressure (inHg)"
+      },
+      "properties": [
+       {
+        "id": "custom.axisPlacement",
+        "value": "right"
+       },
+       {
+        "id": "unit",
+        "value": "pressureinhg"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byRegexp",
+       "options": "/Humidity/"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "humidity"
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 19
+   },
+   "id": 13,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, humidity AS \"Outdoor Humidity\", humidity_indoor AS \"Indoor Humidity\", pressure_in AS \"Pressure (inHg)\" FROM telemetry.weather WHERE $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "Humidity & Pressure",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 5,
+      "lineWidth": 2
+     },
+     "unit": "velocitymph"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 27
+   },
+   "id": 14,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, wind_speed_mph AS \"Wind Speed\", wind_gust_mph AS \"Wind Gust\" FROM telemetry.weather WHERE $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "Wind (Speed & Gust mph)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "lineWidth": 2
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Solar Radiation"
+      },
+      "properties": [
+       {
+        "id": "custom.axisPlacement",
+        "value": "right"
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 27
+   },
+   "id": 15,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, uv_index AS \"UV Index\", solar_radiation AS \"Solar Radiation\" FROM telemetry.weather WHERE $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "UV Index & Solar Radiation",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "lineWidth": 2
+     },
+     "unit": "fahrenheit"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 35
+   },
+   "id": 16,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, room AS metric, temp_f FROM telemetry.climate WHERE temp_f IS NOT NULL AND $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "Room Climate - Temperature (F)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "lineWidth": 2
+     },
+     "unit": "humidity"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 35
+   },
+   "id": 17,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, room AS metric, humidity FROM telemetry.climate WHERE humidity IS NOT NULL AND $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "Room Climate - Humidity (%)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 12,
+    "x": 0,
+    "y": 43
+   },
+   "id": 18,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT person AS \"Person\", room AS \"Room\", activity_state AS \"Activity\", round(confidence::numeric,2) AS \"Confidence\", source AS \"Source\", last_confirmed AS \"Last Confirmed\" FROM presence_state ORDER BY person;",
+     "refId": "A"
+    }
+   ],
+   "title": "Current Presence (live state)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 12,
+    "x": 12,
+    "y": 43
+   },
+   "id": 19,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS \"Time\", person AS \"Person\", room AS \"Room\", round(confidence::numeric,2) AS \"Confidence\", method AS \"Method\" FROM telemetry.presence WHERE $__timeFilter(ts) ORDER BY ts DESC LIMIT 50;",
+     "refId": "A"
+    }
+   ],
+   "title": "Recent Presence Events (telemetry.presence)",
+   "type": "table"
+  },
+  {
+   "type": "row",
+   "title": "Home / Environment",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 49,
+    "w": 24,
+    "h": 1
+   },
+   "id": 20
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 50
+   },
+   "id": 21,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT DISTINCT ON (room) room AS \"Room\", person AS \"Person\", round(confidence::numeric,2) AS \"Confidence\", method AS \"Method\", ts AS \"Last Seen\" FROM telemetry.presence WHERE method = 'mmwave' AND confidence > 0 AND ts > now() - interval '5 minutes' ORDER BY room, ts DESC;",
+     "refId": "A"
+    }
+   ],
+   "title": "Current Room Occupancy (FP300 mmWave, last 5m)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "lineWidth": 2
+     },
+     "max": 1,
+     "min": 0,
+     "unit": "percentunit"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 50
+   },
+   "id": 22,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, room AS metric, confidence AS value FROM telemetry.presence WHERE method = 'mmwave' AND confidence IS NOT NULL AND $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "Presence Confidence by Room (mmwave)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "lineWidth": 2
+     },
+     "unit": "fahrenheit"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 58
+   },
+   "id": 23,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, room AS metric, temp_f AS value FROM telemetry.climate WHERE source = 'fp300' AND temp_f IS NOT NULL AND $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "Temperature by Room (FP300, F)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "lineWidth": 2
+     },
+     "unit": "humidity"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 58
+   },
+   "id": 24,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, room AS metric, humidity AS value FROM telemetry.climate WHERE source = 'fp300' AND humidity IS NOT NULL AND $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "Humidity by Room (FP300, %)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 5,
+      "lineWidth": 2
+     },
+     "unit": "lux"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 66
+   },
+   "id": 25,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, room AS metric, light_lux AS value FROM telemetry.climate WHERE source = 'fp300' AND light_lux IS NOT NULL AND $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "Light Level by Room (FP300, lux)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "max": 2000,
+     "min": 400,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 800
+       },
+       {
+        "color": "red",
+        "value": 1200
+       }
+      ]
+     },
+     "unit": "ppm"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 12,
+    "y": 66
+   },
+   "id": 26,
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "showThresholdLabels": false,
+    "showThresholdMarkers": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, co2 FROM telemetry.air_quality WHERE co2 IS NOT NULL ORDER BY ts DESC LIMIT 1;",
+     "refId": "A"
+    }
+   ],
+   "title": "CO2 (latest, ppm)",
+   "type": "gauge"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 51
+       },
+       {
+        "color": "orange",
+        "value": 101
+       },
+       {
+        "color": "red",
+        "value": 151
+       },
+       {
+        "color": "purple",
+        "value": 201
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 18,
+    "y": 66
+   },
+   "id": 27,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, aqi_pm25 FROM telemetry.air_quality WHERE aqi_pm25 IS NOT NULL ORDER BY ts DESC LIMIT 1;",
+     "refId": "A"
+    }
+   ],
+   "title": "AQI (PM2.5, latest)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "lineWidth": 2
+     },
+     "unit": "conppm"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 74
+   },
+   "id": 28,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, pm25 AS \"PM2.5\", pm10 AS \"PM10\" FROM telemetry.air_quality WHERE $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "Particulates PM2.5 & PM10 (ug/m3)",
+   "type": "timeseries"
+  },
+  {
+   "type": "row",
+   "title": "Home Sensors (HA)",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 82,
+    "w": 24,
+    "h": 1
+   },
+   "id": 29
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "max": 100,
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 20
+       },
+       {
+        "color": "green",
+        "value": 50
+       }
+      ]
+     },
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 6,
+    "x": 0,
+    "y": 83
+   },
+   "id": 30,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "orientation": "auto",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "value_and_name"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT DISTINCT ON (entity_id) friendly_name AS metric, state_numeric AS value FROM telemetry.ha_sensors WHERE device_class='battery' AND state_numeric IS NOT NULL ORDER BY entity_id, ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Lowest Battery (live)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Battery %"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "percent"
+       },
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "mode": "gradient",
+         "type": "gauge"
+        }
+       },
+       {
+        "id": "min",
+        "value": 0
+       },
+       {
+        "id": "max",
+        "value": 100
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "red",
+           "value": null
+          },
+          {
+           "color": "orange",
+           "value": 20
+          },
+          {
+           "color": "green",
+           "value": 50
+          }
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 9,
+    "x": 6,
+    "y": 83
+   },
+   "id": 31,
+   "options": {
+    "showHeader": true,
+    "sortBy": [
+     {
+      "desc": false,
+      "displayName": "Battery %"
+     }
+    ]
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT DISTINCT ON (entity_id) friendly_name AS \"Device\", COALESCE(area,'-') AS \"Area\", state_numeric AS \"Battery %\", ts AS \"Last Seen\" FROM telemetry.ha_sensors WHERE device_class='battery' AND state_numeric IS NOT NULL ORDER BY entity_id, ts DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Battery Levels (latest per device)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Battery %"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "percent"
+       },
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-background"
+        }
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "red",
+           "value": null
+          },
+          {
+           "color": "orange",
+           "value": 15
+          }
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 9,
+    "x": 15,
+    "y": 83
+   },
+   "id": 32,
+   "options": {
+    "showHeader": true,
+    "sortBy": [
+     {
+      "desc": false,
+      "displayName": "Battery %"
+     }
+    ]
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT * FROM (SELECT DISTINCT ON (entity_id) friendly_name AS \"Device\", COALESCE(area,'-') AS \"Area\", state_numeric AS \"Battery %\", ts AS \"Last Seen\" FROM telemetry.ha_sensors WHERE device_class='battery' AND state_numeric IS NOT NULL ORDER BY entity_id, ts DESC) q WHERE q.\"Battery %\" < 25 ORDER BY q.\"Battery %\" ASC",
+     "refId": "A"
+    }
+   ],
+   "title": "Low Battery Alert (<25%)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 5,
+      "lineWidth": 2,
+      "spanNulls": true
+     },
+     "max": 100,
+     "min": 0,
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 91
+   },
+   "id": 33,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "min"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, friendly_name AS metric, state_numeric FROM telemetry.ha_sensors WHERE device_class='battery' AND state_numeric IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Battery Levels Over Time",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 15,
+      "lineWidth": 2
+     },
+     "unit": "lux"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 99
+   },
+   "id": 34,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, friendly_name AS metric, state_numeric FROM telemetry.ha_sensors WHERE device_class='illuminance' AND state_numeric IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Illuminance (lux)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "lineWidth": 2
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 99
+   },
+   "id": 35,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, friendly_name AS metric, state_numeric FROM telemetry.ha_sensors WHERE device_class IN ('pm25','pm10','pm1','carbon_dioxide','carbon_monoxide','volatile_organic_compounds','volatile_organic_compounds_parts','nitrogen_dioxide','ozone','aqi') AND state_numeric IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Air Quality (PM2.5 / CO2 / VOC)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "lineWidth": 2
+     },
+     "unit": "fahrenheit"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 107
+   },
+   "id": 36,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, friendly_name AS metric, state_numeric FROM telemetry.ha_sensors WHERE device_class='temperature' AND state_numeric IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Sensor Temperature (F)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "fillOpacity": 80,
+      "lineWidth": 0
+     },
+     "mappings": [
+      {
+       "options": {
+        "0": {
+         "color": "dark-blue",
+         "text": "clear"
+        },
+        "1": {
+         "color": "orange",
+         "text": "active"
+        }
+       },
+       "type": "value"
+      }
+     ],
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "dark-blue",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 107
+   },
+   "id": 37,
+   "options": {
+    "alignValue": "left",
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "mergeValues": true,
+    "rowHeight": 0.9,
+    "showValue": "never"
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, friendly_name AS metric, state_numeric FROM telemetry.ha_sensors WHERE device_class IN ('motion','occupancy','door','window','opening','presence','vibration') AND state_numeric IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Motion / Occupancy / Contact Events",
+   "type": "state-timeline"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "State"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-text"
+        }
+       },
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "options": {
+           "locked": {
+            "color": "green"
+           },
+           "unlocked": {
+            "color": "red"
+           }
+          },
+          "type": "value"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 0,
+    "y": 115
+   },
+   "id": 38,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT DISTINCT ON (entity_id) friendly_name AS \"Lock\", COALESCE(area,'-') AS \"Area\", COALESCE(state_text, CASE WHEN state_numeric=0 THEN 'locked' WHEN state_numeric=1 THEN 'unlocked' END) AS \"State\", ts AS \"Last Seen\" FROM telemetry.ha_sensors WHERE domain='lock' OR device_class='lock' ORDER BY entity_id, ts DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Lock States (latest)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "State"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-text"
+        }
+       },
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "options": {
+           "off": {
+            "color": "dark-gray"
+           },
+           "on": {
+            "color": "green"
+           }
+          },
+          "type": "value"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 16,
+    "x": 8,
+    "y": 115
+   },
+   "id": 39,
+   "options": {
+    "showHeader": true,
+    "sortBy": [
+     {
+      "desc": false,
+      "displayName": "Domain"
+     }
+    ]
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT DISTINCT ON (entity_id) friendly_name AS \"Entity\", domain AS \"Domain\", COALESCE(area,'-') AS \"Area\", COALESCE(state_text,'') AS \"State\", state_numeric AS \"Brightness\", ts AS \"Last Seen\" FROM telemetry.ha_sensors WHERE domain IN ('light','switch') ORDER BY entity_id, ts DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Light & Switch States (latest)",
+   "type": "table"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 122
+   },
+   "id": 40,
+   "panels": [],
+   "title": "Smart Lighting (Hue) & Energy",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "yellow",
+      "mode": "fixed"
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 0,
+    "y": 123
+   },
+   "id": 41,
+   "options": {
+    "colorMode": "value",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT COUNT(*) AS \"On\" FROM hue_light_state WHERE is_on = true",
+     "refId": "A"
+    }
+   ],
+   "title": "Lights On",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "dark-gray",
+      "mode": "fixed"
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 4,
+    "y": 123
+   },
+   "id": 42,
+   "options": {
+    "colorMode": "value",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT COUNT(*) AS \"Off\" FROM hue_light_state WHERE is_on = false",
+     "refId": "A"
+    }
+   ],
+   "title": "Lights Off",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 8,
+    "y": 123
+   },
+   "id": 43,
+   "options": {
+    "colorMode": "background",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT COUNT(*) AS \"Unreachable\" FROM hue_light_state WHERE reachable = false",
+     "refId": "A"
+    }
+   ],
+   "title": "Unreachable",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 123
+   },
+   "id": 44,
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "values": [
+      "value"
+     ]
+    },
+    "pieType": "donut",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT room AS metric, COUNT(*) AS value FROM hue_light_state GROUP BY room ORDER BY value DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Lights by Room",
+   "type": "piechart"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 127
+   },
+   "id": 45,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT room AS \"Room\", name AS \"Light\", CASE WHEN is_on THEN 'ON' ELSE 'off' END AS \"State\", brightness AS \"Brightness\", CASE WHEN reachable THEN 'yes' ELSE 'NO' END AS \"Reachable\" FROM hue_light_state ORDER BY room, name",
+     "refId": "A"
+    }
+   ],
+   "title": "Hue Lights by Room",
+   "type": "table"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 135
+   },
+   "id": 46,
+   "panels": [],
+   "title": "JARVIS Presence & Activity",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "mappings": [
+      {
+       "options": {
+        "AWAY": {
+         "color": "orange"
+        },
+        "HOME": {
+         "color": "green"
+        }
+       },
+       "type": "value"
+      }
+     ]
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 0,
+    "y": 136
+   },
+   "id": 47,
+   "options": {
+    "colorMode": "background",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "/.*/"
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT CASE WHEN confidence > 0 THEN 'HOME' ELSE 'AWAY' END AS \"Status\" FROM telemetry.presence WHERE method = 'gps_tracker' AND person = 'jordan' ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Jordan Status",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 6,
+    "y": 136
+   },
+   "id": 48,
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "/Activity/"
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT state AS \"Activity\" FROM telemetry.activity WHERE person = 'jordan' ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Current Activity",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 12,
+    "y": 136
+   },
+   "id": 49,
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(DISTINCT method) AS \"Methods\" FROM telemetry.presence WHERE ts > now() - interval '1 day'",
+     "refId": "A"
+    }
+   ],
+   "title": "Detection Methods (24h)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "points",
+      "pointSize": 5
+     },
+     "max": 1,
+     "min": 0,
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 140
+   },
+   "id": 50,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, room AS metric, max(confidence) AS value FROM telemetry.presence WHERE $__timeFilter(ts) AND confidence > 0 GROUP BY ts, room ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Room Presence Confidence (all methods)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 12,
+    "y": 140
+   },
+   "id": 51,
+   "options": {
+    "legend": {
+     "showLegend": false
+    },
+    "orientation": "horizontal"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT method AS \"Method\", count(*) AS \"Events\" FROM telemetry.presence WHERE ts > now() - interval '6 hours' GROUP BY method ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Presence Signals by Method (6h)",
+   "type": "barchart"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "fillOpacity": 80
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 18,
+    "y": 140
+   },
+   "id": 52,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "mergeValues": true,
+    "showValue": "auto"
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, 'Activity' AS metric, state FROM telemetry.activity WHERE person = 'jordan' AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Activity Timeline (Jordan)",
+   "type": "state-timeline"
+  },
+  {
+   "type": "row",
+   "title": "HomeKit Sensors \u2014 Climate, Air, Battery",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 148,
+    "w": 24,
+    "h": 1
+   },
+   "id": 53
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "max": 100,
+     "min": 0,
+     "thresholds": {
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 20
+       },
+       {
+        "color": "green",
+        "value": 40
+       }
+      ]
+     },
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 0,
+    "y": 149
+   },
+   "id": 54,
+   "options": {
+    "displayMode": "gradient",
+    "orientation": "horizontal"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT DISTINCT ON (device) device AS \"Device\", level FROM telemetry.battery WHERE level IS NOT NULL ORDER BY device, ts DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Battery levels (latest)",
+   "type": "bargauge"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 300
+       },
+       {
+        "color": "red",
+        "value": 500
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 8,
+    "y": 149
+   },
+   "id": 55,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT voc AS \"VOC (ug/m3)\" FROM telemetry.air_quality WHERE voc IS NOT NULL ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Air Quality \u2014 Eve Room (rack)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 95
+       },
+       {
+        "color": "red",
+        "value": 105
+       }
+      ]
+     },
+     "unit": "fahrenheit"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 16,
+    "y": 149
+   },
+   "id": 56,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT temp_f FROM telemetry.climate WHERE source='homekit' AND room='office' AND temp_f IS NOT NULL ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Rack temp (Eve Room)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 8
+     },
+     "unit": "fahrenheit"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 156
+   },
+   "id": 57,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, temp_f AS value, room AS metric FROM telemetry.climate WHERE temp_f IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Temperature by room (HomeKit + all sources)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 8
+     },
+     "unit": "lux"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 156
+   },
+   "id": 58,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, light_lux AS value, room AS metric FROM telemetry.climate WHERE light_lux IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Light level (lux) by room",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 8
+     },
+     "unit": "humidity"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 164
+   },
+   "id": 59,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, humidity AS value, room AS metric FROM telemetry.climate WHERE humidity IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Humidity by room",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10
+     },
+     "unit": "con\u00b5gm3"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 164
+   },
+   "id": 60,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, voc AS value, room AS metric FROM telemetry.air_quality WHERE voc IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "VOC density (air quality)",
+   "type": "timeseries"
+  },
+  {
+   "type": "row",
+   "title": "Zigbee Mesh Health",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 172,
+    "w": 24,
+    "h": 1
+   },
+   "id": 61
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "blue",
+      "mode": "fixed"
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 0,
+    "y": 173
+   },
+   "id": 62,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(*) FROM telemetry.zigbee_link WHERE ts=(SELECT max(ts) FROM telemetry.zigbee_link)",
+     "refId": "A"
+    }
+   ],
+   "title": "Devices (latest)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "purple",
+      "mode": "fixed"
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 6,
+    "y": 173
+   },
+   "id": 63,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(*) FROM telemetry.zigbee_link WHERE type='Router' AND ts=(SELECT max(ts) FROM telemetry.zigbee_link)",
+     "refId": "A"
+    }
+   ],
+   "title": "Routers (latest)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "max": 255,
+     "min": 0,
+     "thresholds": {
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 50
+       },
+       {
+        "color": "green",
+        "value": 100
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 12,
+    "y": 173
+   },
+   "id": 64,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT round(avg(lqi)) FROM telemetry.zigbee_link WHERE ts=(SELECT max(ts) FROM telemetry.zigbee_link)",
+     "refId": "A"
+    }
+   ],
+   "title": "Avg LQI (latest)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 1
+       },
+       {
+        "color": "red",
+        "value": 3
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 18,
+    "y": 173
+   },
+   "id": 65,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(*) FROM telemetry.zigbee_link WHERE lqi < 50 AND ts=(SELECT max(ts) FROM telemetry.zigbee_link)",
+     "refId": "A"
+    }
+   ],
+   "title": "Weak links (LQI < 50)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 5,
+      "spanNulls": true
+     },
+     "max": 255,
+     "min": 0
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 16,
+    "x": 0,
+    "y": 178
+   },
+   "id": 66,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, lqi AS value, device AS metric FROM telemetry.zigbee_link WHERE $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Link quality per device (watch it climb as the mesh settles)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "blue",
+      "mode": "fixed"
+     },
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 60
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 8,
+    "x": 16,
+    "y": 178
+   },
+   "id": 67,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, count(*) AS value, 'devices' AS metric FROM telemetry.zigbee_link WHERE $__timeFilter(ts) GROUP BY ts ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Mesh device count",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "LQI"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-background"
+        }
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "steps": [
+          {
+           "color": "red",
+           "value": null
+          },
+          {
+           "color": "yellow",
+           "value": 50
+          },
+          {
+           "color": "green",
+           "value": 100
+          }
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 11,
+    "w": 24,
+    "x": 0,
+    "y": 188
+   },
+   "id": 68,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT device AS \"Device\", type AS \"Type\", lqi AS \"LQI\" FROM telemetry.zigbee_link WHERE ts=(SELECT max(ts) FROM telemetry.zigbee_link) ORDER BY lqi",
+     "refId": "A"
+    }
+   ],
+   "title": "Current link quality (per device)",
+   "type": "table"
+  },
+  {
+   "type": "row",
+   "title": "Garden & Air (Ambient Weather)",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 199,
+    "w": 24,
+    "h": 1
+   },
+   "id": 69
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "max": 100,
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 25
+       },
+       {
+        "color": "green",
+        "value": 35
+       }
+      ]
+     },
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 4,
+    "x": 0,
+    "y": 200
+   },
+   "id": 70,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT moisture_pct FROM telemetry.soil WHERE sensor='soil1' ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Soil 1 \u00b7 First raised bed",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "max": 100,
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 25
+       },
+       {
+        "color": "green",
+        "value": 35
+       }
+      ]
+     },
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 4,
+    "x": 4,
+    "y": 200
+   },
+   "id": 71,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT moisture_pct FROM telemetry.soil WHERE sensor='soil2' ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Soil 2 \u00b7 Second raised bed",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "max": 100,
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 20
+       },
+       {
+        "color": "green",
+        "value": 30
+       }
+      ]
+     },
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 4,
+    "x": 8,
+    "y": 200
+   },
+   "id": 72,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT moisture_pct FROM telemetry.soil WHERE sensor='soil3' ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Soil 3 \u00b7 Patio potted plant",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 12
+       },
+       {
+        "color": "orange",
+        "value": 35
+       },
+       {
+        "color": "red",
+        "value": 55
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 12,
+    "y": 200
+   },
+   "id": 73,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT pm25 FROM telemetry.weather WHERE pm25 IS NOT NULL ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Outdoor PM2.5 (\u00b5g/m\u00b3)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 800
+       },
+       {
+        "color": "orange",
+        "value": 1200
+       },
+       {
+        "color": "red",
+        "value": 2000
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 18,
+    "y": 200
+   },
+   "id": 74,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT co2 FROM telemetry.weather WHERE co2 IS NOT NULL ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Indoor CO\u2082 (ppm)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 15,
+      "spanNulls": true,
+      "thresholdsStyle": {
+       "mode": "dashed"
+      }
+     },
+     "max": 100,
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "transparent",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 25
+       },
+       {
+        "color": "yellow",
+        "value": 35
+       }
+      ]
+     },
+     "unit": "percent"
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "soil1"
+      },
+      "properties": [
+       {
+        "id": "displayName",
+        "value": "First raised bed"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "soil2"
+      },
+      "properties": [
+       {
+        "id": "displayName",
+        "value": "Second raised bed"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "soil3"
+      },
+      "properties": [
+       {
+        "id": "displayName",
+        "value": "Patio potted plant"
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 205
+   },
+   "id": 75,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, moisture_pct AS value, sensor AS metric FROM telemetry.soil WHERE $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Soil moisture (per sensor)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "orange",
+      "mode": "fixed"
+     },
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 25,
+      "spanNulls": true
+     },
+     "unit": "con\u03bcgm3"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 205
+   },
+   "id": 76,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, pm25 AS value, 'outdoor PM2.5' AS metric FROM telemetry.weather WHERE pm25 IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Outdoor PM2.5",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "spanNulls": true
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 214
+   },
+   "id": 77,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, co2 AS value, 'CO2 ppm' AS metric FROM telemetry.weather WHERE co2 IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, pm10 AS value, 'indoor PM10' AS metric FROM telemetry.weather WHERE pm10 IS NOT NULL AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "B"
+    }
+   ],
+   "title": "Indoor CO\u2082 + PM10 (AQIN)",
+   "type": "timeseries"
+  },
+  {
+   "type": "row",
+   "title": "Nova \u2014 Fridge Sensor",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 222,
+    "w": 24,
+    "h": 1
+   },
+   "id": 78
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "blue",
+        "value": null
+       },
+       {
+        "color": "green",
+        "value": 34
+       },
+       {
+        "color": "orange",
+        "value": 40
+       },
+       {
+        "color": "red",
+        "value": 45
+       }
+      ]
+     },
+     "unit": "fahrenheit"
+    }
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 8,
+    "x": 0,
+    "y": 223
+   },
+   "options": {
+    "colorMode": "background",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT temp_f FROM telemetry.aux_sensors WHERE channel=1 ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Fridge Temp (now)",
+   "type": "stat",
+   "id": 79
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "humidity"
+    }
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 8,
+    "x": 8,
+    "y": 223
+   },
+   "options": {
+    "colorMode": "background",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT humidity FROM telemetry.aux_sensors WHERE channel=1 ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Fridge Humidity (now)",
+   "type": "stat",
+   "id": 80
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "green",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "none"
+    }
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 8,
+    "x": 16,
+    "y": 223
+   },
+   "options": {
+    "colorMode": "background",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT battery FROM telemetry.aux_sensors WHERE channel=1 ORDER BY ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Sensor Battery",
+   "type": "stat",
+   "id": 81
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "lineWidth": 2,
+      "showPoints": "never",
+      "thresholdsStyle": {
+       "mode": "line"
+      }
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "blue",
+        "value": null
+       },
+       {
+        "color": "green",
+        "value": 34
+       },
+       {
+        "color": "orange",
+        "value": 40
+       },
+       {
+        "color": "red",
+        "value": 45
+       }
+      ]
+     },
+     "unit": "fahrenheit"
+    }
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 228
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, temp_f FROM telemetry.aux_sensors WHERE channel=1 AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Fridge Temperature (\u00b0F)",
+   "type": "timeseries",
+   "id": 82
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "lineWidth": 2,
+      "showPoints": "never"
+     },
+     "unit": "humidity"
+    }
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 228
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, humidity FROM telemetry.aux_sensors WHERE channel=1 AND $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Fridge Humidity (%)",
+   "type": "timeseries",
+   "id": 83
+  },
+  {
+   "type": "row",
+   "title": "Home Devices (Bluetooth & A/V)",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 237,
+    "w": 24,
+    "h": 1
+   },
+   "id": 84
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "blue",
+      "mode": "fixed"
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 8,
+    "x": 0,
+    "y": 238
+   },
+   "id": 85,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(DISTINCT device_mac) FROM telemetry.bluetooth WHERE ts > now() - interval '5 min'",
+     "refId": "A"
+    }
+   ],
+   "title": "BLE devices seen (5 min)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "green",
+      "mode": "fixed"
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 8,
+    "x": 8,
+    "y": 238
+   },
+   "id": 86,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(DISTINCT device_mac) FROM telemetry.bluetooth WHERE is_connected = true AND ts > now() - interval '5 min'",
+     "refId": "A"
+    }
+   ],
+   "title": "BLE connected now",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "purple",
+      "mode": "fixed"
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 8,
+    "x": 16,
+    "y": 238
+   },
+   "id": 87,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(DISTINCT device_id) FROM telemetry.av_state a WHERE power IN ('on','ON','true') AND ts = (SELECT max(ts) FROM telemetry.av_state b WHERE b.device_id = a.device_id)",
+     "refId": "A"
+    }
+   ],
+   "title": "A/V devices powered on",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 11,
+    "w": 12,
+    "x": 0,
+    "y": 243
+   },
+   "id": 88,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT DISTINCT ON (device_mac) coalesce(device_name, device_mac) AS \"Device\", device_type AS \"Type\", rssi AS \"RSSI\", battery_pct AS \"Battery %\" FROM telemetry.bluetooth WHERE ts > now() - interval '10 min' ORDER BY device_mac, ts DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Bluetooth devices (latest)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 5,
+      "spanNulls": true
+     },
+     "unit": "dBm"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 11,
+    "w": 12,
+    "x": 12,
+    "y": 243
+   },
+   "id": 89,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, rssi AS value, coalesce(device_name, device_mac) AS metric FROM telemetry.bluetooth WHERE $__timeFilter(ts) AND device_mac IN (SELECT device_mac FROM telemetry.bluetooth WHERE ts > now() - interval '30 min' GROUP BY device_mac ORDER BY max(rssi) DESC LIMIT 10) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "BLE signal (RSSI) \u2014 strongest devices",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 254
+   },
+   "id": 90,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT DISTINCT ON (device_id) device_id AS \"Device\", device_type AS \"Type\", zone AS \"Zone\", power AS \"Power\", source_input AS \"Source\", volume AS \"Volume\", media_title AS \"Now Playing\" FROM telemetry.av_state WHERE ts > now() - interval '1 day' ORDER BY device_id, ts DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "A/V device state (latest)",
+   "type": "table"
+  },
+  {
+   "type": "row",
+   "title": "HomeKit Outlets",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 263,
+    "w": 24,
+    "h": 1
+   },
+   "id": 91
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "blue",
+        "value": 0
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 0,
+    "y": 264
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) FILTER (WHERE power_state) AS value FROM (SELECT DISTINCT ON (uid) room,accessory,outlet,power_state,in_use,ts FROM telemetry.homekit_outlets WHERE ts>now()-interval '15 min' ORDER BY uid, ts DESC) s",
+     "refId": "A"
+    }
+   ],
+   "title": "Outlets ON now",
+   "type": "stat",
+   "id": 92
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": 0
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 6,
+    "y": 264
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) FILTER (WHERE in_use) AS value FROM (SELECT DISTINCT ON (uid) room,accessory,outlet,power_state,in_use,ts FROM telemetry.homekit_outlets WHERE ts>now()-interval '15 min' ORDER BY uid, ts DESC) s",
+     "refId": "A"
+    }
+   ],
+   "title": "Outlets in use now",
+   "type": "stat",
+   "id": 93
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "blue",
+        "value": 0
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 12,
+    "y": 264
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS value FROM (SELECT DISTINCT ON (uid) room,accessory,outlet,power_state,in_use,ts FROM telemetry.homekit_outlets WHERE ts>now()-interval '15 min' ORDER BY uid, ts DESC) s",
+     "refId": "A"
+    }
+   ],
+   "title": "Outlets tracked",
+   "type": "stat",
+   "id": 94
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "blue",
+        "value": 0
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 18,
+    "y": 264
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(DISTINCT room) AS value FROM (SELECT DISTINCT ON (uid) room,accessory,outlet,power_state,in_use,ts FROM telemetry.homekit_outlets WHERE ts>now()-interval '15 min' ORDER BY uid, ts DESC) s",
+     "refId": "A"
+    }
+   ],
+   "title": "Rooms",
+   "type": "stat",
+   "id": 95
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 16,
+    "x": 0,
+    "y": 268
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__timeGroup(ts,'5m') AS time, count(*) FILTER (WHERE in_use) AS \"In use\", count(*) FILTER (WHERE power_state) AS \"Powered\" FROM telemetry.homekit_outlets WHERE $__timeFilter(ts) GROUP BY 1 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Outlets in use over time",
+   "type": "timeseries",
+   "id": 96
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 8,
+    "x": 16,
+    "y": 268
+   },
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "values": [
+      "value",
+      "percent"
+     ]
+    },
+    "pieType": "donut",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT room AS metric, count(*) FILTER (WHERE in_use) AS value FROM (SELECT DISTINCT ON (uid) room,accessory,outlet,power_state,in_use,ts FROM telemetry.homekit_outlets WHERE ts>now()-interval '15 min' ORDER BY uid, ts DESC) s GROUP BY room HAVING count(*) FILTER (WHERE in_use)>0",
+     "refId": "A"
+    }
+   ],
+   "title": "In-use by room",
+   "type": "piechart",
+   "id": 97
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 16,
+    "x": 0,
+    "y": 277
+   },
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT room AS \"Room\", accessory AS \"Accessory\", outlet AS \"Outlet\", CASE WHEN power_state THEN '\ud83d\udfe2 on' ELSE '\u26ab off' END AS \"Power\", CASE WHEN in_use THEN 'yes' ELSE '\u2014' END AS \"In use\" FROM (SELECT DISTINCT ON (uid) room,accessory,outlet,power_state,in_use,ts FROM telemetry.homekit_outlets WHERE ts>now()-interval '15 min' ORDER BY uid, ts DESC) s ORDER BY power_state DESC, room",
+     "refId": "A"
+    }
+   ],
+   "title": "Current outlet state",
+   "type": "table",
+   "id": 98
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 8,
+    "x": 16,
+    "y": 277
+   },
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS \"Time\", device_id AS \"Device\", event AS \"Event\" FROM telemetry.device_power_events WHERE $__timeFilter(ts) ORDER BY ts DESC LIMIT 20",
+     "refId": "A"
+    }
+   ],
+   "title": "Power events",
+   "type": "table",
+   "id": 99
+  },
+  {
+   "type": "row",
+   "title": "Hue Lights",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 287,
+    "w": 24,
+    "h": 1
+   },
+   "id": 100
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "blue",
+        "value": 0
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 0,
+    "y": 288
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) FILTER (WHERE is_on) AS value FROM (SELECT DISTINCT ON (light_id) * FROM telemetry.hue_light_history WHERE ts>now()-interval '6 min' ORDER BY light_id, ts DESC) s",
+     "refId": "A"
+    }
+   ],
+   "title": "Lights On now",
+   "type": "stat",
+   "id": 101
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "blue",
+        "value": 0
+       }
+      ]
+     },
+     "unit": "watt"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 6,
+    "y": 288
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT round(sum(est_watts)::numeric,0) AS value FROM (SELECT DISTINCT ON (light_id) * FROM telemetry.hue_light_history WHERE ts>now()-interval '6 min' ORDER BY light_id, ts DESC) s",
+     "refId": "A"
+    }
+   ],
+   "title": "Est. power now (W)",
+   "type": "stat",
+   "id": 102
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "blue",
+        "value": 0
+       }
+      ]
+     },
+     "unit": "kelvin"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 12,
+    "y": 288
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT round(avg(ct_kelvin)) AS value FROM (SELECT DISTINCT ON (light_id) * FROM telemetry.hue_light_history WHERE ts>now()-interval '6 min' ORDER BY light_id, ts DESC) s WHERE is_on AND colormode='ct'",
+     "refId": "A"
+    }
+   ],
+   "title": "Avg color temp now (K)",
+   "type": "stat",
+   "id": 103
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "blue",
+        "value": 0
+       }
+      ]
+     },
+     "unit": "currencyUSD"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 18,
+    "y": 288
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT round((sum(est_watts)*(2.0/60.0)/1000.0*0.18)::numeric,2) AS value FROM telemetry.hue_light_history WHERE $__timeFilter(ts)",
+     "refId": "A"
+    }
+   ],
+   "title": "Est. cost (range)",
+   "type": "stat",
+   "id": 104
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "unit": "kelvin"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 292
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__timeGroup(ts,'2m') AS time, avg(ct_kelvin) AS \"Avg K (warm\u2193 / cool\u2191)\" FROM telemetry.hue_light_history WHERE is_on AND colormode='ct' AND ct_kelvin IS NOT NULL AND $__timeFilter(ts) GROUP BY 1 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Color Temperature (K) \u2014 circadian",
+   "type": "timeseries",
+   "id": 105
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 30,
+      "lineInterpolation": "smooth",
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "group": "A",
+       "mode": "normal"
+      }
+     },
+     "unit": "watt"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 292
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__timeGroup(ts,'2m') AS time, COALESCE(room,'(unassigned)') AS metric, sum(est_watts) AS value FROM telemetry.hue_light_history WHERE $__timeFilter(ts) GROUP BY 1, room ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Estimated Power (W) by room \u2014 stacked",
+   "type": "timeseries",
+   "id": 106
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 0,
+    "y": 301
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__timeGroup(ts,'2m') AS time, count(*) FILTER (WHERE is_on) AS \"On\" FROM telemetry.hue_light_history WHERE $__timeFilter(ts) GROUP BY 1 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Lights On over time",
+   "type": "timeseries",
+   "id": 107
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 8,
+    "y": 301
+   },
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "values": [
+      "value",
+      "percent"
+     ]
+    },
+    "pieType": "donut",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT CASE WHEN colormode='ct' THEN 'white (ct)' ELSE 'color ('||colormode||')' END AS metric, count(*) AS value FROM telemetry.hue_light_history WHERE is_on AND $__timeFilter(ts) GROUP BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Color usage (on bulbs: white vs color)",
+   "type": "piechart",
+   "id": 108
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "continuous-BlPu"
+     },
+     "max": 100,
+     "min": 0,
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 16,
+    "y": 301
+   },
+   "options": {
+    "displayMode": "gradient",
+    "orientation": "horizontal",
+    "valueMode": "text"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT name AS metric, round(100.0*avg(CASE WHEN is_on THEN 1 ELSE 0 END),0) AS value FROM telemetry.hue_light_history WHERE $__timeFilter(ts) GROUP BY name HAVING avg(CASE WHEN is_on THEN 1 ELSE 0 END)>0 ORDER BY value DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Duty cycle \u2014 % of time on (range)",
+   "type": "bargauge",
+   "id": 109
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 14,
+    "x": 0,
+    "y": 309
+   },
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT name AS \"Light\", room AS \"Room\", CASE WHEN is_on THEN '\ud83d\udfe2 on' ELSE '\u26ab off' END AS \"State\", round(bri_pct) AS \"Bri %\", ct_kelvin AS \"Kelvin\", colormode AS \"Mode\", CASE WHEN reachable THEN 'yes' ELSE 'NO' END AS \"Reach\" FROM (SELECT DISTINCT ON (light_id) * FROM telemetry.hue_light_history WHERE ts>now()-interval '6 min' ORDER BY light_id, ts DESC) s ORDER BY is_on DESC, room, name",
+     "refId": "A"
+    }
+   ],
+   "title": "Current state (per bulb)",
+   "type": "table",
+   "id": 110
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 10,
+    "x": 14,
+    "y": 309
+   },
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT name AS \"Light\", room AS \"Room\", CASE WHEN reachable THEN 'reachable' ELSE '\u274c UNREACHABLE' END AS \"Status\" FROM (SELECT DISTINCT ON (light_id) * FROM telemetry.hue_light_history WHERE ts>now()-interval '6 min' ORDER BY light_id, ts DESC) s ORDER BY reachable, name",
+     "refId": "A"
+    }
+   ],
+   "title": "Reachability / health",
+   "type": "table",
+   "id": 111
+  }
+ ],
+ "links": [
+  {
+   "type": "dashboards",
+   "tags": [
+    "nova-page"
+   ],
+   "asDropdown": false,
+   "title": "Pages",
+   "includeVars": false,
+   "keepTime": true
+  }
+ ],
+ "description": "Generated by scripts/nova_grafana_consolidate.py from grafana/sources: nova-home-overview, nova-home-sensors, nova-home-environment, nova-home-sensors-ha, homekit-sensors, zigbee-mesh, garden-air, nova-fridge, home-devices, homekit-outlets, hue-lights. Edit the sources, not this file."
+}

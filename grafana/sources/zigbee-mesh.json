@@ -1,0 +1,333 @@
+{
+ "panels": [
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "blue",
+      "mode": "fixed"
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 0,
+    "y": 0
+   },
+   "id": 1,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(*) FROM telemetry.zigbee_link WHERE ts=(SELECT max(ts) FROM telemetry.zigbee_link)",
+     "refId": "A"
+    }
+   ],
+   "title": "Devices (latest)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "purple",
+      "mode": "fixed"
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 6,
+    "y": 0
+   },
+   "id": 2,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(*) FROM telemetry.zigbee_link WHERE type='Router' AND ts=(SELECT max(ts) FROM telemetry.zigbee_link)",
+     "refId": "A"
+    }
+   ],
+   "title": "Routers (latest)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "max": 255,
+     "min": 0,
+     "thresholds": {
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 50
+       },
+       {
+        "color": "green",
+        "value": 100
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 12,
+    "y": 0
+   },
+   "id": 3,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT round(avg(lqi)) FROM telemetry.zigbee_link WHERE ts=(SELECT max(ts) FROM telemetry.zigbee_link)",
+     "refId": "A"
+    }
+   ],
+   "title": "Avg LQI (latest)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 1
+       },
+       {
+        "color": "red",
+        "value": 3
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 18,
+    "y": 0
+   },
+   "id": 4,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(*) FROM telemetry.zigbee_link WHERE lqi < 50 AND ts=(SELECT max(ts) FROM telemetry.zigbee_link)",
+     "refId": "A"
+    }
+   ],
+   "title": "Weak links (LQI < 50)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 5,
+      "spanNulls": true
+     },
+     "max": 255,
+     "min": 0
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 16,
+    "x": 0,
+    "y": 5
+   },
+   "id": 5,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, lqi AS value, device AS metric FROM telemetry.zigbee_link WHERE $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Link quality per device (watch it climb as the mesh settles)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "blue",
+      "mode": "fixed"
+     },
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 60
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 8,
+    "x": 16,
+    "y": 5
+   },
+   "id": 6,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, count(*) AS value, 'devices' AS metric FROM telemetry.zigbee_link WHERE $__timeFilter(ts) GROUP BY ts ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Mesh device count",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "LQI"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-background"
+        }
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "steps": [
+          {
+           "color": "red",
+           "value": null
+          },
+          {
+           "color": "yellow",
+           "value": 50
+          },
+          {
+           "color": "green",
+           "value": 100
+          }
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 11,
+    "w": 24,
+    "x": 0,
+    "y": 15
+   },
+   "id": 7,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT device AS \"Device\", type AS \"Type\", lqi AS \"LQI\" FROM telemetry.zigbee_link WHERE ts=(SELECT max(ts) FROM telemetry.zigbee_link) ORDER BY lqi",
+     "refId": "A"
+    }
+   ],
+   "title": "Current link quality (per device)",
+   "type": "table"
+  }
+ ],
+ "refresh": "1m",
+ "schemaVersion": 39,
+ "tags": [
+  "nova",
+  "zigbee",
+  "mesh",
+  "lqi"
+ ],
+ "time": {
+  "from": "now-6h",
+  "to": "now"
+ },
+ "timezone": "browser",
+ "title": "Zigbee Mesh Health",
+ "uid": "zigbee-mesh",
+ "_folder": "Nova Starter"
+}

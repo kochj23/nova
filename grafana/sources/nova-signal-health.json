@@ -1,0 +1,522 @@
+{
+ "annotations": {
+  "list": []
+ },
+ "panels": [
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 0
+   },
+   "id": 1,
+   "panels": [],
+   "title": "Signal vs Noise",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 70,
+      "lineWidth": 2,
+      "showPoints": "never",
+      "stacking": {
+       "mode": "normal"
+      }
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 1
+   },
+   "id": 2,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT date_trunc('hour',ts) AS time, decision AS metric, count(*) AS value FROM alert_triage_log WHERE $__timeFilter(ts) GROUP BY 1,2 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Alert decisions per hour (page / suppress / downgrade)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 1,
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 12,
+    "y": 1
+   },
+   "id": 3,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT round(100.0*count(*) FILTER (WHERE decision='page')::numeric/NULLIF(count(*),0),1) AS \"page %\" FROM alert_triage_log WHERE ts > now() - interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "Page rate (24h) %",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 18,
+    "y": 1
+   },
+   "id": 4,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"alerts\" FROM alert_triage_log WHERE ts > now() - interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "Alerts triaged (24h)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 70,
+      "lineWidth": 2,
+      "showPoints": "never",
+      "stacking": {
+       "mode": "normal"
+      }
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 5
+   },
+   "id": 5,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT date_trunc('day',ts) AS time, category AS metric, count(*) AS value FROM alert_triage_log WHERE decision='page' AND category IN (SELECT category FROM alert_triage_log WHERE decision='page' GROUP BY category ORDER BY count(*) DESC LIMIT 8) AND $__timeFilter(ts) GROUP BY 1,2 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Pages per day by category (top 8)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "align": "auto",
+      "filterable": true
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 9
+   },
+   "id": 6,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT source, count(*) AS pages FROM alert_triage_log WHERE decision='page' AND ts > now() - interval '7 days' GROUP BY source ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Top alert sources by pages (7d)",
+   "type": "table"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 17
+   },
+   "id": 7,
+   "panels": [],
+   "title": "Alert-source health",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 0,
+    "y": 18
+   },
+   "id": 8,
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true,
+     "values": [
+      "value"
+     ]
+    },
+    "pieType": "donut",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": true
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT state AS metric, count(*) AS value FROM freshness_state GROUP BY state ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Freshness state (fresh / stale)",
+   "type": "piechart"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "align": "auto",
+      "filterable": true
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 16,
+    "x": 8,
+    "y": 18
+   },
+   "id": 9,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT stream_name, problem_kind, first_stale_ts, round(last_age_s::numeric,0) AS age_s, last_reason FROM freshness_state WHERE state='stale' ORDER BY first_stale_ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Currently-stale streams",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 0,
+    "y": 26
+   },
+   "id": 10,
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true,
+     "values": [
+      "value"
+     ]
+    },
+    "pieType": "donut",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": true
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT state AS metric, count(*) AS value FROM cadence_state GROUP BY state ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Cadence state (OK / SILENT / MISSING / ACKED_LOST)",
+   "type": "piechart"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "align": "auto",
+      "filterable": true
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 16,
+    "x": 8,
+    "y": 26
+   },
+   "id": 11,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT source, kind, state, last_seen, witness FROM cadence_state WHERE state <> 'OK' ORDER BY since",
+     "refId": "A"
+    }
+   ],
+   "title": "Non-OK cadence streams",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 0,
+    "y": 34
+   },
+   "id": 12,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"open\" FROM escalation_state WHERE acked = false",
+     "refId": "A"
+    }
+   ],
+   "title": "Open escalations (unacked)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "align": "auto",
+      "filterable": true
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 18,
+    "x": 6,
+    "y": 34
+   },
+   "id": 13,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT recurrence_key AS pattern, escalate_count, last_pages, last_escalated_ts, acked FROM escalation_state ORDER BY escalate_count DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Escalations (pattern + count)",
+   "type": "table"
+  }
+ ],
+ "refresh": "5m",
+ "schemaVersion": 39,
+ "tags": [
+  "nova",
+  "alerting",
+  "signal",
+  "health"
+ ],
+ "templating": {
+  "list": []
+ },
+ "time": {
+  "from": "now-30d",
+  "to": "now"
+ },
+ "timezone": "browser",
+ "title": "Nova \u2014 Signal & Alert Health",
+ "uid": "nova-signal-health",
+ "_folder": "Nova Starter"
+}

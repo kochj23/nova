@@ -10,7 +10,7 @@ screensaver source. Photos has no scriptable delete, hence hourly, not every 5 m
 """
 import os, sys, subprocess, time, pathlib, shutil
 
-URL = os.environ.get("NOVA_DASH_URL", "http://192.168.1.2:3000/d/nova-cluster?kiosk&theme=dark")
+URL = os.environ.get("NOVA_DASH_URL", "http://192.168.1.2:3000/d/nova-fleet?kiosk&theme=dark")   # nova-cluster = top section of nova-fleet (2026-10-13)
 OUT = pathlib.Path(os.environ.get("NOVA_DASH_DIR", "/Volumes/nas/nova-fs/dash"))
 CHROME = next((c for c in ("/Applications/Chromium.app/Contents/MacOS/Chromium",
                            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome") if os.path.exists(c)), None)

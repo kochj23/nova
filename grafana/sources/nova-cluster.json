@@ -1,0 +1,2124 @@
+{
+ "annotations": {
+  "list": []
+ },
+ "description": "Live Nova fleet dashboard (nova_ops on pg-primary), laid out for the 1920x1080 kiosk on nova-core7 HEADLESS-1 (VNC).",
+ "editable": true,
+ "graphTooltip": 1,
+ "links": [],
+ "panels": [
+  {
+   "gridPos": {
+    "h": 2,
+    "w": 7,
+    "x": 0,
+    "y": 0
+   },
+   "id": 1,
+   "options": {
+    "content": "<div style=\"display:flex;align-items:baseline;gap:18px;padding:2px 6px 0 6px;font-family:Inter,system-ui,sans-serif\">\n<span style=\"font-size:34px;font-weight:800;letter-spacing:.06em;color:#cad3f5\">NOVA</span>\n<span style=\"font-size:34px;font-weight:300;color:#8b5cf6\">&mdash;</span>\n<span style=\"font-size:26px;font-weight:500;letter-spacing:.14em;color:#22d3ee\">CLUSTER</span>\n<span style=\"font-size:12px;color:#8087a2;margin-left:auto\">pg-primary &middot; nova_ops &middot; refresh 30 s</span>\n</div>",
+    "mode": "html"
+   },
+   "title": "",
+   "transparent": true,
+   "type": "text"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "mappings": [
+      {
+       "options": {
+        "pattern": "^NOMINAL.*",
+        "result": {
+         "color": "#22d3ee",
+         "index": 0
+        }
+       },
+       "type": "regex"
+      },
+      {
+       "options": {
+        "pattern": "^DEGRADED.*",
+        "result": {
+         "color": "#f59e0b",
+         "index": 1
+        }
+       },
+       "type": "regex"
+      },
+      {
+       "options": {
+        "pattern": "^CRITICAL.*",
+        "result": {
+         "color": "#ed8796",
+         "index": 2
+        }
+       },
+       "type": "regex"
+      }
+     ],
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "#8b5cf6",
+        "value": null
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 2,
+    "w": 13,
+    "x": 7,
+    "y": 0
+   },
+   "id": 2,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "justifyMode": "center",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "/.*/",
+     "values": false
+    },
+    "text": {
+     "valueSize": 20
+    },
+    "textMode": "value",
+    "wideLayout": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "WITH n AS (SELECT count(*) alive FROM node_status WHERE last_heartbeat > now()-interval '3 minutes'),\ns AS (SELECT count(*) FILTER (WHERE status='up' AND last_heartbeat > now()-interval '3 minutes') up, count(*) total FROM service_registry),\nl AS (SELECT count(*) FILTER (WHERE status='up') up, count(*) total FROM (SELECT DISTINCT ON (node_name, service_name) status FROM health_checks\n      WHERE checked_by='nova_llm_ping' AND checked_at > now()-interval '30 minutes' ORDER BY node_name, service_name, checked_at DESC) t),\ni AS (SELECT count(*) open, count(*) FILTER (WHERE severity='critical') crit FROM telemetry.incidents WHERE status='open'),\nr AS (SELECT count(*) FILTER (WHERE state='streaming') ok, round(coalesce(max(extract(epoch FROM replay_lag)),0)*1000) lag FROM pg_stat_replication)\nSELECT CASE WHEN i.crit > 0 OR r.ok < 3 OR n.alive < 8 THEN 'CRITICAL' WHEN i.open > 0 OR s.up < s.total OR l.up < l.total OR n.alive < 10 THEN 'DEGRADED' ELSE 'NOMINAL' END\n       || '  \u00b7  ' || n.alive || '/10 nodes  \u00b7  ' || s.up || '/' || s.total || ' services  \u00b7  ' || l.up || '/' || l.total || ' LLM  \u00b7  '\n       || i.open || ' open incidents, ' || i.crit || ' crit  \u00b7  ' || r.ok || '/3 standbys, lag ' || CASE WHEN r.lag >= 1000 THEN round(r.lag/1000.0,1) || ' s' ELSE r.lag || ' ms' END AS status\nFROM n, s, l, i, r",
+     "refId": "A"
+    }
+   ],
+   "title": "",
+   "transparent": true,
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "#8b5cf6",
+      "mode": "fixed"
+     },
+     "mappings": [],
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "#8b5cf6",
+        "value": null
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 2,
+    "w": 4,
+    "x": 20,
+    "y": 0
+   },
+   "id": 3,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "justifyMode": "center",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "/.*/",
+     "values": false
+    },
+    "text": {
+     "valueSize": 22
+    },
+    "textMode": "value",
+    "wideLayout": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT to_char(now() AT TIME ZONE 'America/Los_Angeles', 'Dy DD Mon  HH24:MI') AS clock",
+     "refId": "A"
+    }
+   ],
+   "title": "",
+   "transparent": true,
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "node_status rows whose own mesh-agent heartbeat is < 3 min (target 10; no history table, so no sparkline). Was service_registry until 2026-10-06, which only counts nodes with registered services.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "mappings": [],
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "#ed8796",
+        "value": null
+       },
+       {
+        "color": "#f59e0b",
+        "value": 8
+       },
+       {
+        "color": "#22d3ee",
+        "value": 10
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 4,
+    "x": 0,
+    "y": 2
+   },
+   "id": 4,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "justifyMode": "center",
+    "orientation": "auto",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "showPercentChange": false,
+    "textMode": "value",
+    "wideLayout": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"nodes alive\" FROM node_status WHERE last_heartbeat > now()-interval '3 minutes'",
+     "refId": "A"
+    }
+   ],
+   "title": "\ud83d\udef0  nodes alive",
+   "transparent": false,
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "services whose latest health_check (mac-studio checker, 10-min window) is up; 32 known",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "mappings": [],
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "#ed8796",
+        "value": null
+       },
+       {
+        "color": "#f59e0b",
+        "value": 30
+       },
+       {
+        "color": "#22d3ee",
+        "value": 32
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 4,
+    "x": 4,
+    "y": 2
+   },
+   "id": 5,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "area",
+    "justifyMode": "center",
+    "orientation": "auto",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "showPercentChange": false,
+    "textMode": "value",
+    "wideLayout": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT g AS time,\n  (SELECT count(*) FILTER (WHERE status='up') FROM (SELECT DISTINCT ON (service_name) status FROM health_checks h\n     WHERE h.checked_by='mac-studio' AND h.checked_at > g - interval '10 minutes' AND h.checked_at <= g ORDER BY service_name, checked_at DESC) x) AS \"services up\"\nFROM (SELECT generate_series(date_trunc('minute', $__timeFrom()::timestamptz), $__timeTo()::timestamptz, interval '5 minutes') UNION SELECT $__timeTo()::timestamptz) s(g) ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "\ud83e\udde9  services up",
+   "transparent": false,
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "nova_llm_ping: node/backend pairs up per 15-min round (10 known)",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "mappings": [],
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "#ed8796",
+        "value": null
+       },
+       {
+        "color": "#f59e0b",
+        "value": 7
+       },
+       {
+        "color": "#22d3ee",
+        "value": 10
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 4,
+    "x": 8,
+    "y": 2
+   },
+   "id": 6,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "area",
+    "justifyMode": "center",
+    "orientation": "auto",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "showPercentChange": false,
+    "textMode": "value",
+    "wideLayout": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__timeGroupAlias(checked_at,'15m'), count(DISTINCT node_name||service_name) FILTER (WHERE status='up') AS \"LLM healthy\"\nFROM health_checks WHERE $__timeFilter(checked_at) AND checked_by='nova_llm_ping' GROUP BY 1 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "\ud83e\udde0  LLM backends healthy",
+   "transparent": false,
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "telemetry.incidents open at each 10-min point",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "mappings": [],
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "#22d3ee",
+        "value": null
+       },
+       {
+        "color": "#f59e0b",
+        "value": 1
+       },
+       {
+        "color": "#ed8796",
+        "value": 3
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 4,
+    "x": 12,
+    "y": 2
+   },
+   "id": 7,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "area",
+    "justifyMode": "center",
+    "orientation": "auto",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "showPercentChange": false,
+    "textMode": "value",
+    "wideLayout": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT g AS time, (SELECT count(*) FROM telemetry.incidents i WHERE i.opened_at <= g AND (i.resolved_at IS NULL OR i.resolved_at > g)) AS \"open incidents\"\nFROM (SELECT generate_series(date_trunc('minute', $__timeFrom()::timestamptz), $__timeTo()::timestamptz, interval '10 minutes') UNION SELECT $__timeTo()::timestamptz) s(g) ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "\ud83d\udd25  open incidents",
+   "transparent": false,
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "max replay_lag_ms across standbys (telemetry.replication_health)",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 1,
+     "mappings": [],
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "#22d3ee",
+        "value": null
+       },
+       {
+        "color": "#f59e0b",
+        "value": 100
+       },
+       {
+        "color": "#ed8796",
+        "value": 1000
+       }
+      ]
+     },
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 4,
+    "x": 16,
+    "y": 2
+   },
+   "id": 8,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "area",
+    "justifyMode": "center",
+    "orientation": "auto",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "showPercentChange": false,
+    "textMode": "value",
+    "wideLayout": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__timeGroupAlias(ts,'2m'), max(replay_lag_ms) AS \"replay lag\" FROM telemetry.replication_health WHERE $__timeFilter(ts) GROUP BY 1 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "\ud83d\udc18  worst replica lag",
+   "transparent": false,
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "nova_memories.memories total (telemetry.nova_meta memories_total)",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 2,
+     "mappings": [],
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "#8b5cf6",
+        "value": null
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 4,
+    "x": 20,
+    "y": 2
+   },
+   "id": 9,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "area",
+    "justifyMode": "center",
+    "orientation": "auto",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "showPercentChange": false,
+    "textMode": "value",
+    "wideLayout": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__timeGroupAlias(ts,'5m'), max(value) AS memories FROM telemetry.nova_meta WHERE $__timeFilter(ts) AND metric='memories_total' GROUP BY 1 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "\ud83d\udcbe  memories",
+   "transparent": false,
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "node_status (heartbeat age coloured: <2 min good, <10 min warn)",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "text",
+      "mode": "fixed"
+     },
+     "custom": {
+      "align": "auto",
+      "cellOptions": {
+       "type": "auto"
+      },
+      "filterable": false,
+      "inspect": false
+     },
+     "decimals": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "text",
+        "value": null
+       }
+      ]
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "node"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 104
+       },
+       {
+        "id": "color",
+        "value": {
+         "fixedColor": "#cad3f5",
+         "mode": "fixed"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "ip"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 100
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "os"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 52
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "cores"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 48
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "ram"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 58
+       },
+       {
+        "id": "unit",
+        "value": "decgbytes"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "load1"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 52
+       },
+       {
+        "id": "decimals",
+        "value": 1
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "status"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "mode": "gradient",
+         "type": "color-background"
+        }
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "#22d3ee",
+           "value": null
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       },
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "options": {
+           "down": {
+            "color": "#ed8796",
+            "index": 1,
+            "text": "DOWN"
+           },
+           "slow": {
+            "color": "#f59e0b",
+            "index": 2,
+            "text": "SLOW"
+           },
+           "streaming": {
+            "color": "#22d3ee",
+            "index": 3,
+            "text": "streaming"
+           },
+           "up": {
+            "color": "#22d3ee",
+            "index": 0,
+            "text": "UP"
+           }
+          },
+          "type": "value"
+         }
+        ]
+       },
+       {
+        "id": "custom.width",
+        "value": 54
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "heartbeat"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-text"
+        }
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "#22d3ee",
+           "value": null
+          },
+          {
+           "color": "#f59e0b",
+           "value": 120
+          },
+          {
+           "color": "#ed8796",
+           "value": 600
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       },
+       {
+        "id": "unit",
+        "value": "s"
+       },
+       {
+        "id": "custom.width",
+        "value": 78
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "load"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "mode": "gradient",
+         "type": "gauge",
+         "valueDisplayMode": "text"
+        }
+       },
+       {
+        "id": "min",
+        "value": 0
+       },
+       {
+        "id": "max",
+        "value": 150
+       },
+       {
+        "id": "unit",
+        "value": "percent"
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "#22d3ee",
+           "value": null
+          },
+          {
+           "color": "#f59e0b",
+           "value": 70
+          },
+          {
+           "color": "#ed8796",
+           "value": 100
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       },
+       {
+        "id": "decimals",
+        "value": 0
+       },
+       {
+        "id": "custom.width",
+        "value": 100
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "memory"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "mode": "gradient",
+         "type": "gauge",
+         "valueDisplayMode": "text"
+        }
+       },
+       {
+        "id": "min",
+        "value": 0
+       },
+       {
+        "id": "max",
+        "value": 100
+       },
+       {
+        "id": "unit",
+        "value": "percent"
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "#22d3ee",
+           "value": null
+          },
+          {
+           "color": "#f59e0b",
+           "value": 70
+          },
+          {
+           "color": "#ed8796",
+           "value": 90
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       },
+       {
+        "id": "decimals",
+        "value": 0
+       },
+       {
+        "id": "custom.width",
+        "value": 100
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "disk"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "mode": "gradient",
+         "type": "gauge",
+         "valueDisplayMode": "text"
+        }
+       },
+       {
+        "id": "min",
+        "value": 0
+       },
+       {
+        "id": "max",
+        "value": 100
+       },
+       {
+        "id": "unit",
+        "value": "percent"
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "#22d3ee",
+           "value": null
+          },
+          {
+           "color": "#f59e0b",
+           "value": 70
+          },
+          {
+           "color": "#ed8796",
+           "value": 90
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       },
+       {
+        "id": "decimals",
+        "value": 0
+       },
+       {
+        "id": "custom.width",
+        "value": 100
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 11,
+    "x": 0,
+    "y": 7
+   },
+   "id": 10,
+   "options": {
+    "cellHeight": "sm",
+    "footer": {
+     "countRows": false,
+     "reducer": [
+      "count"
+     ],
+     "show": false
+    },
+    "showHeader": true,
+    "sortBy": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT node_name AS \"node\", host(node_ip) AS \"ip\", os_family AS \"os\", cpu_cores AS \"cores\", ram_gb AS \"ram\",\n       status, round(extract(epoch FROM now()-last_heartbeat))::int AS \"heartbeat\",\n       round(load_avg_1m::numeric,1) AS \"load1\", round((load_avg_1m / greatest(cpu_cores,1) * 100)::numeric)::int AS \"load\",\n       round(memory_percent::numeric)::int AS \"memory\", round(disk_percent::numeric)::int AS \"disk\"\nFROM node_status ORDER BY node_name",
+     "refId": "A"
+    }
+   ],
+   "title": "\ud83d\udda5  fleet",
+   "transparent": true,
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "every node that registers services (covers nodes missing from node_status)",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "text",
+      "mode": "fixed"
+     },
+     "custom": {
+      "align": "auto",
+      "cellOptions": {
+       "type": "auto"
+      },
+      "filterable": false,
+      "inspect": false
+     },
+     "decimals": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "text",
+        "value": null
+       }
+      ]
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "heartbeat"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-text"
+        }
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "#22d3ee",
+           "value": null
+          },
+          {
+           "color": "#f59e0b",
+           "value": 120
+          },
+          {
+           "color": "#ed8796",
+           "value": 600
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       },
+       {
+        "id": "unit",
+        "value": "s"
+       },
+       {
+        "id": "custom.width",
+        "value": 80
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "svcs"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 48
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 4,
+    "x": 11,
+    "y": 7
+   },
+   "id": 11,
+   "options": {
+    "cellHeight": "sm",
+    "footer": {
+     "countRows": false,
+     "reducer": [
+      "count"
+     ],
+     "show": false
+    },
+    "showHeader": true,
+    "sortBy": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT node_name AS \"node\", count(*) AS \"svcs\", round(extract(epoch FROM now()-max(last_heartbeat)))::int AS \"heartbeat\"\nFROM service_registry GROUP BY node_name ORDER BY max(last_heartbeat) ASC, node_name",
+     "refId": "A"
+    }
+   ],
+   "title": "\ud83d\udce1  nodes in service registry",
+   "transparent": true,
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "service_registry; DOWN or stale first",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "mappings": [
+      {
+       "options": {
+        "-1": {
+         "color": "#ed8796",
+         "index": 0,
+         "text": "DOWN"
+        }
+       },
+       "type": "value"
+      }
+     ],
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "#22d3ee",
+        "value": null
+       },
+       {
+        "color": "#f59e0b",
+        "value": 120
+       },
+       {
+        "color": "#ed8796",
+        "value": 600
+       }
+      ]
+     },
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 9,
+    "x": 15,
+    "y": 7
+   },
+   "id": 12,
+   "options": {
+    "colorMode": "background_gradient",
+    "graphMode": "none",
+    "justifyMode": "center",
+    "orientation": "auto",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": true
+    },
+    "text": {
+     "titleSize": 11,
+     "valueSize": 14
+    },
+    "textMode": "value_and_name",
+    "wideLayout": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT service_name || ' @' || replace(replace(replace(node_name,'nova-',''),'mac-',''),'tv-movies-mini','tvmini') AS name,\n       CASE WHEN status <> 'up' THEN -1 ELSE round(extract(epoch FROM now()-last_heartbeat))::int END AS age\nFROM service_registry ORDER BY status='up', last_heartbeat ASC, service_name",
+     "refId": "A"
+    }
+   ],
+   "title": "\ud83e\udde9  services (heartbeat age)",
+   "transparent": true,
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "#8b5cf6",
+      "mode": "fixed"
+     },
+     "custom": {
+      "axisBorderShow": false,
+      "axisGridShow": true,
+      "fillOpacity": 25,
+      "gradientMode": "scheme",
+      "lineInterpolation": "smooth",
+      "lineWidth": 2,
+      "pointSize": 4,
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "decimals": 0,
+     "min": 0,
+     "unit": "ms"
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "nova-core8/.6"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "fixedColor": "#8b5cf6",
+         "mode": "fixed"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "nova-core2/.86"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "fixedColor": "#22d3ee",
+         "mode": "fixed"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "nova-core3/.5"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "fixedColor": "#c6a0f6",
+         "mode": "fixed"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "nova-core6/.252"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "fixedColor": "#8aadf4",
+         "mode": "fixed"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "nova-core7/.125"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "fixedColor": "#f5a97f",
+         "mode": "fixed"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "nova-core9/.7"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "fixedColor": "#eed49f",
+         "mode": "fixed"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "nova-core10/.77"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "fixedColor": "#b7bdf8",
+         "mode": "fixed"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 8,
+    "x": 0,
+    "y": 16
+   },
+   "id": 13,
+   "options": {
+    "legend": {
+     "calcs": [],
+     "displayMode": "hidden",
+     "placement": "bottom",
+     "showLegend": false
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT checked_at AS time, node_name AS metric, latency_ms AS value\nFROM health_checks WHERE checked_by='nova_llm_ping' AND $__timeFilter(checked_at) AND latency_ms IS NOT NULL ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "\ud83d\udcf6  LLM ping latency",
+   "transparent": true,
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "mappings": [
+      {
+       "options": {
+        "-1": {
+         "color": "#ed8796",
+         "index": 0,
+         "text": "DOWN"
+        }
+       },
+       "type": "value"
+      }
+     ],
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "#22d3ee",
+        "value": null
+       },
+       {
+        "color": "#f59e0b",
+        "value": 400
+       },
+       {
+        "color": "#ed8796",
+        "value": 800
+       }
+      ]
+     },
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 0,
+    "y": 20
+   },
+   "id": 14,
+   "options": {
+    "colorMode": "background_gradient",
+    "graphMode": "none",
+    "justifyMode": "center",
+    "orientation": "auto",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": true
+    },
+    "text": {
+     "titleSize": 11,
+     "valueSize": 14
+    },
+    "textMode": "value_and_name",
+    "wideLayout": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT DISTINCT ON (node_name, service_name) node_name || '  \u00b7  ' || replace(service_name,'llm:','') AS name,\n       CASE WHEN status='up' THEN latency_ms ELSE -1 END AS latency\nFROM health_checks WHERE checked_by='nova_llm_ping' AND checked_at > now()-interval '6 hours'\nORDER BY node_name, service_name, checked_at DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "\ud83e\udde0  LLM fabric (latest ping)",
+   "transparent": true,
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "#8b5cf6",
+      "mode": "fixed"
+     },
+     "custom": {
+      "axisBorderShow": false,
+      "axisGridShow": true,
+      "barAlignment": 0,
+      "drawStyle": "bars",
+      "fillOpacity": 70,
+      "gradientMode": "scheme",
+      "lineInterpolation": "smooth",
+      "lineWidth": 1,
+      "pointSize": 4,
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "group": "A",
+       "mode": "normal"
+      }
+     },
+     "decimals": 0,
+     "min": 0,
+     "unit": "short"
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "warning"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "fixedColor": "#f59e0b",
+         "mode": "fixed"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "critical"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "fixedColor": "#ed8796",
+         "mode": "fixed"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 8,
+    "x": 8,
+    "y": 16
+   },
+   "id": 15,
+   "options": {
+    "legend": {
+     "calcs": [],
+     "displayMode": "hidden",
+     "placement": "bottom",
+     "showLegend": false
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__timeGroupAlias(ts,'10m'), level AS metric, count(*) AS value\nFROM telemetry.events WHERE $__timeFilter(ts) AND level IN ('warning','critical') GROUP BY 1,2 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "timeFrom": "24h",
+   "title": "\ud83d\udea8  events per 10 min, 24 h  \u2014  amber warning \u00b7 red critical",
+   "transparent": true,
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "text",
+      "mode": "fixed"
+     },
+     "custom": {
+      "align": "auto",
+      "cellOptions": {
+       "type": "auto"
+      },
+      "filterable": false,
+      "inspect": false
+     },
+     "decimals": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "text",
+        "value": null
+       }
+      ]
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "severity"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "mode": "gradient",
+         "type": "color-background"
+        }
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "#f59e0b",
+           "value": null
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       },
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "options": {
+           "critical": {
+            "color": "#ed8796",
+            "index": 0,
+            "text": "CRIT"
+           },
+           "warning": {
+            "color": "#f59e0b",
+            "index": 1,
+            "text": "WARN"
+           }
+          },
+          "type": "value"
+         }
+        ]
+       },
+       {
+        "id": "custom.width",
+        "value": 64
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "host"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 104
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "open"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-text"
+        }
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "#cad3f5",
+           "value": null
+          }
+         ]
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "thresholds"
+        }
+       },
+       {
+        "id": "unit",
+        "value": "m"
+       },
+       {
+        "id": "custom.width",
+        "value": 66
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 8,
+    "y": 20
+   },
+   "id": 16,
+   "options": {
+    "cellHeight": "sm",
+    "footer": {
+     "countRows": false,
+     "reducer": [
+      "count"
+     ],
+     "show": false
+    },
+    "showHeader": true,
+    "sortBy": []
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT severity, host, left(title,64) AS title, round(extract(epoch FROM now()-opened_at)/60)::int AS \"open\"\nFROM telemetry.incidents WHERE status='open' ORDER BY severity='critical' DESC, opened_at DESC LIMIT 6",
+     "refId": "A"
+    }
+   ],
+   "title": "\ud83d\udd25  open incidents",
+   "transparent": true,
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "pg_stat_replication on the primary (3 standbys expected: .7 .10 .125)",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 1,
+     "mappings": [],
+     "max": 1000,
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "#22d3ee",
+        "value": null
+       },
+       {
+        "color": "#f59e0b",
+        "value": 100
+       },
+       {
+        "color": "#ed8796",
+        "value": 1000
+       }
+      ]
+     },
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 8,
+    "x": 16,
+    "y": 16
+   },
+   "id": 17,
+   "options": {
+    "minVizHeight": 75,
+    "minVizWidth": 75,
+    "orientation": "auto",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": true
+    },
+    "showThresholdLabels": false,
+    "showThresholdMarkers": true,
+    "sizing": "auto"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT host(client_addr) AS standby, round(extract(epoch FROM coalesce(replay_lag, interval '0'))::numeric*1000,1) AS \"replay lag\"\nFROM pg_stat_replication WHERE state='streaming' ORDER BY client_addr",
+     "refId": "A"
+    }
+   ],
+   "title": "\ud83d\udc18  standby replay lag",
+   "transparent": true,
+   "type": "gauge"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "scheduler_runs, both schedulers; failure+timeout count per task, top 6",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "mappings": [],
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "#f59e0b",
+        "value": null
+       },
+       {
+        "color": "#ed8796",
+        "value": 5
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 8,
+    "x": 16,
+    "y": 20
+   },
+   "id": 18,
+   "options": {
+    "displayMode": "gradient",
+    "maxVizHeight": 24,
+    "minVizHeight": 12,
+    "minVizWidth": 8,
+    "namePlacement": "left",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": true
+    },
+    "showUnfilled": true,
+    "sizing": "auto",
+    "text": {
+     "titleSize": 12,
+     "valueSize": 12
+    },
+    "valueMode": "color"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT task_id AS task, count(*) FILTER (WHERE status IN ('failure','timeout')) AS \"fails 24h\"\nFROM scheduler_runs WHERE started_at > (extract(epoch FROM now())-86400)*1000\nGROUP BY task_id HAVING count(*) FILTER (WHERE status IN ('failure','timeout')) > 0 ORDER BY 2 DESC, 1 LIMIT 6",
+     "refId": "A"
+    }
+   ],
+   "title": "\u23f1  scheduler tasks failing (24 h)",
+   "transparent": true,
+   "type": "bargauge"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "latest health_checks row per service; one tile per service that is not up",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "mappings": [
+      {
+       "options": {
+        "0": {
+         "color": "#ed8796",
+         "index": 0,
+         "text": "DOWN"
+        },
+        "1": {
+         "color": "#22d3ee",
+         "index": 1,
+         "text": "OK"
+        },
+        "2": {
+         "color": "#f59e0b",
+         "index": 2,
+         "text": "SLOW"
+        }
+       },
+       "type": "value"
+      }
+     ],
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "#ed8796",
+        "value": null
+       },
+       {
+        "color": "#22d3ee",
+        "value": 1
+       },
+       {
+        "color": "#f59e0b",
+        "value": 2
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 3,
+    "w": 8,
+    "x": 16,
+    "y": 24
+   },
+   "id": 19,
+   "options": {
+    "colorMode": "background_solid",
+    "graphMode": "none",
+    "justifyMode": "center",
+    "orientation": "auto",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": true
+    },
+    "text": {
+     "titleSize": 11,
+     "valueSize": 14
+    },
+    "textMode": "name",
+    "wideLayout": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "WITH latest AS (SELECT DISTINCT ON (service_name, node_name) service_name, node_name, status\n  FROM health_checks WHERE checked_at > now()-interval '1 hour' AND checked_by <> 'nova_llm_ping' ORDER BY service_name, node_name, checked_at DESC)\nSELECT (SELECT count(*) FILTER (WHERE status='up') FROM latest) || ' / ' || (SELECT count(*) FROM latest) || ' checks up' AS name,\n       CASE WHEN (SELECT count(*) FROM latest WHERE status='down') > 0 THEN 0 WHEN (SELECT count(*) FROM latest WHERE status<>'up') > 0 THEN 2 ELSE 1 END AS v\nUNION ALL (SELECT service_name, CASE status WHEN 'slow' THEN 2 ELSE 0 END FROM latest WHERE status <> 'up' ORDER BY status, service_name)",
+     "refId": "A"
+    }
+   ],
+   "title": "\ud83d\udc93  health checks (last hour)",
+   "transparent": true,
+   "type": "stat"
+  }
+ ],
+ "refresh": "30s",
+ "schemaVersion": 41,
+ "style": "dark",
+ "tags": [
+  "nova",
+  "cluster"
+ ],
+ "templating": {
+  "list": []
+ },
+ "time": {
+  "from": "now-6h",
+  "to": "now"
+ },
+ "timepicker": {
+  "refresh_intervals": [
+   "30s",
+   "1m",
+   "5m"
+  ]
+ },
+ "timezone": "browser",
+ "title": "Nova Cluster",
+ "uid": "nova-cluster",
+ "_folder": "General"
+}

@@ -1,0 +1,1137 @@
+{
+ "annotations": {
+  "list": []
+ },
+ "panels": [
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 5,
+      "lineWidth": 1
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 0
+   },
+   "id": 1,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT timestamp AS time, device_name AS metric, metric_value FROM snmp_metrics WHERE metric_name = 'hr_cpu_load_avg' AND device_name IN ($device) AND $__timeFilter(timestamp) ORDER BY timestamp;",
+     "refId": "A"
+    }
+   ],
+   "title": "CPU Load (1 min) by Host",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "lineWidth": 1
+     },
+     "max": 100,
+     "min": 0,
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 0
+   },
+   "id": 2,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT t.timestamp AS time, t.device_name AS metric, 100.0 * (t.metric_value - a.metric_value) / NULLIF(t.metric_value, 0) AS mem_used_pct FROM snmp_metrics t JOIN snmp_metrics a ON a.device_ip = t.device_ip AND a.timestamp = t.timestamp AND a.metric_name = 'mem_avail_real' WHERE t.metric_name = 'mem_total_real' AND t.device_name IN ($device) AND $__timeFilter(t.timestamp) ORDER BY t.timestamp;",
+     "refId": "A"
+    }
+   ],
+   "title": "Memory Used % by Host",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "max": 100,
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 75
+       },
+       {
+        "color": "red",
+        "value": 90
+       }
+      ]
+     },
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 9
+   },
+   "id": 3,
+   "options": {
+    "displayMode": "gradient",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT node_name, disk_percent FROM node_status WHERE disk_percent IS NOT NULL ORDER BY disk_percent DESC;",
+     "refId": "A"
+    }
+   ],
+   "title": "Disk Usage % by Fleet Node (node_status)",
+   "type": "bargauge"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "max": 100,
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 80
+       },
+       {
+        "color": "red",
+        "value": 92
+       }
+      ]
+     },
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 9
+   },
+   "id": 4,
+   "options": {
+    "displayMode": "gradient",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT node_name, memory_percent FROM node_status WHERE memory_percent IS NOT NULL ORDER BY memory_percent DESC;",
+     "refId": "A"
+    }
+   ],
+   "title": "Memory % by Fleet Node (node_status)",
+   "type": "bargauge"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 17
+   },
+   "id": 5,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "WITH cpu AS (SELECT DISTINCT ON (device_name) device_name, metric_value v FROM snmp_metrics WHERE metric_name='hr_cpu_load_avg' AND timestamp > now()-interval '1 hour' ORDER BY device_name, timestamp DESC), memt AS (SELECT DISTINCT ON (device_name) device_name, metric_value v FROM snmp_metrics WHERE metric_name='mem_total_real' AND timestamp > now()-interval '1 hour' ORDER BY device_name, timestamp DESC), mema AS (SELECT DISTINCT ON (device_name) device_name, metric_value v FROM snmp_metrics WHERE metric_name='mem_avail_real' AND timestamp > now()-interval '1 hour' ORDER BY device_name, timestamp DESC) SELECT cpu.device_name AS \"Host\", round(cpu.v::numeric,2) AS \"CPU Load 1m\", round((100.0*(memt.v-mema.v)/NULLIF(memt.v,0))::numeric,1) AS \"Mem Used %\" FROM cpu LEFT JOIN memt USING(device_name) LEFT JOIN mema USING(device_name) ORDER BY cpu.device_name;",
+     "refId": "A"
+    }
+   ],
+   "title": "Latest SNMP Snapshot per Host",
+   "type": "table"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 26
+   },
+   "id": 10,
+   "panels": [],
+   "title": "Capacity & Headroom",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 27
+   },
+   "id": 11,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT DISTINCT ON (device_name) device_name AS \"Device\", host(device_ip) AS \"IP\", round(cpu_load_1m::numeric,2) AS \"Load 1m\", cpu_cores AS \"Cores\", round(cpu_headroom_pct::numeric,1) AS \"CPU Headroom %\", round((mem_used_mb/1024.0)::numeric)::int AS \"Mem Used GB\", round((mem_total_mb/1024.0)::numeric)::int AS \"Mem Total GB\", round(mem_headroom_pct::numeric,1) AS \"Mem Headroom %\", round(disk_worst_pct::numeric,1) AS \"Disk Worst %\", overall_status AS \"Status\" FROM capacity_snapshots ORDER BY device_name, ts DESC;",
+     "refId": "A"
+    }
+   ],
+   "title": "Fleet Capacity Snapshot (capacity_snapshots)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 5,
+      "lineWidth": 1
+     },
+     "max": 100,
+     "min": 0,
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 0,
+    "y": 36
+   },
+   "id": 12,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "min"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, device_name AS metric, cpu_headroom_pct AS value FROM capacity_snapshots WHERE $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "CPU Headroom % \u2014 All Devices",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 5,
+      "lineWidth": 1
+     },
+     "max": 100,
+     "min": 0,
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 8,
+    "y": 36
+   },
+   "id": 13,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "min"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, device_name AS metric, mem_headroom_pct AS value FROM capacity_snapshots WHERE $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "Memory Headroom % \u2014 All Devices",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 5,
+      "lineWidth": 1
+     },
+     "max": 100,
+     "min": 0,
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 16,
+    "y": 36
+   },
+   "id": 14,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, device_name AS metric, disk_worst_pct AS value FROM capacity_snapshots WHERE $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "Disk Worst % \u2014 All Devices",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "fillOpacity": 80
+     },
+     "mappings": [
+      {
+       "options": {
+        "crit": {
+         "color": "red"
+        },
+        "critical": {
+         "color": "red"
+        },
+        "ok": {
+         "color": "green"
+        },
+        "warn": {
+         "color": "orange"
+        },
+        "warning": {
+         "color": "orange"
+        }
+       },
+       "type": "value"
+      }
+     ]
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 44
+   },
+   "id": 15,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "mergeValues": true,
+    "showValue": "auto"
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, device_name AS metric, overall_status FROM capacity_snapshots WHERE $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "Overall Status by Device (capacity_snapshots)",
+   "type": "state-timeline"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 30
+       },
+       {
+        "color": "red",
+        "value": 120
+       }
+      ]
+     },
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 12,
+    "y": 44
+   },
+   "id": 16,
+   "options": {
+    "colorMode": "background",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT COALESCE(EXTRACT(EPOCH FROM NOW() - pg_last_xact_replay_timestamp())::integer, -1) AS \"Replica Lag\";",
+     "refId": "A"
+    }
+   ],
+   "title": "PG Replica Lag (sec)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "green",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 18,
+    "y": 44
+   },
+   "id": 17,
+   "options": {
+    "colorMode": "value",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT COUNT(*) AS \"Heartbeating\" FROM node_status WHERE last_heartbeat > NOW() - INTERVAL '60 seconds';",
+     "refId": "A"
+    }
+   ],
+   "title": "Nodes Heartbeating (<60s)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 48
+   },
+   "id": 18,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT service_name AS \"Service\", preferred_nodes::text AS \"Preferred\", failover_to::text AS \"Failover To\", min_ram_gb AS \"Min RAM GB\", max_instances AS \"Max Instances\" FROM service_placement ORDER BY service_name;",
+     "refId": "A"
+    }
+   ],
+   "title": "Service Placement & Failover Rules (service_placement)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 52
+   },
+   "id": 19,
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "values": [
+      "value"
+     ]
+    },
+    "pieType": "donut",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT node_name AS metric, COUNT(*) AS value FROM service_registry WHERE status = 'up' GROUP BY 1 ORDER BY 2 DESC;",
+     "refId": "A"
+    }
+   ],
+   "title": "Services per Node (up)",
+   "type": "piechart"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 60
+   },
+   "id": 20,
+   "panels": [],
+   "title": "Backups",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "Latest telemetry.backup_runs for the Synology->UNAS job. Green = rc 0, no errors, bytes moved. Red = failed / errored / moved 0 bytes (the silent-green failure).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "mappings": [
+      {
+       "options": {
+        "0": {
+         "color": "red",
+         "text": "FAILED"
+        },
+        "1": {
+         "color": "green",
+         "text": "OK"
+        }
+       },
+       "type": "value"
+      }
+     ],
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "green",
+        "value": 1
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 0,
+    "y": 61
+   },
+   "id": 21,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT CASE WHEN ok AND COALESCE(bytes,0) > 0 THEN 1 ELSE 0 END AS \"Status\" FROM telemetry.backup_runs WHERE job = 'nova-backup:nas:incremental' ORDER BY ts DESC LIMIT 1;",
+     "refId": "A"
+    }
+   ],
+   "title": "NAS Backup \u2014 Last Run Status",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "Hours since the last NAS backup run. RED if > 25h (a daily backup that did not run).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 1,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 24
+       },
+       {
+        "color": "red",
+        "value": 25
+       }
+      ]
+     },
+     "unit": "h"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 6,
+    "y": 61
+   },
+   "id": 22,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT EXTRACT(EPOCH FROM (now() - max(ts))) / 3600.0 AS \"Hours Since Last Run\" FROM telemetry.backup_runs WHERE job = 'nova-backup:nas:incremental';",
+     "refId": "A"
+    }
+   ],
+   "title": "NAS Backup \u2014 Last Run Age",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "Bytes transferred on the most recent run. 0 here = nothing replicated (investigate if unexpected).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "green",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "bytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 12,
+    "y": 61
+   },
+   "id": 23,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT COALESCE(bytes,0) AS \"Bytes\" FROM telemetry.backup_runs WHERE job = 'nova-backup:nas:incremental' ORDER BY ts DESC LIMIT 1;",
+     "refId": "A"
+    }
+   ],
+   "title": "NAS Backup \u2014 Last Bytes Moved",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "rsync errors on the most recent run.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "red",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 18,
+    "y": 61
+   },
+   "id": 24,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT COALESCE(errors,0) AS \"Errors\" FROM telemetry.backup_runs WHERE job = 'nova-backup:nas:incremental' ORDER BY ts DESC LIMIT 1;",
+     "refId": "A"
+    }
+   ],
+   "title": "NAS Backup \u2014 Last Errors",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 40,
+      "lineWidth": 1
+     },
+     "unit": "bytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 66
+   },
+   "id": 25,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "single"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, 'bytes' AS metric, bytes AS value FROM telemetry.backup_runs WHERE job = 'nova-backup:nas:incremental' AND $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    }
+   ],
+   "title": "NAS Backup \u2014 Bytes Transferred per Run",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 30,
+      "lineWidth": 1
+     },
+     "unit": "short"
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "errors"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "fixedColor": "red",
+         "mode": "fixed"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 66
+   },
+   "id": 26,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, 'files' AS metric, files AS value FROM telemetry.backup_runs WHERE job = 'nova-backup:nas:incremental' AND $__timeFilter(ts) ORDER BY ts;",
+     "refId": "A"
+    },
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, 'errors' AS metric, errors AS value FROM telemetry.backup_runs WHERE job = 'nova-backup:nas:incremental' AND $__timeFilter(ts) ORDER BY ts;",
+     "refId": "B"
+    }
+   ],
+   "title": "NAS Backup \u2014 Files Transferred & Errors per Run",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Bytes"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "bytes"
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 74
+   },
+   "id": 27,
+   "options": {
+    "showHeader": true,
+    "sortBy": [
+     {
+      "desc": true,
+      "displayName": "When"
+     }
+    ]
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS \"When\", rc AS \"rc\", elapsed_s AS \"Elapsed (s)\", files AS \"Files\", bytes AS \"Bytes\", errors AS \"Errors\", CASE WHEN ok AND COALESCE(bytes,0) > 0 THEN 'OK' ELSE 'CHECK' END AS \"Status\" FROM telemetry.backup_runs WHERE job = 'nova-backup:nas:incremental' ORDER BY ts DESC LIMIT 30;",
+     "refId": "A"
+    }
+   ],
+   "title": "NAS Backup \u2014 Recent Runs",
+   "type": "table"
+  }
+ ],
+ "refresh": "30s",
+ "schemaVersion": 39,
+ "tags": [
+  "nova",
+  "starter",
+  "hosts",
+  "snmp"
+ ],
+ "templating": {
+  "list": [
+   {
+    "current": {
+     "selected": true,
+     "text": [
+      "All"
+     ],
+     "value": [
+      "$__all"
+     ]
+    },
+    "datasource": {
+     "type": "grafana-postgresql-datasource",
+     "uid": "nova-ops-pg"
+    },
+    "includeAll": true,
+    "label": "Host",
+    "multi": true,
+    "name": "device",
+    "query": "SELECT DISTINCT device_name FROM snmp_metrics WHERE device_name IS NOT NULL AND timestamp > now() - interval '24 hours' ORDER BY device_name;",
+    "refresh": 2,
+    "type": "query"
+   }
+  ]
+ },
+ "time": {
+  "from": "now-6h",
+  "to": "now"
+ },
+ "timezone": "browser",
+ "title": "Hosts & Fleet",
+ "uid": "nova-hosts-fleet",
+ "_folder": "Nova Starter"
+}

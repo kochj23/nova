@@ -1,0 +1,1738 @@
+{
+ "annotations": {
+  "list": []
+ },
+ "editable": true,
+ "graphTooltip": 0,
+ "panels": [
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 0
+   },
+   "id": 1,
+   "panels": [],
+   "title": "Overview",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Time since the primary's postmaster started.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "s"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 0,
+    "y": 1
+   },
+   "id": 2,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT extract(epoch FROM now()-pg_postmaster_start_time())::bigint AS uptime",
+     "refId": "A"
+    }
+   ],
+   "title": "Uptime",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Current backends vs max_connections (100).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "max": 100,
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 70
+       },
+       {
+        "color": "red",
+        "value": 90
+       }
+      ]
+     },
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 4,
+    "y": 1
+   },
+   "id": 3,
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "showThresholdMarkers": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT count(*) AS conns FROM pg_stat_activity",
+     "refId": "A"
+    }
+   ],
+   "title": "Connections / max",
+   "type": "gauge"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "shared-buffer hit ratio across all databases. <99% amber, <90% red.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "max": 100,
+     "min": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 90
+       },
+       {
+        "color": "green",
+        "value": 99
+       }
+      ]
+     },
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 8,
+    "y": 1
+   },
+   "id": 4,
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "showThresholdMarkers": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT round(100.0*sum(blks_hit)/nullif(sum(blks_hit+blks_read),0),2) AS cache_hit FROM pg_stat_database",
+     "refId": "A"
+    }
+   ],
+   "title": "Cache hit ratio",
+   "type": "gauge"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Number of replicas in 'streaming' state (expect 3: .2/.7/.10).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 1
+       },
+       {
+        "color": "green",
+        "value": 3
+       }
+      ]
+     },
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 12,
+    "y": 1
+   },
+   "id": 5,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT count(*) AS replicas FROM pg_stat_replication WHERE state='streaming'",
+     "refId": "A"
+    }
+   ],
+   "title": "Replicas streaming",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Sessions currently blocked waiting on a lock.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 1
+       },
+       {
+        "color": "red",
+        "value": 5
+       }
+      ]
+     },
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 16,
+    "y": 1
+   },
+   "id": 6,
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT count(*) AS blocked FROM pg_stat_activity WHERE wait_event_type='Lock'",
+     "refId": "A"
+    }
+   ],
+   "title": "Blocked (waiting on lock)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Cumulative deadlocks since server start.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 1
+       }
+      ]
+     },
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 4,
+    "x": 20,
+    "y": 1
+   },
+   "id": 7,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT sum(deadlocks) AS deadlocks FROM pg_stat_database",
+     "refId": "A"
+    }
+   ],
+   "title": "Deadlocks (total)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Backend counts by state from pg_stat_activity.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 70
+       },
+       {
+        "color": "red",
+        "value": 90
+       }
+      ]
+     },
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 12,
+    "x": 0,
+    "y": 5
+   },
+   "id": 8,
+   "options": {
+    "displayMode": "gradient",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "showUnfilled": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT\n  count(*) FILTER (WHERE state='active') AS \"active\",\n  count(*) FILTER (WHERE state='idle') AS \"idle\",\n  count(*) FILTER (WHERE state='idle in transaction') AS \"idle in transaction\",\n  count(*) FILTER (WHERE state='idle in transaction (aborted)') AS \"idle in txn (aborted)\",\n  count(*) AS \"total\"\nFROM pg_stat_activity",
+     "refId": "A"
+    }
+   ],
+   "title": "Connections by state",
+   "type": "bargauge"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "On-disk size per database (pg_database_size).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "decbytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 12,
+    "x": 12,
+    "y": 5
+   },
+   "id": 9,
+   "options": {
+    "displayMode": "gradient",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "/^bytes$/",
+     "values": false
+    },
+    "showUnfilled": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT datname, pg_database_size(datname) AS bytes FROM pg_database WHERE datistemplate=false ORDER BY bytes DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Database sizes",
+   "type": "bargauge"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 10
+   },
+   "id": 10,
+   "panels": [],
+   "title": "Throughput  (live rate - per-interval deltas)",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Live commits / rollbacks / deadlocks per second, per-interval delta of pg_stat_database summed across DBs (telemetry.pg_stat_db, nova_pg_stat_poller).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "lineWidth": 2,
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "ops"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 0,
+    "y": 11
+   },
+   "id": 11,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max",
+      "mean"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawSql": "WITH d AS (\n  SELECT ts, datname,\n    (xact_commit - lag(xact_commit) OVER w) AS d_xact_commit,\n    (xact_rollback - lag(xact_rollback) OVER w) AS d_xact_rollback,\n    (deadlocks - lag(deadlocks) OVER w) AS d_deadlocks,\n    extract(epoch FROM ts - lag(ts) OVER w) AS secs\n  FROM telemetry.pg_stat_db\n  WHERE $__timeFilter(ts)\n  WINDOW w AS (PARTITION BY datname ORDER BY ts)\n)\nSELECT ts AS time, 'commits/s' AS metric, sum(d_xact_commit/secs) AS value\nFROM d WHERE secs > 0 AND d_xact_commit >= 0 GROUP BY ts\nUNION ALL\nSELECT ts AS time, 'rollbacks/s' AS metric, sum(d_xact_rollback/secs) AS value\nFROM d WHERE secs > 0 AND d_xact_rollback >= 0 GROUP BY ts\nUNION ALL\nSELECT ts AS time, 'deadlocks/s' AS metric, sum(d_deadlocks/secs) AS value\nFROM d WHERE secs > 0 AND d_deadlocks >= 0 GROUP BY ts\nORDER BY time",
+     "refId": "A"
+    }
+   ],
+   "title": "Transaction rate",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Live rows inserted / updated / deleted per second (per-interval delta, summed across DBs).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "lineWidth": 2,
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "ops"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 8,
+    "y": 11
+   },
+   "id": 12,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max",
+      "mean"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawSql": "WITH d AS (\n  SELECT ts, datname,\n    (tup_inserted - lag(tup_inserted) OVER w) AS d_tup_inserted,\n    (tup_updated - lag(tup_updated) OVER w) AS d_tup_updated,\n    (tup_deleted - lag(tup_deleted) OVER w) AS d_tup_deleted,\n    extract(epoch FROM ts - lag(ts) OVER w) AS secs\n  FROM telemetry.pg_stat_db\n  WHERE $__timeFilter(ts)\n  WINDOW w AS (PARTITION BY datname ORDER BY ts)\n)\nSELECT ts AS time, 'inserted/s' AS metric, sum(d_tup_inserted/secs) AS value\nFROM d WHERE secs > 0 AND d_tup_inserted >= 0 GROUP BY ts\nUNION ALL\nSELECT ts AS time, 'updated/s' AS metric, sum(d_tup_updated/secs) AS value\nFROM d WHERE secs > 0 AND d_tup_updated >= 0 GROUP BY ts\nUNION ALL\nSELECT ts AS time, 'deleted/s' AS metric, sum(d_tup_deleted/secs) AS value\nFROM d WHERE secs > 0 AND d_tup_deleted >= 0 GROUP BY ts\nORDER BY time",
+     "refId": "A"
+    }
+   ],
+   "title": "Tuple write rate",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Live rows returned (scanned) / fetched per second (per-interval delta, summed across DBs).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "lineWidth": 2,
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "ops"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 8,
+    "x": 16,
+    "y": 11
+   },
+   "id": 13,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max",
+      "mean"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawSql": "WITH d AS (\n  SELECT ts, datname,\n    (tup_returned - lag(tup_returned) OVER w) AS d_tup_returned,\n    (tup_fetched - lag(tup_fetched) OVER w) AS d_tup_fetched,\n    extract(epoch FROM ts - lag(ts) OVER w) AS secs\n  FROM telemetry.pg_stat_db\n  WHERE $__timeFilter(ts)\n  WINDOW w AS (PARTITION BY datname ORDER BY ts)\n)\nSELECT ts AS time, 'returned/s' AS metric, sum(d_tup_returned/secs) AS value\nFROM d WHERE secs > 0 AND d_tup_returned >= 0 GROUP BY ts\nUNION ALL\nSELECT ts AS time, 'fetched/s' AS metric, sum(d_tup_fetched/secs) AS value\nFROM d WHERE secs > 0 AND d_tup_fetched >= 0 GROUP BY ts\nORDER BY time",
+     "refId": "A"
+    }
+   ],
+   "title": "Tuple read rate",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Live buffer cache hits / disk block reads per second (per-interval delta, summed across DBs).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "lineWidth": 2,
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "ops"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 8,
+    "x": 0,
+    "y": 18
+   },
+   "id": 14,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max",
+      "mean"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawSql": "WITH d AS (\n  SELECT ts, datname,\n    (blks_hit - lag(blks_hit) OVER w) AS d_blks_hit,\n    (blks_read - lag(blks_read) OVER w) AS d_blks_read,\n    extract(epoch FROM ts - lag(ts) OVER w) AS secs\n  FROM telemetry.pg_stat_db\n  WHERE $__timeFilter(ts)\n  WINDOW w AS (PARTITION BY datname ORDER BY ts)\n)\nSELECT ts AS time, 'cache hits/s' AS metric, sum(d_blks_hit/secs) AS value\nFROM d WHERE secs > 0 AND d_blks_hit >= 0 GROUP BY ts\nUNION ALL\nSELECT ts AS time, 'disk reads/s' AS metric, sum(d_blks_read/secs) AS value\nFROM d WHERE secs > 0 AND d_blks_read >= 0 GROUP BY ts\nORDER BY time",
+     "refId": "A"
+    }
+   ],
+   "title": "Disk block rate",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Live temp files created per second (per-interval delta) \u2014 sustained > 0 means work_mem spills.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "lineWidth": 2,
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "ops"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 8,
+    "x": 8,
+    "y": 18
+   },
+   "id": 15,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max",
+      "mean"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawSql": "WITH d AS (\n  SELECT ts, datname,\n    (temp_files - lag(temp_files) OVER w) AS d_temp_files,\n    extract(epoch FROM ts - lag(ts) OVER w) AS secs\n  FROM telemetry.pg_stat_db\n  WHERE $__timeFilter(ts)\n  WINDOW w AS (PARTITION BY datname ORDER BY ts)\n)\nSELECT ts AS time, 'temp files/s' AS metric, sum(d_temp_files/secs) AS value\nFROM d WHERE secs > 0 AND d_temp_files >= 0 GROUP BY ts\nORDER BY time",
+     "refId": "A"
+    }
+   ],
+   "title": "Temp file rate",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Live temp bytes written per second (per-interval delta, summed across DBs).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "lineWidth": 2,
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "Bps"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 8,
+    "x": 16,
+    "y": 18
+   },
+   "id": 16,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max",
+      "mean"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawSql": "WITH d AS (\n  SELECT ts, datname,\n    (temp_bytes - lag(temp_bytes) OVER w) AS d_temp_bytes,\n    extract(epoch FROM ts - lag(ts) OVER w) AS secs\n  FROM telemetry.pg_stat_db\n  WHERE $__timeFilter(ts)\n  WINDOW w AS (PARTITION BY datname ORDER BY ts)\n)\nSELECT ts AS time, 'temp bytes/s' AS metric, sum(d_temp_bytes/secs) AS value\nFROM d WHERE secs > 0 AND d_temp_bytes >= 0 GROUP BY ts\nORDER BY time",
+     "refId": "A"
+    }
+   ],
+   "title": "Temp bytes rate",
+   "type": "timeseries"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 22
+   },
+   "id": 17,
+   "panels": [],
+   "title": "Replication",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "One row per connected replica from pg_stat_replication. Lag shown in WAL bytes behind primary.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "align": "auto",
+      "cellOptions": {
+       "type": "auto"
+      }
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "sent lag"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "decbytes"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "write lag"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "decbytes"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "flush lag"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "decbytes"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "replay lag"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "decbytes"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "state"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-background"
+        }
+       },
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "options": {
+           "streaming": {
+            "color": "green",
+            "index": 0
+           }
+          },
+          "type": "value"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "sync"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-background"
+        }
+       },
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "options": {
+           "async": {
+            "color": "blue",
+            "index": 2
+           },
+           "quorum": {
+            "color": "green",
+            "index": 1
+           },
+           "sync": {
+            "color": "green",
+            "index": 0
+           }
+          },
+          "type": "value"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 14,
+    "x": 0,
+    "y": 23
+   },
+   "id": 18,
+   "options": {
+    "cellHeight": "sm",
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT\n  client_addr AS \"replica\",\n  application_name AS \"app\",\n  state,\n  sync_state AS \"sync\",\n  pg_wal_lsn_diff(pg_current_wal_lsn(), sent_lsn)   AS \"sent lag\",\n  pg_wal_lsn_diff(pg_current_wal_lsn(), write_lsn)  AS \"write lag\",\n  pg_wal_lsn_diff(pg_current_wal_lsn(), flush_lsn)  AS \"flush lag\",\n  pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn) AS \"replay lag\"\nFROM pg_stat_replication ORDER BY client_addr",
+     "refId": "A"
+    }
+   ],
+   "title": "Replicas - live state",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Replay lag in WAL bytes per replica. Amber >1MB, red >64MB.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 1048576
+       },
+       {
+        "color": "red",
+        "value": 67108864
+       }
+      ]
+     },
+     "unit": "decbytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 10,
+    "x": 14,
+    "y": 23
+   },
+   "id": 19,
+   "options": {
+    "displayMode": "gradient",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "/^bytes$/",
+     "values": false
+    },
+    "showUnfilled": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT client_addr AS replica,\n  greatest(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn),0) AS bytes\nFROM pg_stat_replication ORDER BY client_addr",
+     "refId": "A"
+    }
+   ],
+   "title": "Replay lag (bytes) per replica",
+   "type": "bargauge"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Historical replay lag (ms) per replica, sampled by nova_replication_monitor into telemetry.replication_health.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "custom": {
+      "axisPlacement": "auto",
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "lineWidth": 2,
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 31
+   },
+   "id": 20,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max",
+      "mean"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, replay_lag_ms AS value, client_addr AS metric\nFROM telemetry.replication_health\nWHERE $__timeFilter(ts)\nORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Replication replay lag (ms) - history",
+   "type": "timeseries"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 39
+   },
+   "id": 21,
+   "panels": [],
+   "title": "Activity & Locks",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Client backend queries currently active, longest first. Duration amber >60s, red >5m.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "align": "auto",
+      "cellOptions": {
+       "type": "auto"
+      }
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "duration"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "s"
+       },
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-text"
+        }
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "green",
+           "value": null
+          },
+          {
+           "color": "orange",
+           "value": 60
+          },
+          {
+           "color": "red",
+           "value": 300
+          }
+         ]
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "query"
+      },
+      "properties": [
+       {
+        "id": "custom.width",
+        "value": 520
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 16,
+    "x": 0,
+    "y": 40
+   },
+   "id": 22,
+   "options": {
+    "cellHeight": "sm",
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT\n  extract(epoch FROM now()-query_start)::numeric(12,1) AS \"duration\",\n  pid, usename AS \"user\", datname AS \"db\", state,\n  wait_event_type AS \"wait\",\n  left(regexp_replace(query, '\\s+', ' ', 'g'), 120) AS \"query\"\nFROM pg_stat_activity\nWHERE state='active' AND pid<>pg_backend_pid() AND backend_type='client backend'\nORDER BY query_start ASC NULLS LAST\nLIMIT 20",
+     "refId": "A"
+    }
+   ],
+   "title": "Longest-running active queries",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Current lock count grouped by lock mode from pg_locks.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 16,
+    "y": 40
+   },
+   "id": 23,
+   "options": {
+    "displayMode": "gradient",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "/^locks$/",
+     "values": false
+    },
+    "showUnfilled": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT mode, count(*) AS locks FROM pg_locks GROUP BY mode ORDER BY count(*) DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Locks by mode",
+   "type": "bargauge"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 48
+   },
+   "id": 24,
+   "panels": [],
+   "title": "Storage",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Top tables by total on-disk size (heap + indexes + toast).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "align": "auto",
+      "cellOptions": {
+       "type": "auto"
+      }
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "total"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "decbytes"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "heap"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "decbytes"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "indexes"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "decbytes"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "total"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "mode": "gradient",
+         "type": "gauge"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 14,
+    "x": 0,
+    "y": 49
+   },
+   "id": 25,
+   "options": {
+    "cellHeight": "sm",
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT\n  schemaname||'.'||relname AS \"table\",\n  pg_total_relation_size(relid) AS \"total\",\n  pg_table_size(relid)          AS \"heap\",\n  pg_indexes_size(relid)        AS \"indexes\",\n  n_live_tup                    AS \"live rows\"\nFROM pg_stat_user_tables\nORDER BY pg_total_relation_size(relid) DESC\nLIMIT 20",
+     "refId": "A"
+    }
+   ],
+   "title": "Largest tables",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Top indexes by on-disk size.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "decbytes"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 10,
+    "x": 14,
+    "y": 49
+   },
+   "id": 26,
+   "options": {
+    "displayMode": "gradient",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "/^bytes$/",
+     "values": false
+    },
+    "showUnfilled": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT schemaname||'.'||indexrelname AS idx, pg_relation_size(indexrelid) AS bytes\nFROM pg_stat_user_indexes\nORDER BY pg_relation_size(indexrelid) DESC\nLIMIT 12",
+     "refId": "A"
+    }
+   ],
+   "title": "Largest indexes",
+   "type": "bargauge"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 58
+   },
+   "id": 27,
+   "panels": [],
+   "title": "Maintenance & Bloat",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "${datasource}"
+   },
+   "description": "Dead-tuple ratio and last (auto)vacuum/analyze per table. High dead % signals bloat / vacuum lag.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "align": "auto",
+      "cellOptions": {
+       "type": "auto"
+      }
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "dead %"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "percent"
+       },
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "mode": "gradient",
+         "type": "color-background"
+        }
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "green",
+           "value": null
+          },
+          {
+           "color": "orange",
+           "value": 10
+          },
+          {
+           "color": "red",
+           "value": 25
+          }
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 59
+   },
+   "id": 28,
+   "options": {
+    "cellHeight": "sm",
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "${datasource}"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawSql": "SELECT\n  schemaname||'.'||relname AS \"table\",\n  n_live_tup AS \"live\",\n  n_dead_tup AS \"dead\",\n  round(100.0*n_dead_tup/nullif(n_live_tup+n_dead_tup,0),1) AS \"dead %\",\n  last_vacuum AS \"last vacuum\",\n  last_autovacuum AS \"last autovacuum\",\n  last_analyze AS \"last analyze\",\n  last_autoanalyze AS \"last autoanalyze\"\nFROM pg_stat_user_tables\nWHERE n_live_tup+n_dead_tup > 0\nORDER BY n_dead_tup DESC\nLIMIT 25",
+     "refId": "A"
+    }
+   ],
+   "title": "Dead tuples & last vacuum / analyze",
+   "type": "table"
+  }
+ ],
+ "refresh": "30s",
+ "schemaVersion": 39,
+ "tags": [
+  "nova",
+  "postgres",
+  "database"
+ ],
+ "templating": {
+  "list": [
+   {
+    "current": {
+     "text": "nova_ops",
+     "value": "nova-ops-pg"
+    },
+    "hide": 0,
+    "label": "Datasource",
+    "name": "datasource",
+    "query": "grafana-postgresql-datasource",
+    "refresh": 1,
+    "type": "datasource"
+   }
+  ]
+ },
+ "time": {
+  "from": "now-6h",
+  "to": "now"
+ },
+ "timezone": "browser",
+ "title": "PostgreSQL - nova_ops cluster",
+ "uid": "nova-postgres",
+ "_folder": "General"
+}

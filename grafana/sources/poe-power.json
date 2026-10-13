@@ -1,0 +1,377 @@
+{
+ "panels": [
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": 0
+       },
+       {
+        "color": "yellow",
+        "value": 150
+       }
+      ]
+     },
+     "unit": "watt"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 8,
+    "x": 0,
+    "y": 0
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT round(sum(value)::numeric,1) AS value FROM (SELECT DISTINCT ON (metadata->>'device', metadata->>'port') value, metadata FROM telemetry.unifi_metrics WHERE metric='unifi_port_poe_w' AND ts>now()-interval '6 min' ORDER BY metadata->>'device', metadata->>'port', ts DESC) s",
+     "refId": "A"
+    }
+   ],
+   "title": "Total PoE draw now",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": 0
+       },
+       {
+        "color": "yellow",
+        "value": 150
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 8,
+    "x": 8,
+    "y": 0
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS value FROM (SELECT DISTINCT ON (metadata->>'device', metadata->>'port') value, metadata FROM telemetry.unifi_metrics WHERE metric='unifi_port_poe_w' AND ts>now()-interval '6 min' ORDER BY metadata->>'device', metadata->>'port', ts DESC) s WHERE value>0",
+     "refId": "A"
+    }
+   ],
+   "title": "Powered ports",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": 0
+       },
+       {
+        "color": "yellow",
+        "value": 150
+       }
+      ]
+     },
+     "unit": "currencyUSD"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 8,
+    "x": 16,
+    "y": 0
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT round((sum(value)*730/1000.0*0.18)::numeric,2) AS value FROM (SELECT DISTINCT ON (metadata->>'device', metadata->>'port') value, metadata FROM telemetry.unifi_metrics WHERE metric='unifi_port_poe_w' AND ts>now()-interval '6 min' ORDER BY metadata->>'device', metadata->>'port', ts DESC) s",
+     "refId": "A"
+    }
+   ],
+   "title": "Est. monthly cost (PoE)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "unit": "watt"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 4
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__timeGroup(ts,'2m') AS time, sum(value) AS \"Total PoE W\" FROM telemetry.unifi_metrics WHERE metric='unifi_port_poe_w' AND $__timeFilter(ts) GROUP BY 1 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Total PoE draw (W) over time",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 30,
+      "lineInterpolation": "smooth",
+      "showPoints": "never",
+      "spanNulls": true,
+      "stacking": {
+       "group": "A",
+       "mode": "normal"
+      }
+     },
+     "unit": "watt"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 4
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__timeGroup(ts,'2m') AS time, metadata->>'device' AS metric, sum(value) AS value FROM telemetry.unifi_metrics WHERE metric='unifi_port_poe_w' AND $__timeFilter(ts) GROUP BY 1, metadata->>'device' ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "PoE by switch (stacked)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "continuous-GrYlRd"
+     },
+     "unit": "watt"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 12,
+    "x": 0,
+    "y": 13
+   },
+   "options": {
+    "displayMode": "gradient",
+    "orientation": "horizontal",
+    "valueMode": "text"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT (metadata->>'device')||' / '||(metadata->>'port_name') AS metric, value FROM (SELECT DISTINCT ON (metadata->>'device', metadata->>'port') value, metadata FROM telemetry.unifi_metrics WHERE metric='unifi_port_poe_w' AND ts>now()-interval '6 min' ORDER BY metadata->>'device', metadata->>'port', ts DESC) s WHERE value>0 ORDER BY value DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "PoE by port (now)",
+   "type": "bargauge"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 12,
+    "x": 12,
+    "y": 13
+   },
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT metadata->>'device' AS \"Switch\", metadata->>'port_name' AS \"Port\", round(value::numeric,1) AS \"Watts\" FROM (SELECT DISTINCT ON (metadata->>'device', metadata->>'port') value, metadata FROM telemetry.unifi_metrics WHERE metric='unifi_port_poe_w' AND ts>now()-interval '6 min' ORDER BY metadata->>'device', metadata->>'port', ts DESC) s WHERE value>0 ORDER BY value DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "PoE ports (current)",
+   "type": "table"
+  }
+ ],
+ "refresh": "2m",
+ "schemaVersion": 39,
+ "tags": [
+  "poe",
+  "power",
+  "unifi",
+  "nova"
+ ],
+ "time": {
+  "from": "now-24h",
+  "to": "now"
+ },
+ "timezone": "browser",
+ "title": "PoE Power",
+ "uid": "poe-power",
+ "_folder": "General"
+}

@@ -1,0 +1,379 @@
+{
+ "panels": [
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10
+     },
+     "unit": "watt"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 18,
+    "x": 0,
+    "y": 0
+   },
+   "id": 1,
+   "options": {
+    "legend": {
+     "calcs": [
+      "lastNotNull",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, watts AS value, device_name AS metric FROM telemetry.energy WHERE $__timeFilter(ts) AND device_name NOT LIKE '0x%' ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Plug Power (W) by room",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 1000
+       },
+       {
+        "color": "red",
+        "value": 1500
+       }
+      ]
+     },
+     "unit": "watt"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 6,
+    "x": 18,
+    "y": 0
+   },
+   "id": 2,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT COALESCE(SUM(w),0) AS \"Total W\" FROM (SELECT DISTINCT ON (device_name) watts AS w FROM telemetry.energy WHERE ts > now()-interval '10 min' ORDER BY device_name, ts DESC) s",
+     "refId": "A"
+    }
+   ],
+   "title": "Total plug draw (W)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Watts"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "watt"
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 10
+   },
+   "id": 3,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT DISTINCT ON (device_name) device_name AS \"Plug\", watts AS \"Watts\", volts AS \"Volts\", amps AS \"Amps\", on_state AS \"On\", ts AS \"Last seen\" FROM telemetry.energy WHERE ts > now()-interval '1 hour' ORDER BY device_name, ts DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Current draw per plug",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "Combined instantaneous power across all named smart plugs (sum of per-plug avg per minute).",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 20,
+      "lineWidth": 2,
+      "showPoints": "never"
+     },
+     "unit": "watt"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 19
+   },
+   "id": 4,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "single"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT t AS \"time\", SUM(w) AS \"Total W\" FROM ( SELECT $__timeGroup(ts, '1m') AS t, device_name, avg(watts) AS w FROM telemetry.energy WHERE $__timeFilter(ts) AND device_name NOT LIKE '0x%' GROUP BY 1, device_name) s GROUP BY t ORDER BY t",
+     "refId": "A"
+    }
+   ],
+   "title": "Total power \u2014 all plugs (W)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "Projected monthly cost if current plug draw held all month, on BWP residential tiers (Tier1 \u2264300 kWh/mo @ $0.18, Tier2 @ $0.2782, all-in incl ECAC, 2024 schedule \u2014 a ~9.9% 2026 increase applies). Plugs are marginal load so most falls in Tier 2.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 20,
+      "lineWidth": 2,
+      "showPoints": "never"
+     },
+     "decimals": 0,
+     "unit": "currencyUSD"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 27
+   },
+   "id": 5,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "single"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT t AS \"time\", round((LEAST(kwh,300)*0.18 + GREATEST(kwh-300,0)*0.2782)::numeric,2) AS \"Proj $/mo (tiered)\" FROM (SELECT t, (SUM(w)/1000.0)*730 AS kwh FROM (   SELECT $__timeGroup(ts,'1m') AS t, device_name, avg(watts) AS w   FROM telemetry.energy WHERE $__timeFilter(ts) AND device_name NOT LIKE '0x%'   GROUP BY 1, device_name) p GROUP BY t) m ORDER BY t",
+     "refId": "A"
+    }
+   ],
+   "title": "Projected monthly cost \u2014 BWP tiered ($0.18 \u2264300kWh / $0.2782 above)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "The server rack / office plugs (office_plug + office_plug_2), 7-day average draw, priced at Burbank Water & Power top tier ($0.2782/kWh) because the house is always above the 300 kWh base tier, so every rack kWh is a marginal one. Added 2026-10-01 at Jordan request.",
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 100
+       },
+       {
+        "color": "red",
+        "value": 150
+       }
+      ]
+     },
+     "unit": "currencyUSD"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 0,
+    "y": 35
+   },
+   "id": 6,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "",
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT round((SUM(w)*730/1000*0.2782)::numeric,0) AS \"Rack $/mo\"\nFROM (SELECT device_name, avg(watts) AS w FROM telemetry.energy\n      WHERE ts > now()-interval '7 days' AND device_name IN ('office_plug','office_plug_2') GROUP BY device_name) s",
+     "refId": "A"
+    }
+   ],
+   "title": "Rack cost \u2014 $/mo (7-day avg, marginal tier)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "description": "Hourly average rack draw expressed as a monthly bill at the marginal BWP tier.",
+   "fieldConfig": {
+    "defaults": {
+     "decimals": 0,
+     "unit": "currencyUSD"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 18,
+    "x": 6,
+    "y": 35
+   },
+   "id": 7,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "single"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT t AS \"time\", round((SUM(w)*730/1000*0.2782)::numeric,2) AS \"Rack $/mo\"\nFROM (SELECT $__timeGroup(ts,1h) AS t, device_name, avg(watts) AS w FROM telemetry.energy\n      WHERE $__timeFilter(ts) AND device_name IN ('office_plug','office_plug_2') GROUP BY 1,2) s GROUP BY t ORDER BY t",
+     "refId": "A"
+    }
+   ],
+   "title": "Rack cost trend \u2014 $/mo equivalent",
+   "type": "timeseries"
+  }
+ ],
+ "refresh": "30s",
+ "schemaVersion": 39,
+ "tags": [
+  "nova",
+  "energy",
+  "zigbee"
+ ],
+ "time": {
+  "from": "now-24h",
+  "to": "now"
+ },
+ "timezone": "browser",
+ "title": "Smart Plugs \u2014 Power",
+ "uid": "smart-plugs-power",
+ "_folder": "Nova Starter"
+}

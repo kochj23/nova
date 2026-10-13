@@ -1,0 +1,311 @@
+{
+ "panels": [
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "blue",
+      "mode": "fixed"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "kwatth"
+    }
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 0,
+    "y": 0
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT COALESCE(SUM(aw*hrs)/1000.0,0) AS \"Total kWh\" FROM (\n SELECT COALESCE(NULLIF(device_name,''), device_id) dev, avg(watts) aw, GREATEST(extract(epoch from(max(ts)-min(ts)))/3600.0,0.001) hrs\n FROM telemetry.energy WHERE $__timeFilter(ts) AND (device_id LIKE 'eve:%' OR (device_name IS NOT NULL AND device_name NOT LIKE '0x%')) GROUP BY dev) s",
+     "refId": "A"
+    }
+   ],
+   "title": "Total Energy (period)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "blue",
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 6
+       },
+       {
+        "color": "red",
+        "value": 10
+       }
+      ]
+     },
+     "unit": "kwatt"
+    }
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 6,
+    "y": 0
+   },
+   "options": {
+    "colorMode": "background",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT round((SUM(w)/1000.0)::numeric,2) AS \"kW now\" FROM (\n SELECT DISTINCT ON (COALESCE(NULLIF(device_name,''), device_id)) watts w FROM telemetry.energy WHERE ts>now()-interval '10 min' AND (device_id LIKE 'eve:%' OR (device_name IS NOT NULL AND device_name NOT LIKE '0x%')) ORDER BY COALESCE(NULLIF(device_name,''), device_id), ts DESC) s",
+     "refId": "A"
+    }
+   ],
+   "title": "Current Draw",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "blue",
+      "mode": "fixed"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "currencyBWP"
+    }
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 12,
+    "y": 0
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT round((LEAST(k,300)*0.18 + GREATEST(k-300,0)*0.2782)::numeric,2) AS \"Proj $/mo\" FROM (\n SELECT (SUM(w)/1000.0)*730 AS k FROM (SELECT DISTINCT ON (COALESCE(NULLIF(device_name,''), device_id)) watts w FROM telemetry.energy WHERE ts>now()-interval '10 min' AND (device_id LIKE 'eve:%' OR (device_name IS NOT NULL AND device_name NOT LIKE '0x%')) ORDER BY COALESCE(NULLIF(device_name,''), device_id), ts DESC) x) y",
+     "refId": "A"
+    }
+   ],
+   "title": "Projected Monthly Cost (tiered BWP)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "blue",
+      "mode": "fixed"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "none"
+    }
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 18,
+    "y": 0
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT count(DISTINCT COALESCE(NULLIF(device_name,''), device_id)) AS \"Devices\" FROM telemetry.energy WHERE ts>now()-interval '10 min' AND (device_id LIKE 'eve:%' OR (device_name IS NOT NULL AND device_name NOT LIKE '0x%'))",
+     "refId": "A"
+    }
+   ],
+   "title": "Sources",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 70,
+      "lineWidth": 1,
+      "showPoints": "never",
+      "stacking": {
+       "mode": "normal"
+      }
+     },
+     "unit": "kwatth"
+    }
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 5
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawSql": "SELECT time, metric, SUM(aw)/1000.0 AS \"kWh\" FROM (\n SELECT $__timeGroup(ts,'1h') AS time, CASE WHEN device_id LIKE 'eve:%' THEN 'Eve strips' ELSE 'Zigbee plugs' END AS metric, COALESCE(NULLIF(device_name,''), device_id) AS dev, avg(watts) aw\n FROM telemetry.energy WHERE $__timeFilter(ts) AND (device_id LIKE 'eve:%' OR (device_name IS NOT NULL AND device_name NOT LIKE '0x%')) GROUP BY 1,2,3) s GROUP BY time,metric ORDER BY time",
+     "refId": "A"
+    }
+   ],
+   "title": "kWh per hour \u2014 stacked by source",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 15,
+      "lineWidth": 2,
+      "showPoints": "never",
+      "stacking": {
+       "mode": "none"
+      }
+     },
+     "unit": "kwatt"
+    }
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 14
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawSql": "SELECT time, SUM(aw)/1000.0 AS \"Total kW\" FROM (\n SELECT $__timeGroup(ts,'5m') AS time, COALESCE(NULLIF(device_name,''), device_id) dev, avg(watts) aw FROM telemetry.energy\n WHERE $__timeFilter(ts) AND (device_id LIKE 'eve:%' OR (device_name IS NOT NULL AND device_name NOT LIKE '0x%')) GROUP BY 1,2) s GROUP BY time ORDER BY time",
+     "refId": "A"
+    }
+   ],
+   "title": "Total power (kW) \u2014 all sources",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "gridPos": {
+    "h": 12,
+    "w": 24,
+    "x": 0,
+    "y": 22
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT COALESCE(NULLIF(device_name,''), device_id) AS \"Device\", CASE WHEN device_id LIKE 'eve:%' THEN 'Eve strips' ELSE 'Zigbee plugs' END AS \"Source\",\n round((avg(watts)*GREATEST(extract(epoch from(max(ts)-min(ts)))/3600.0,0.001)/1000.0)::numeric,3) AS \"kWh (period)\",\n round(avg(watts)) AS \"Avg W\" FROM telemetry.energy WHERE $__timeFilter(ts) AND (device_id LIKE 'eve:%' OR (device_name IS NOT NULL AND device_name NOT LIKE '0x%')) GROUP BY 1,2 ORDER BY 3 DESC LIMIT 25",
+     "refId": "A"
+    }
+   ],
+   "title": "Energy by device (period), top 25",
+   "type": "table"
+  }
+ ],
+ "refresh": "1m",
+ "schemaVersion": 39,
+ "tags": [
+  "nova",
+  "energy",
+  "kwh",
+  "power"
+ ],
+ "time": {
+  "from": "now-24h",
+  "to": "now"
+ },
+ "timezone": "browser",
+ "title": "Nova \u2014 Energy (kWh, all sources)",
+ "uid": "nova-kwh",
+ "_folder": "General"
+}

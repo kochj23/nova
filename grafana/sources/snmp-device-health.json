@@ -1,0 +1,305 @@
+{
+ "annotations": {
+  "list": []
+ },
+ "panels": [
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10
+     },
+     "max": 100,
+     "min": 0,
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 0
+   },
+   "id": 1,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT timestamp AS time, device_name AS metric, metric_value AS value FROM snmp_metrics WHERE metric_name = 'cpu_used_pct' AND $__timeFilter(timestamp) ORDER BY timestamp",
+     "refId": "A"
+    }
+   ],
+   "title": "CPU Utilization % (UCD ssCpu)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 0
+   },
+   "id": 2,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT timestamp AS time, device_name AS metric, metric_value AS value FROM snmp_metrics WHERE metric_name = 'hr_cpu_load_avg' AND $__timeFilter(timestamp) ORDER BY timestamp",
+     "refId": "A"
+    }
+   ],
+   "title": "Load Average (5 min)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10
+     },
+     "max": 100,
+     "min": 0,
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 0,
+    "y": 9
+   },
+   "id": 3,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT t.timestamp AS time, t.device_name AS metric, CASE WHEN t.metric_value > 0 THEN 100.0 * (t.metric_value - a.metric_value) / t.metric_value ELSE 0 END AS value FROM snmp_metrics t JOIN snmp_metrics a ON a.device_name = t.device_name AND a.metric_name = 'mem_avail_real' AND a.timestamp = t.timestamp WHERE t.metric_name = 'mem_total_real' AND $__timeFilter(t.timestamp) ORDER BY t.timestamp",
+     "refId": "A"
+    }
+   ],
+   "title": "Memory Used % (real)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10
+     },
+     "unit": "celsius"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 12,
+    "x": 12,
+    "y": 9
+   },
+   "id": 4,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT timestamp AS time, device_name || ' system' AS metric, metric_value AS value FROM snmp_metrics WHERE metric_name = 'sys_temp' AND $__timeFilter(timestamp) ORDER BY timestamp",
+     "refId": "A"
+    }
+   ],
+   "title": "Temperatures (Synology system + UDM)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 18
+   },
+   "id": 5,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "WITH latest AS (SELECT device_name, metric_value, row_number() OVER (PARTITION BY device_name ORDER BY timestamp DESC) rn FROM snmp_metrics WHERE metric_name = 'hr_cpu_load_avg' AND timestamp > now() - interval '15 min') SELECT device_name AS \"Device\", round(metric_value::numeric, 1) AS \"Avg CPU %\" FROM latest WHERE rn = 1 ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Per-CPU Load % (hrProcessorLoad, latest)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "dtdurations"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 18
+   },
+   "id": 6,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "WITH latest AS (SELECT device_name, metric_value, row_number() OVER (PARTITION BY device_name ORDER BY timestamp DESC) rn FROM snmp_metrics WHERE metric_name = 'sys_uptime' AND timestamp > now() - interval '20 min') SELECT device_name AS \"Device\", metric_value / 100 AS \"Uptime\" FROM latest WHERE rn = 1 ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Uptime (latest)",
+   "type": "table"
+  }
+ ],
+ "refresh": "1m",
+ "schemaVersion": 39,
+ "tags": [
+  "snmp",
+  "health",
+  "nova"
+ ],
+ "templating": {
+  "list": []
+ },
+ "time": {
+  "from": "now-6h",
+  "to": "now"
+ },
+ "timezone": "browser",
+ "title": "Device Health (SNMP)",
+ "uid": "snmp-device-health",
+ "_folder": "Nova Starter"
+}

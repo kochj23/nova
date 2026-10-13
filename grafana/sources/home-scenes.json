@@ -1,0 +1,91 @@
+{
+ "panels": [
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 24,
+    "x": 0,
+    "y": 0
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT scene_name AS metric, count(*) AS value FROM home_scene_activations WHERE ts > now() - interval '30 days' GROUP BY scene_name ORDER BY value DESC"
+    }
+   ],
+   "title": "Scene activations (last 30 days)",
+   "type": "barchart"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 24,
+    "x": 0,
+    "y": 10
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawSql": "SELECT date_trunc('day', ts) AS time, scene_name AS metric, count(*) AS value FROM home_scene_activations WHERE ts > now() - interval '30 days' GROUP BY 1,2 ORDER BY 1"
+    }
+   ],
+   "title": "Scene activations over time",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 24,
+    "x": 0,
+    "y": 20
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT ts AS time, scene_name FROM home_scene_activations ORDER BY ts DESC LIMIT 50"
+    }
+   ],
+   "title": "Recent activations",
+   "type": "table"
+  }
+ ],
+ "refresh": "5m",
+ "schemaVersion": 39,
+ "tags": [
+  "nova",
+  "homekit",
+  "scenes"
+ ],
+ "timezone": "browser",
+ "title": "Home Scenes Activity",
+ "uid": "home-scenes",
+ "_folder": "General"
+}

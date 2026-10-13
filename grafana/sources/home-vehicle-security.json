@@ -1,0 +1,139 @@
+{
+ "panels": [
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 0
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT observed_at AS time, metadata->>'mac' AS mac, metadata->>'rssi' AS rssi, metadata->>'confidence' AS confidence FROM shared_observations WHERE observer='nova' AND category='security' AND metadata ? 'confidence' AND observed_at > now() - interval '30 days' ORDER BY observed_at DESC"
+    }
+   ],
+   "title": "Possible vulnerable-BLE-device (KARR/SWDS) detections \u2014 last 30 days",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 8
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT observed_at AS time, subject, observation FROM shared_observations WHERE observer='nova_ble_churn_report' AND observed_at > now() - interval '30 days' ORDER BY observed_at DESC LIMIT 30"
+    }
+   ],
+   "title": "Bluetooth device churn \u2014 last 30 days",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 16
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT scene_name AS metric, count(*) AS value FROM home_scene_activations WHERE ts > now() - interval '30 days' GROUP BY scene_name ORDER BY value DESC"
+    }
+   ],
+   "title": "Home scene activations \u2014 last 30 days",
+   "type": "barchart"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 24
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT ts AS time, agent_name AS agent, rule_level, rule_description FROM security_events WHERE rule_level >= 7 AND ts > now() - interval '7 days' ORDER BY ts DESC LIMIT 30"
+    }
+   ],
+   "title": "Recent high-severity security events (Wazuh)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 24,
+    "x": 0,
+    "y": 32
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT coalesce(metadata->>'mfr_category', 'unknown') AS metric, count(DISTINCT device_mac) AS value FROM telemetry.bluetooth WHERE ts > now() - interval '1 day' GROUP BY 1 ORDER BY 2 DESC"
+    }
+   ],
+   "title": "BLE devices by manufacturer category \u2014 last 24h",
+   "type": "piechart"
+  }
+ ],
+ "refresh": "1h",
+ "schemaVersion": 39,
+ "tags": [
+  "nova",
+  "security",
+  "rollup"
+ ],
+ "timezone": "browser",
+ "title": "Home & Vehicle Security",
+ "uid": "home-vehicle-security",
+ "_folder": "General"
+}

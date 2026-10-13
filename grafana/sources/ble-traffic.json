@@ -1,0 +1,121 @@
+{
+ "panels": [
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 24,
+    "x": 0,
+    "y": 0
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawSql": "SELECT date_trunc('hour', ts) AS time, CASE WHEN rssi > -60 THEN 'close (in/near house)' WHEN rssi > -80 THEN 'passing by (sidewalk/street)' ELSE 'distant (neighboring properties)' END AS metric, count(DISTINCT device_mac) AS value FROM telemetry.bluetooth WHERE ts > now() - interval '14 days' AND rssi IS NOT NULL GROUP BY 1,2 ORDER BY 1"
+    }
+   ],
+   "title": "Distinct devices per hour, by proximity (last 14 days)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 24,
+    "x": 0,
+    "y": 10
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT extract(hour from ts) AS hour_of_day, to_char(ts, 'Dy') AS day_of_week, count(*) AS sightings FROM telemetry.bluetooth WHERE ts > now() - interval '30 days' AND rssi > -80 GROUP BY 1,2 ORDER BY 1"
+    }
+   ],
+   "title": "Traffic rhythm \u2014 sightings by hour of day x day of week (last 30 days)",
+   "type": "heatmap"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 20
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawSql": "SELECT date_trunc('hour', ts) AS time, CASE WHEN device_name IS NOT NULL AND device_name != '' THEN 'named' ELSE 'anonymous' END AS metric, count(DISTINCT device_mac) AS value FROM telemetry.bluetooth WHERE ts > now() - interval '7 days' GROUP BY 1,2 ORDER BY 1"
+    }
+   ],
+   "title": "Named vs anonymous devices per hour (last 7 days)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 29
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT max(ts) AS time, device_mac, coalesce(device_name,'(anonymous)') AS name, max(rssi) AS best_rssi, coalesce(metadata->>'vendor','unknown') AS vendor FROM telemetry.bluetooth WHERE ts > now() - interval '5 minutes' GROUP BY device_mac, device_name, metadata->>'vendor' ORDER BY best_rssi DESC LIMIT 50"
+    }
+   ],
+   "title": "What's nearby right now (last 5 min, strongest signal first)",
+   "type": "table"
+  }
+ ],
+ "refresh": "5m",
+ "schemaVersion": 39,
+ "tags": [
+  "nova",
+  "bluetooth",
+  "traffic"
+ ],
+ "time": {
+  "from": "now-14d",
+  "to": "now"
+ },
+ "timezone": "browser",
+ "title": "BLE Traffic Patterns",
+ "uid": "ble-traffic",
+ "_folder": "General"
+}

@@ -1,0 +1,2311 @@
+{
+ "uid": "nova-rf",
+ "title": "Radio, Airspace & Bluetooth",
+ "tags": [
+  "nova",
+  "nova-page"
+ ],
+ "timezone": "browser",
+ "schemaVersion": 39,
+ "editable": true,
+ "graphTooltip": 1,
+ "time": {
+  "from": "now-24h",
+  "to": "now"
+ },
+ "refresh": "5m",
+ "templating": {
+  "list": []
+ },
+ "panels": [
+  {
+   "type": "row",
+   "title": "Nova \u2014 Radio & Wi-Fi",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 24,
+    "h": 1
+   },
+   "id": 1
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 14,
+    "x": 0,
+    "y": 1
+   },
+   "id": 2,
+   "options": {
+    "cellHeight": "sm",
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT t.priority, t.label, t.freq_hz/1e6 AS mhz, t.demod, a.tuner_id, a.reason, a.since FROM sdr_assignments a JOIN sdr_targets t ON t.id = a.target_id ORDER BY t.priority DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "SDR \u2014 who is listening where (live)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 10,
+    "x": 14,
+    "y": 1
+   },
+   "id": 3,
+   "options": {
+    "cellHeight": "sm",
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT tuner_id, ok, detail, ts, unhealthy_since FROM sdr_health ORDER BY tuner_id",
+     "refId": "A"
+    }
+   ],
+   "title": "SDR \u2014 tuner health",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 12,
+    "x": 0,
+    "y": 9
+   },
+   "id": 4,
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__timeGroupAlias(ts, 1h), count(*) FILTER (WHERE action='apply') AS moves, count(*) FILTER (WHERE action='advise') AS advised FROM sdr_placement_log WHERE $__timeFilter(ts) GROUP BY 1 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "SDR \u2014 automatic moves",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 12,
+    "x": 12,
+    "y": 9
+   },
+   "id": 5,
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__time(ts), aps, stations FROM wifi_survey_runs WHERE $__timeFilter(ts) ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Wi-Fi \u2014 access points and clients heard",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 12,
+    "x": 0,
+    "y": 16
+   },
+   "id": 6,
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__time(ts), coalesce((SELECT sum(v::int) FROM jsonb_each_text(deauth) e(k, v)), 0) AS frames FROM wifi_survey_runs WHERE $__timeFilter(ts) ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Wi-Fi \u2014 deauth/disassoc frames per survey",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 12,
+    "x": 12,
+    "y": 16
+   },
+   "id": 7,
+   "options": {
+    "cellHeight": "sm",
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts, kind, bssid, detail FROM wifi_guard_findings ORDER BY ts DESC LIMIT 50",
+     "refId": "A"
+    }
+   ],
+   "title": "Wi-Fi guard findings (evil twin / deauth flood)",
+   "type": "table"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 23
+   },
+   "id": 8,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 24
+     },
+     "id": 9,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT left(\"id\"::text, 120) AS \"id\", left(\"label\"::text, 120) AS \"label\", \"freq_hz\", left(\"demod\"::text, 120) AS \"demod\", \"priority\", \"enabled\", left(\"meta\"::text, 120) AS \"meta\" FROM \"sdr_targets\" LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "sdr_targets \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 32
+     },
+     "id": 10,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"sdr_targets\"",
+       "refId": "A"
+      }
+     ],
+     "title": "sdr_targets \u2014 total rows",
+     "type": "stat"
+    }
+   ],
+   "title": "sdr_targets (no time column)",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 24
+   },
+   "id": 11,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 25
+     },
+     "id": 12,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT left(\"id\"::text, 120) AS \"id\", left(\"host\"::text, 120) AS \"host\", left(\"pipeline\"::text, 120) AS \"pipeline\", left(\"unit\"::text, 120) AS \"unit\", left(\"port\"::text, 120) AS \"port\", left(\"demods\"::text, 120) AS \"demods\", \"min_hz\", \"max_hz\" FROM \"sdr_tuners\" LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "sdr_tuners \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 33
+     },
+     "id": 13,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"sdr_tuners\"",
+       "refId": "A"
+      }
+     ],
+     "title": "sdr_tuners \u2014 total rows",
+     "type": "stat"
+    }
+   ],
+   "title": "sdr_tuners (no time column)",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 25
+   },
+   "id": 14,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 26
+     },
+     "id": 15,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT left(\"tuner_id\"::text, 120) AS \"tuner_id\", left(\"target_id\"::text, 120) AS \"target_id\", \"since\", left(\"reason\"::text, 120) AS \"reason\" FROM \"sdr_assignments\" LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "sdr_assignments \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 34
+     },
+     "id": 16,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"sdr_assignments\"",
+       "refId": "A"
+      }
+     ],
+     "title": "sdr_assignments \u2014 total rows",
+     "type": "stat"
+    }
+   ],
+   "title": "sdr_assignments (no time column)",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 26
+   },
+   "id": 17,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 27
+     },
+     "id": 18,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT left(\"tuner_id\"::text, 120) AS \"tuner_id\", \"ts\", \"ok\", left(\"detail\"::text, 120) AS \"detail\", \"unhealthy_since\" FROM \"sdr_health\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "sdr_health \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 35
+     },
+     "id": 19,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"sdr_health\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "sdr_health \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 35
+     },
+     "id": 20,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"sdr_health\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "sdr_health \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "sdr_health",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 27
+   },
+   "id": 21,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 28
+     },
+     "id": 22,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"ts\", left(\"mode\"::text, 120) AS \"mode\", left(\"action\"::text, 120) AS \"action\", left(\"detail\"::text, 120) AS \"detail\" FROM \"sdr_placement_log\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "sdr_placement_log \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 36
+     },
+     "id": 23,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"sdr_placement_log\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "sdr_placement_log \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 36
+     },
+     "id": 24,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"sdr_placement_log\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "sdr_placement_log \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "sdr_placement_log",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 28
+   },
+   "id": 25,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 29
+     },
+     "id": 26,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"ts\", left(\"sensor\"::text, 120) AS \"sensor\", \"capture_s\", \"aps\", \"stations\", left(\"deauth\"::text, 120) AS \"deauth\" FROM \"wifi_survey_runs\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "wifi_survey_runs \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 37
+     },
+     "id": 27,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"wifi_survey_runs\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "wifi_survey_runs \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 37
+     },
+     "id": 28,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"wifi_survey_runs\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "wifi_survey_runs \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "wifi_survey_runs",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 29
+   },
+   "id": 29,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 30
+     },
+     "id": 30,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"run_id\", left(\"bssid\"::text, 120) AS \"bssid\", left(\"essid\"::text, 120) AS \"essid\", \"channel\", left(\"privacy\"::text, 120) AS \"privacy\", \"power\", \"beacons\" FROM \"wifi_survey\" LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "wifi_survey \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 38
+     },
+     "id": 31,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"wifi_survey\"",
+       "refId": "A"
+      }
+     ],
+     "title": "wifi_survey \u2014 total rows",
+     "type": "stat"
+    }
+   ],
+   "title": "wifi_survey (no time column)",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 30
+   },
+   "id": 32,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 31
+     },
+     "id": 33,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"ts\", \"run_id\", left(\"kind\"::text, 120) AS \"kind\", left(\"bssid\"::text, 120) AS \"bssid\", left(\"detail\"::text, 120) AS \"detail\" FROM \"wifi_guard_findings\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "wifi_guard_findings \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 39
+     },
+     "id": 34,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"wifi_guard_findings\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "wifi_guard_findings \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 39
+     },
+     "id": 35,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"wifi_guard_findings\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "wifi_guard_findings \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "wifi_guard_findings",
+   "type": "row"
+  },
+  {
+   "type": "row",
+   "title": "Nova \u2014 Scanner / Airwaves",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 31,
+    "w": 24,
+    "h": 1
+   },
+   "id": 36
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 32
+   },
+   "id": 37,
+   "panels": [],
+   "title": "Airwaves \u2014 Transmission Volume",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 70,
+      "lineWidth": 2,
+      "showPoints": "never",
+      "stacking": {
+       "mode": "normal"
+      }
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 33
+   },
+   "id": 38,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT date_trunc('day',created_at) AS time, source AS metric, count(*) AS value FROM memories WHERE source IN ('fire','rail','chp','scanner','atc','cb') AND $__timeFilter(created_at) GROUP BY 1,2 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Transmissions per beat per day",
+   "type": "timeseries"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 42
+   },
+   "id": 39,
+   "panels": [],
+   "title": "Last 24 Hours \u2014 by Beat",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 4,
+    "x": 0,
+    "y": 43
+   },
+   "id": 40,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"Fire\" FROM memories WHERE source='fire' AND created_at > now()-interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "Fire",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 4,
+    "x": 4,
+    "y": 43
+   },
+   "id": 41,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"Rail\" FROM memories WHERE source='rail' AND created_at > now()-interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "Rail",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 4,
+    "x": 8,
+    "y": 43
+   },
+   "id": 42,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"CHP\" FROM memories WHERE source='chp' AND created_at > now()-interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "CHP",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 4,
+    "x": 12,
+    "y": 43
+   },
+   "id": 43,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"Scanner\" FROM memories WHERE source='scanner' AND created_at > now()-interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "Scanner",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 4,
+    "x": 16,
+    "y": 43
+   },
+   "id": 44,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"ATC\" FROM memories WHERE source='atc' AND created_at > now()-interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "ATC",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 4,
+    "x": 20,
+    "y": 43
+   },
+   "id": 45,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"CB\" FROM memories WHERE source='cb' AND created_at > now()-interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "CB",
+   "type": "stat"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 48
+   },
+   "id": 46,
+   "panels": [],
+   "title": "Distribution",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 8,
+    "x": 0,
+    "y": 49
+   },
+   "id": 47,
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true,
+     "values": [
+      "value"
+     ]
+    },
+    "pieType": "donut",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": true
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT source AS metric, count(*) AS value FROM memories WHERE source IN ('fire','rail','chp','scanner','atc','cb') AND created_at > now()-interval '7 days' GROUP BY 1 ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Share by beat (last 7d)",
+   "type": "piechart"
+  },
+  {
+   "datasource": null,
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 16,
+    "x": 8,
+    "y": 49
+   },
+   "id": 48,
+   "options": {
+    "content": "### Scanner / Airwaves \u2014 Dormant\n\nThis dashboard is **dormant until the Uniden SDS200's network audio is streaming**; panels populate automatically once transmissions are transcribed into the `fire` / `rail` / `chp` / `scanner` / `atc` / `cb` beats.\n\nZero data here is expected \u2014 the airwaves light up the moment audio begins flowing.",
+    "mode": "markdown"
+   },
+   "title": "Status",
+   "type": "text"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 58
+   },
+   "id": 49,
+   "panels": [],
+   "title": "Latest Transmissions",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "align": "auto",
+      "filterable": true
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 24,
+    "x": 0,
+    "y": 59
+   },
+   "id": 50,
+   "options": {
+    "cellHeight": "sm",
+    "footer": {
+     "countRows": false,
+     "fields": "",
+     "reducer": [
+      "sum"
+     ],
+     "show": false
+    },
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT created_at, source AS beat, left(text,90) AS transmission FROM memories WHERE source IN ('fire','rail','chp','scanner','atc','cb') ORDER BY created_at DESC LIMIT 25",
+     "refId": "A"
+    }
+   ],
+   "title": "Latest transmissions",
+   "type": "table"
+  },
+  {
+   "type": "row",
+   "title": "Overhead Flights \u2014 91506",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 69,
+    "w": 24,
+    "h": 1
+   },
+   "id": 51
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "blue",
+      "mode": "fixed"
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 0,
+    "y": 70
+   },
+   "id": 52,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(DISTINCT hex) FROM telemetry.overhead_flights WHERE ts > now() - interval '1 hour'",
+     "refId": "A"
+    }
+   ],
+   "title": "Aircraft (last hour)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "purple",
+      "mode": "fixed"
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 6,
+    "y": 70
+   },
+   "id": 53,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(DISTINCT hex) FROM telemetry.overhead_flights WHERE is_helicopter AND ts > now() - interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "Helicopters (24h)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 2,
+     "thresholds": {
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 1
+       },
+       {
+        "color": "green",
+        "value": 2
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 12,
+    "y": 70
+   },
+   "id": 54,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT min(dist_nm) FROM telemetry.overhead_flights WHERE ts > now() - interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "Closest pass (24h, NM)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "orange",
+      "mode": "fixed"
+     },
+     "unit": "lengthft"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 18,
+    "y": 70
+   },
+   "id": 55,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT min(alt_ft) FROM telemetry.overhead_flights WHERE ts > now() - interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "Lowest (24h, ft)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "points",
+      "pointSize": 5
+     },
+     "unit": "lengthft"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 75
+   },
+   "id": 56,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT ts AS time, alt_ft AS value, CASE WHEN is_helicopter THEN 'helicopter' ELSE 'fixed wing' END AS metric FROM telemetry.overhead_flights WHERE $__timeFilter(ts) ORDER BY ts",
+     "refId": "A"
+    }
+   ],
+   "title": "Altitude of overhead traffic (ft)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 24,
+    "x": 0,
+    "y": 83
+   },
+   "id": 57,
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT ts AS \"Time\", CASE WHEN is_helicopter THEN 'heli' ELSE 'plane' END AS \"Kind\", type_name AS \"Type\", registration AS \"Reg\", callsign AS \"Callsign\", alt_ft AS \"Alt(ft)\", dist_nm AS \"Dist(NM)\", compass AS \"Dir\", squawk AS \"Squawk\", notified AS \"Pinged\" FROM telemetry.overhead_flights ORDER BY ts DESC LIMIT 40",
+     "refId": "A"
+    }
+   ],
+   "title": "Recent passes",
+   "type": "table"
+  },
+  {
+   "type": "row",
+   "title": "CHP Traffic (local)",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 93,
+    "w": 24,
+    "h": 1
+   },
+   "id": 58
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": 0
+       },
+       {
+        "color": "yellow",
+        "value": 3
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 5,
+    "x": 14,
+    "y": 94
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS value FROM telemetry.chp_incidents WHERE ts>now()-interval '1 hour'",
+     "refId": "A"
+    }
+   ],
+   "title": "Incidents (last hour)",
+   "type": "stat",
+   "id": 59
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "blue",
+        "value": 0
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 5,
+    "x": 19,
+    "y": 94
+   },
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS value FROM telemetry.chp_incidents WHERE $__timeFilter(ts)",
+     "refId": "A"
+    }
+   ],
+   "title": "Incidents (range)",
+   "type": "stat",
+   "id": 60
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "gridPos": {
+    "h": 13,
+    "w": 14,
+    "x": 0,
+    "y": 98
+   },
+   "options": {
+    "basemap": {
+     "type": "default"
+    },
+    "layers": [
+     {
+      "config": {
+       "showLegend": true,
+       "style": {
+        "color": {
+         "fixed": "red"
+        },
+        "size": {
+         "fixed": 6
+        }
+       }
+      },
+      "location": {
+       "latitude": "lat",
+       "longitude": "lon",
+       "mode": "coords"
+      },
+      "type": "markers"
+     }
+    ],
+    "view": {
+     "id": "coords",
+     "lat": 34.17,
+     "lon": -118.32,
+     "zoom": 10
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT lat, lon, type, location FROM telemetry.chp_incidents WHERE $__timeFilter(ts) AND lat IS NOT NULL",
+     "refId": "A"
+    }
+   ],
+   "title": "CHP incidents \u2014 map",
+   "type": "geomap",
+   "id": 61
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 10,
+    "x": 14,
+    "y": 98
+   },
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "values": [
+      "value",
+      "percent"
+     ]
+    },
+    "pieType": "donut",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT type AS metric, count(*) AS value FROM telemetry.chp_incidents WHERE $__timeFilter(ts) GROUP BY 1 ORDER BY 2 DESC LIMIT 10",
+     "refId": "A"
+    }
+   ],
+   "title": "By type",
+   "type": "piechart",
+   "id": 62
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 12,
+      "lineInterpolation": "smooth",
+      "showPoints": "never",
+      "spanNulls": true
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 6,
+    "w": 10,
+    "x": 14,
+    "y": 105
+   },
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT $__timeGroup(ts,'1h') AS time, count(*) AS \"Incidents\" FROM telemetry.chp_incidents WHERE $__timeFilter(ts) GROUP BY 1 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Incidents / hour",
+   "type": "timeseries",
+   "id": 63
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 111
+   },
+   "options": {},
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "editorMode": "code",
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS \"Time\", type AS \"Type\", COALESCE(location_desc,location) AS \"Location\", area AS \"Area\" FROM telemetry.chp_incidents WHERE $__timeFilter(ts) ORDER BY ts DESC LIMIT 30",
+     "refId": "A"
+    }
+   ],
+   "title": "Recent incidents",
+   "type": "table",
+   "id": 64
+  },
+  {
+   "type": "row",
+   "title": "BLE Traffic Patterns",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 120,
+    "w": 24,
+    "h": 1
+   },
+   "id": 65
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 24,
+    "x": 0,
+    "y": 121
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawSql": "SELECT date_trunc('hour', ts) AS time, CASE WHEN rssi > -60 THEN 'close (in/near house)' WHEN rssi > -80 THEN 'passing by (sidewalk/street)' ELSE 'distant (neighboring properties)' END AS metric, count(DISTINCT device_mac) AS value FROM telemetry.bluetooth WHERE ts > now() - interval '14 days' AND rssi IS NOT NULL GROUP BY 1,2 ORDER BY 1"
+    }
+   ],
+   "title": "Distinct devices per hour, by proximity (last 14 days)",
+   "type": "timeseries",
+   "id": 66
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 24,
+    "x": 0,
+    "y": 131
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT extract(hour from ts) AS hour_of_day, to_char(ts, 'Dy') AS day_of_week, count(*) AS sightings FROM telemetry.bluetooth WHERE ts > now() - interval '30 days' AND rssi > -80 GROUP BY 1,2 ORDER BY 1"
+    }
+   ],
+   "title": "Traffic rhythm \u2014 sightings by hour of day x day of week (last 30 days)",
+   "type": "heatmap",
+   "id": 67
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 141
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawSql": "SELECT date_trunc('hour', ts) AS time, CASE WHEN device_name IS NOT NULL AND device_name != '' THEN 'named' ELSE 'anonymous' END AS metric, count(DISTINCT device_mac) AS value FROM telemetry.bluetooth WHERE ts > now() - interval '7 days' GROUP BY 1,2 ORDER BY 1"
+    }
+   ],
+   "title": "Named vs anonymous devices per hour (last 7 days)",
+   "type": "timeseries",
+   "id": 68
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 150
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT max(ts) AS time, device_mac, coalesce(device_name,'(anonymous)') AS name, max(rssi) AS best_rssi, coalesce(metadata->>'vendor','unknown') AS vendor FROM telemetry.bluetooth WHERE ts > now() - interval '5 minutes' GROUP BY device_mac, device_name, metadata->>'vendor' ORDER BY best_rssi DESC LIMIT 50"
+    }
+   ],
+   "title": "What's nearby right now (last 5 min, strongest signal first)",
+   "type": "table",
+   "id": 69
+  },
+  {
+   "type": "row",
+   "title": "Bluetooth Device Churn",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 159,
+    "w": 24,
+    "h": 1
+   },
+   "id": 70
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 12,
+    "w": 24,
+    "x": 0,
+    "y": 160
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT observed_at AS time, subject, observation FROM shared_observations WHERE observer='nova_ble_churn_report' AND observed_at > now() - interval '30 days' ORDER BY observed_at DESC"
+    }
+   ],
+   "title": "New / gone named devices (last 30 days)",
+   "type": "table",
+   "id": 71
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 24,
+    "x": 0,
+    "y": 172
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawSql": "SELECT date_trunc('day', ts) AS time, 'named' AS metric, count(DISTINCT device_mac) AS value FROM telemetry.bluetooth WHERE device_name IS NOT NULL AND device_name != '' AND ts > now() - interval '30 days' GROUP BY 1 UNION ALL SELECT date_trunc('day', ts) AS time, 'anonymous' AS metric, count(DISTINCT device_mac) AS value FROM telemetry.bluetooth WHERE (device_name IS NULL OR device_name = '') AND ts > now() - interval '30 days' GROUP BY 1 ORDER BY 1"
+    }
+   ],
+   "title": "Named vs anonymous BLE devices per day",
+   "type": "timeseries",
+   "id": 72
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 24,
+    "x": 0,
+    "y": 182
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT observed_at AS time, metadata->>'mac' AS mac, metadata->>'rssi' AS rssi FROM shared_observations WHERE observer='nova' AND subject='karr-vulnerable-device-detected' AND observed_at > now() - interval '30 days' ORDER BY observed_at DESC"
+    }
+   ],
+   "title": "Possible KARR/SWDS vulnerable car alarms detected (probable, name-match only)",
+   "type": "table",
+   "id": 73
+  }
+ ],
+ "links": [
+  {
+   "type": "dashboards",
+   "tags": [
+    "nova-page"
+   ],
+   "asDropdown": false,
+   "title": "Pages",
+   "includeVars": false,
+   "keepTime": true
+  }
+ ],
+ "description": "Generated by scripts/nova_grafana_consolidate.py from grafana/sources: nova-tools-radio-wifi, nova-scanner, overhead-flights, chp-traffic, ble-traffic, ble-churn. Edit the sources, not this file."
+}

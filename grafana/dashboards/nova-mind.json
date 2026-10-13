@@ -1,0 +1,7644 @@
+{
+ "uid": "nova-mind",
+ "title": "Nova \u2014 Mind",
+ "tags": [
+  "nova",
+  "nova-page"
+ ],
+ "timezone": "browser",
+ "schemaVersion": 39,
+ "editable": true,
+ "graphTooltip": 1,
+ "time": {
+  "from": "now-7d",
+  "to": "now"
+ },
+ "refresh": "5m",
+ "templating": {
+  "list": []
+ },
+ "panels": [
+  {
+   "type": "row",
+   "title": "Nova Brain",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 24,
+    "h": 1
+   },
+   "id": 1
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 1
+   },
+   "id": 2,
+   "panels": [],
+   "title": "Memory",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "purple",
+      "mode": "fixed"
+     },
+     "decimals": 0,
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 0,
+    "y": 2
+   },
+   "id": 3,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"Memories\" FROM memories",
+     "refId": "A"
+    }
+   ],
+   "title": "Total Memories",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 6,
+    "x": 6,
+    "y": 2
+   },
+   "id": 4,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "right",
+     "showLegend": true
+    },
+    "pieType": "donut",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT tier AS metric, count(*) AS value FROM memories GROUP BY tier ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Memories by Tier",
+   "type": "piechart"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Memories"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "mode": "gradient",
+         "type": "gauge"
+        }
+       },
+       {
+        "id": "color",
+        "value": {
+         "mode": "continuous-BlPu"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 12,
+    "x": 12,
+    "y": 2
+   },
+   "id": 5,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT source AS \"Source\", count(*) AS \"Memories\" FROM memories GROUP BY source ORDER BY 2 DESC LIMIT 12",
+     "refId": "A"
+    }
+   ],
+   "title": "Top Sources (Vectors)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 70,
+      "lineWidth": 1,
+      "stacking": {
+       "mode": "normal"
+      }
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 24,
+    "x": 0,
+    "y": 7
+   },
+   "id": 6,
+   "options": {
+    "legend": {
+     "calcs": [
+      "sum"
+     ],
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT date_trunc('day', created_at) AS time, source AS metric, count(*) AS value FROM memories WHERE source IN (SELECT source FROM memories GROUP BY source ORDER BY count(*) DESC LIMIT 10) AND $__timeFilter(created_at) GROUP BY 1, 2 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Memories Ingested per Day (stacked by source)",
+   "type": "timeseries"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 16
+   },
+   "id": 7,
+   "panels": [],
+   "title": "LLM Inference",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 60,
+      "lineWidth": 1,
+      "stacking": {
+       "mode": "normal"
+      }
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 17
+   },
+   "id": 8,
+   "options": {
+    "legend": {
+     "calcs": [
+      "sum"
+     ],
+     "displayMode": "table",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT date_trunc('hour', timestamp) AS time, backend || '/' || COALESCE(model,'?') AS metric, sum(COALESCE(prompt_tokens,0) + COALESCE(completion_tokens,0)) AS value FROM inference_latency WHERE $__timeFilter(timestamp) GROUP BY 1, 2 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Tokens per Hour by Model",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "lineWidth": 2,
+      "pointSize": 5
+     },
+     "unit": "ms"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 17
+   },
+   "id": 9,
+   "options": {
+    "legend": {
+     "calcs": [
+      "mean",
+      "max"
+     ],
+     "displayMode": "table",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT date_trunc('hour', timestamp) AS time, backend AS metric, avg(total_ms) AS value FROM inference_latency WHERE total_ms IS NOT NULL AND $__timeFilter(timestamp) GROUP BY 1, 2 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Avg Latency by Backend (total_ms)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "fixedColor": "green",
+      "mode": "fixed"
+     },
+     "decimals": 0,
+     "noValue": "0 (all inference is local)",
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 8,
+    "x": 0,
+    "y": 25
+   },
+   "id": 10,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value_and_name"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT COALESCE(sum(CASE WHEN backend ILIKE '%openrouter%' OR model ILIKE '%qwen3-235b%' THEN COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0) ELSE 0 END),0) AS \"Billable Tokens\", COALESCE(sum(CASE WHEN NOT (backend ILIKE '%openrouter%' OR model ILIKE '%qwen3-235b%') THEN COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0) ELSE 0 END),0) AS \"Local (Free) Tokens\" FROM inference_latency WHERE $__timeFilter(timestamp)",
+     "refId": "A"
+    }
+   ],
+   "title": "Billable (OpenRouter) Tokens",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 5,
+    "w": 16,
+    "x": 8,
+    "y": 25
+   },
+   "id": 11,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT backend AS \"Backend\", COALESCE(model,'?') AS \"Model\", count(*) AS \"Calls\", sum(COALESCE(prompt_tokens,0)+COALESCE(completion_tokens,0)) AS \"Tokens\", round(avg(total_ms)) AS \"Avg ms\", round(avg(ttft_ms)) AS \"Avg TTFT ms\", CASE WHEN backend ILIKE '%openrouter%' OR model ILIKE '%qwen3-235b%' THEN 'billable' ELSE 'free' END AS \"Cost\" FROM inference_latency WHERE $__timeFilter(timestamp) GROUP BY 1,2,7 ORDER BY 4 DESC NULLS LAST",
+     "refId": "A"
+    }
+   ],
+   "title": "Inference Volume by Backend/Model",
+   "type": "table"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 30
+   },
+   "id": 12,
+   "panels": [],
+   "title": "Web Searches",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 60,
+      "lineWidth": 1
+     },
+     "noValue": "No web searches recorded",
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 12,
+    "x": 0,
+    "y": 31
+   },
+   "id": 13,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT date_trunc('hour', created_at) AS time, COALESCE(backend,'unknown') AS metric, count(*) AS value FROM web_searches WHERE $__timeFilter(created_at) GROUP BY 1, 2 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Searches per Hour",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "noValue": "0",
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "blue",
+        "value": null
+       }
+      ]
+     }
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Cache Hit %"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "percent"
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Avg Latency"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "ms"
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 12,
+    "x": 12,
+    "y": 31
+   },
+   "id": 14,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "textMode": "value_and_name"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"Total Searches\", round(avg(latency_ms)) AS \"Avg Latency\", round(100.0 * count(*) FILTER (WHERE cache_hit) / NULLIF(count(*),0), 1) AS \"Cache Hit %\" FROM web_searches WHERE $__timeFilter(created_at)",
+     "refId": "A"
+    }
+   ],
+   "title": "Search Stats",
+   "type": "stat"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 38
+   },
+   "id": 15,
+   "panels": [],
+   "title": "Scheduler & Queue",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Fail"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-background"
+        }
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "transparent",
+           "value": null
+          },
+          {
+           "color": "red",
+           "value": 1
+          }
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 14,
+    "x": 0,
+    "y": 39
+   },
+   "id": 16,
+   "options": {
+    "showHeader": true,
+    "sortBy": [
+     {
+      "desc": true,
+      "displayName": "Fail"
+     }
+    ]
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT task_id AS \"Task\", count(*) AS \"Runs\", count(*) FILTER (WHERE status='success') AS \"Success\", count(*) FILTER (WHERE status IN ('failure','timeout')) AS \"Fail\", round(avg(duration_ms)) AS \"Avg ms\", to_timestamp(max(started_at)/1000) AS \"Last Run\" FROM scheduler_runs WHERE started_at BETWEEN $__unixEpochFrom()::bigint*1000 AND $__unixEpochTo()::bigint*1000 GROUP BY task_id ORDER BY \"Fail\" DESC, \"Runs\" DESC LIMIT 30",
+     "refId": "A"
+    }
+   ],
+   "title": "Scheduler Tasks (runs / success / fail / avg duration)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 70,
+      "lineWidth": 1
+     },
+     "unit": "short"
+    },
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "success"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "fixedColor": "green",
+         "mode": "fixed"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "failure"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "fixedColor": "red",
+         "mode": "fixed"
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "timeout"
+      },
+      "properties": [
+       {
+        "id": "color",
+        "value": {
+         "fixedColor": "orange",
+         "mode": "fixed"
+        }
+       }
+      ]
+     }
+    ]
+   },
+   "gridPos": {
+    "h": 9,
+    "w": 10,
+    "x": 14,
+    "y": 39
+   },
+   "id": 17,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT date_trunc('hour', to_timestamp(started_at/1000)) AS time, status AS metric, count(*) AS value FROM scheduler_runs WHERE status IN ('failure','timeout') AND started_at BETWEEN $__unixEpochFrom()::bigint*1000 AND $__unixEpochTo()::bigint*1000 GROUP BY 1, 2 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Scheduler Failures over Time",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 48
+   },
+   "id": 18,
+   "options": {
+    "displayMode": "gradient",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT status AS metric, count(*) AS value FROM claude_queue WHERE status IN ('queued','in_progress') GROUP BY status ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Claude Queue \u2014 Open Items by Status",
+   "type": "bargauge"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 48
+   },
+   "id": 19,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT priority AS \"Priority\", status AS \"Status\", count(*) AS \"Count\" FROM claude_queue WHERE status IN ('queued','in_progress') GROUP BY priority, status ORDER BY priority, status",
+     "refId": "A"
+    }
+   ],
+   "title": "Open Queue Items by Priority",
+   "type": "table"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 56
+   },
+   "id": 20,
+   "panels": [],
+   "title": "Costs & Inference Spend",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "currencyUSD"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 0,
+    "y": 57
+   },
+   "id": 21,
+   "options": {
+    "colorMode": "background",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT COALESCE(ROUND(SUM(total_cost_usd)::numeric, 2), 0) AS \"Spend\" FROM dashboard_cost_history WHERE date::date >= date_trunc('month', CURRENT_DATE)::date",
+     "refId": "A"
+    }
+   ],
+   "title": "Spend This Month (USD)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 6,
+    "y": 57
+   },
+   "id": 22,
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT COALESCE(SUM(session_count), 0) AS \"Sessions\" FROM dashboard_cost_history WHERE date::date >= date_trunc('month', CURRENT_DATE)::date",
+     "refId": "A"
+    }
+   ],
+   "title": "Sessions (month)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 12,
+    "y": 57
+   },
+   "id": 23,
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT COALESCE(ROUND((SUM(input_tokens) + SUM(output_tokens))::numeric / 1000000, 1), 0) AS \"Tokens M\" FROM dashboard_cost_history WHERE date::date >= date_trunc('month', CURRENT_DATE)::date",
+     "refId": "A"
+    }
+   ],
+   "title": "Tokens (M, month)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 60,
+      "lineWidth": 1,
+      "stacking": {
+       "mode": "normal"
+      }
+     },
+     "unit": "currencyUSD"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 18,
+    "x": 0,
+    "y": 61
+   },
+   "id": 24,
+   "options": {
+    "legend": {
+     "calcs": [
+      "sum"
+     ],
+     "displayMode": "table",
+     "placement": "right"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT date::timestamp AS time, provider AS metric, total_cost_usd AS value FROM dashboard_cost_history ORDER BY date",
+     "refId": "A"
+    }
+   ],
+   "title": "Daily Cost by Provider",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 18,
+    "y": 61
+   },
+   "id": 25,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT date AS \"Date\", provider AS \"Provider\", total_cost_usd AS \"USD\", session_count AS \"Sessions\" FROM dashboard_cost_history ORDER BY date DESC LIMIT 20",
+     "refId": "A"
+    }
+   ],
+   "title": "Cost History (recent)",
+   "type": "table"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 69
+   },
+   "id": 26,
+   "panels": [],
+   "title": "Ingest & Memory Growth",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 0,
+    "y": 70
+   },
+   "id": 27,
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT COUNT(*) AS \"Ingest Runs\" FROM scheduler_runs WHERE (task_group = 'ingest' OR task_id LIKE '%ingest%') AND started_at > (EXTRACT(EPOCH FROM NOW() - INTERVAL '7 days') * 1000)",
+     "refId": "A"
+    }
+   ],
+   "title": "Ingest Runs (7d)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "max": 100,
+     "min": 0,
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 6,
+    "y": 70
+   },
+   "id": 28,
+   "options": {
+    "colorMode": "background",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT COALESCE(ROUND(100.0 * COUNT(*) FILTER (WHERE exit_code = 0) / NULLIF(COUNT(*), 0), 1), 100) AS \"Success %\" FROM scheduler_runs WHERE (task_group = 'ingest' OR task_id LIKE '%ingest%') AND started_at > (EXTRACT(EPOCH FROM NOW() - INTERVAL '7 days') * 1000)",
+     "refId": "A"
+    }
+   ],
+   "title": "Ingest Success Rate (7d)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "mappings": [
+      {
+       "options": {
+        "down": {
+         "color": "red"
+        },
+        "up": {
+         "color": "green"
+        }
+       },
+       "type": "value"
+      }
+     ]
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 12,
+    "y": 70
+   },
+   "id": 29,
+   "options": {
+    "colorMode": "background",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "fields": "/.*/"
+    },
+    "textMode": "value"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT status AS \"Memory Server\" FROM service_registry WHERE service_name = 'memory_server' LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Memory Server",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 60,
+      "lineWidth": 1,
+      "stacking": {
+       "mode": "normal"
+      }
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 74
+   },
+   "id": 30,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT date_trunc('hour', to_timestamp(started_at/1000)) AS time, COUNT(*) FILTER (WHERE exit_code = 0) AS \"Success\", COUNT(*) FILTER (WHERE exit_code != 0) AS \"Failed\" FROM scheduler_runs WHERE (task_group = 'ingest' OR task_id LIKE '%ingest%') AND started_at > (EXTRACT(EPOCH FROM NOW() - INTERVAL '7 days') * 1000) GROUP BY 1 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Ingest Runs Over Time (success/fail)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 74
+   },
+   "id": 31,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT to_timestamp(started_at/1000) AS \"Time\", task_id AS \"Task\", exit_code AS \"Exit\", duration_ms AS \"Duration ms\" FROM scheduler_runs WHERE (task_group = 'ingest' OR task_id LIKE '%ingest%') ORDER BY started_at DESC LIMIT 20",
+     "refId": "A"
+    }
+   ],
+   "title": "Recent Ingest Runs",
+   "type": "table"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 82
+   },
+   "id": 32,
+   "panels": [],
+   "title": "Big Brother \u2014 Observations & Self-Healing",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 0,
+    "y": 83
+   },
+   "id": 33,
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT COUNT(*) AS \"Observations\" FROM shared_observations WHERE observed_at > NOW() - INTERVAL '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "Observations (24h)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 1
+       },
+       {
+        "color": "red",
+        "value": 10
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 6,
+    "y": 83
+   },
+   "id": 34,
+   "options": {
+    "colorMode": "background",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT COUNT(*) AS \"Warn/Crit\" FROM shared_observations WHERE severity IN ('warning','critical') AND observed_at > NOW() - INTERVAL '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "Warning/Critical (24h)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 12,
+    "y": 83
+   },
+   "id": 35,
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT COUNT(*) AS \"Fix Attempts\" FROM fix_attempts",
+     "refId": "A"
+    }
+   ],
+   "title": "Fix Attempts (total)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 50,
+      "lineWidth": 1,
+      "stacking": {
+       "mode": "normal"
+      }
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 87
+   },
+   "id": 36,
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom"
+    },
+    "tooltip": {
+     "mode": "multi"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT date_trunc('hour', observed_at) AS time, severity AS metric, COUNT(*) AS value FROM shared_observations WHERE $__timeFilter(observed_at) GROUP BY 1, 2 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Observations Over Time (by severity)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 87
+   },
+   "id": 37,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT observed_at AS \"Time\", observer AS \"Observer\", subject AS \"Subject\", LEFT(observation, 80) AS \"Observation\", severity AS \"Severity\" FROM shared_observations ORDER BY observed_at DESC LIMIT 30",
+     "refId": "A"
+    }
+   ],
+   "title": "Recent Observations",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 7,
+    "w": 24,
+    "x": 0,
+    "y": 95
+   },
+   "id": 38,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT applied_at AS \"Time\", service AS \"Service\", action_taken AS \"Action\", status AS \"Status\", result AS \"Result\" FROM fix_attempts ORDER BY applied_at DESC LIMIT 20",
+     "refId": "A"
+    }
+   ],
+   "title": "Fix Attempts (self-healing)",
+   "type": "table"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 102
+   },
+   "id": 39,
+   "panels": [],
+   "title": "CINC Configuration Management",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 0,
+    "y": 103
+   },
+   "id": 40,
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT COUNT(*) AS \"Runs\" FROM cinc_runs WHERE ts > NOW() - INTERVAL '7 days'",
+     "refId": "A"
+    }
+   ],
+   "title": "CINC Runs (7d)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "max": 100,
+     "min": 0,
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 6,
+    "y": 103
+   },
+   "id": 41,
+   "options": {
+    "colorMode": "background",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE status = 'success') / NULLIF(COUNT(*), 0), 1) AS \"Success %\" FROM cinc_runs WHERE ts > NOW() - INTERVAL '7 days'",
+     "refId": "A"
+    }
+   ],
+   "title": "CINC Success Rate (7d)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 12,
+    "y": 103
+   },
+   "id": 42,
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT COUNT(DISTINCT node_name) AS \"Nodes\" FROM cinc_runs WHERE ts > NOW() - INTERVAL '7 days'",
+     "refId": "A"
+    }
+   ],
+   "title": "Nodes Managed (7d)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 107
+   },
+   "id": 43,
+   "options": {
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS \"Time\", node_name AS \"Node\", status AS \"Status\", resources_updated AS \"Updated\", duration_s AS \"Duration s\", drift_detected AS \"Drift\" FROM cinc_runs ORDER BY ts DESC LIMIT 20",
+     "refId": "A"
+    }
+   ],
+   "title": "Recent CINC Runs",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "palette-classic"
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 107
+   },
+   "id": 44,
+   "options": {
+    "displayMode": "gradient",
+    "orientation": "horizontal",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT node_name AS metric, SUM(resources_updated) AS value FROM cinc_runs WHERE ts > NOW() - INTERVAL '7 days' GROUP BY 1 ORDER BY value DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Resources Updated per Node (7d)",
+   "type": "bargauge"
+  },
+  {
+   "type": "row",
+   "title": "Nova \u2014 Interior & Sentience",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 115,
+    "w": 24,
+    "h": 1
+   },
+   "id": 45
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 116
+   },
+   "id": 46,
+   "panels": [],
+   "title": "The Inner Life",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "lineWidth": 2,
+      "showPoints": "never"
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 117
+   },
+   "id": 47,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT computed_at AS time, 'valence' AS metric, valence AS value FROM affect_state WHERE $__timeFilter(computed_at) UNION ALL SELECT computed_at, 'arousal', arousal FROM affect_state WHERE $__timeFilter(computed_at) ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Nova's Mood \u2014 valence & arousal",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 12,
+    "y": 117
+   },
+   "id": 48,
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true,
+     "values": [
+      "value"
+     ]
+    },
+    "pieType": "donut",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": true
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT label AS metric, count(*) AS value FROM affect_state GROUP BY label ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Mood labels (how she's felt)",
+   "type": "piechart"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "lineWidth": 2,
+      "showPoints": "never"
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 18,
+    "y": 117
+   },
+   "id": 49,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT computed_at AS time, 'mean confidence' AS metric, mean_conf AS value FROM soft_certainty_state WHERE $__timeFilter(computed_at) UNION ALL SELECT computed_at,'hit rate',hit_rate FROM soft_certainty_state WHERE $__timeFilter(computed_at) UNION ALL SELECT computed_at,'gap (overconfidence)',gap FROM soft_certainty_state WHERE $__timeFilter(computed_at) ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Calibration \u2014 confidence vs reality (overconfidence gap)",
+   "type": "timeseries"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 125
+   },
+   "id": 50,
+   "panels": [],
+   "title": "Her Own Time",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 70,
+      "lineWidth": 2,
+      "showPoints": "never",
+      "stacking": {
+       "mode": "normal"
+      }
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 126
+   },
+   "id": 51,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT date_trunc('day',created_at) AS time, COALESCE(NULLIF(metadata->>'mode',''), metadata->>'type','pursuit') AS metric, count(*) AS value FROM memories WHERE source='unclaimed' AND $__timeFilter(created_at) GROUP BY 1,2 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Unclaimed-time balance (per day, by kind)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-memories-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 70,
+      "lineWidth": 2,
+      "showPoints": "never",
+      "stacking": {
+       "mode": "normal"
+      }
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 12,
+    "y": 126
+   },
+   "id": 52,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT date_trunc('day',created_at) AS time, source AS metric, count(*) AS value FROM memories WHERE source IN ('unclaimed','episodic','association','learning','imagination','self_eval','continuity','letting_go','private_notebook','gravel') AND $__timeFilter(created_at) GROUP BY 1,2 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Interior pulse \u2014 organ writes per day",
+   "type": "timeseries"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 134
+   },
+   "id": 53,
+   "panels": [],
+   "title": "Growth & Self-Direction",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 0,
+    "y": 135
+   },
+   "id": 54,
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true,
+     "values": [
+      "value"
+     ]
+    },
+    "pieType": "donut",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": true
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT status AS metric, count(*) AS value FROM growth_commitments GROUP BY status ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Growth commitments by status",
+   "type": "piechart"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "lineWidth": 2,
+      "showPoints": "never"
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 6,
+    "y": 135
+   },
+   "id": 55,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT r.ts AS time, t.name AS metric, r.value AS value FROM self_eval_runs r JOIN self_eval_tests t ON t.id=r.test_id WHERE $__timeFilter(r.ts) ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Self-authored tests \u2014 her own measures over time",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 18,
+    "y": 135
+   },
+   "id": 56,
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true,
+     "values": [
+      "value"
+     ]
+    },
+    "pieType": "donut",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": true
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT status AS metric, count(*) AS value FROM feature_wishes GROUP BY status ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Feature wishes by status",
+   "type": "piechart"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 143
+   },
+   "id": 57,
+   "panels": [],
+   "title": "Where She Lives (embodiment)",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "lineWidth": 2,
+      "showPoints": "never"
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 144
+   },
+   "id": 58,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT computed_at AS time, 'rhythm deviation' AS metric, rhythm_deviation AS value FROM embodiment_state WHERE $__timeFilter(computed_at) ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "House rhythm deviation (vs learned normal)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 12,
+    "y": 144
+   },
+   "id": 59,
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true,
+     "values": [
+      "value"
+     ]
+    },
+    "pieType": "donut",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": true
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT house_state AS metric, count(*) AS value FROM embodiment_state GROUP BY house_state ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "House states",
+   "type": "piechart"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 18,
+    "y": 144
+   },
+   "id": 60,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT house_state AS \"state\" FROM embodiment_state ORDER BY computed_at DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Latest house state",
+   "type": "stat"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 152
+   },
+   "id": 61,
+   "panels": [],
+   "title": "Signal vs Noise (alerting)",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 70,
+      "lineWidth": 2,
+      "showPoints": "never",
+      "stacking": {
+       "mode": "normal"
+      }
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 153
+   },
+   "id": 62,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT date_trunc('hour',ts) AS time, decision AS metric, count(*) AS value FROM alert_triage_log WHERE $__timeFilter(ts) GROUP BY 1,2 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Alert decisions per hour (page / suppress / downgrade)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 1,
+     "unit": "percent"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 12,
+    "y": 153
+   },
+   "id": 63,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT round(100.0*count(*) FILTER (WHERE decision='page')::numeric/NULLIF(count(*),0),1) AS \"page %\" FROM alert_triage_log WHERE ts > now() - interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "Page rate (last 24h)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 6,
+    "x": 18,
+    "y": 153
+   },
+   "id": 64,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"alerts\" FROM alert_triage_log WHERE ts > now() - interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "title": "Alerts triaged (last 24h)",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 4,
+    "w": 12,
+    "x": 12,
+    "y": 157
+   },
+   "id": 65,
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true,
+     "values": [
+      "value"
+     ]
+    },
+    "pieType": "donut",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": true
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT status AS metric, count(*) AS value FROM coagency_proposals GROUP BY status ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Co-agency proposals by status",
+   "type": "piechart"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 161
+   },
+   "id": 66,
+   "panels": [],
+   "title": "Autonomy & Agency",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "line",
+      "fillOpacity": 10,
+      "lineWidth": 2,
+      "showPoints": "never"
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 12,
+    "x": 0,
+    "y": 162
+   },
+   "id": 67,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT ts AS time, 'calibration error' AS metric, value FROM turing_scoreboard WHERE metric='prediction_calibration_error' AND $__timeFilter(ts) UNION ALL SELECT ts, '0.20 gate', 0.20 FROM turing_scoreboard WHERE metric='prediction_calibration_error' AND $__timeFilter(ts) ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Calibration error vs the 0.20 autonomy gate",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "drawStyle": "bars",
+      "fillOpacity": 70,
+      "lineWidth": 2,
+      "showPoints": "never",
+      "stacking": {
+       "mode": "normal"
+      }
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 12,
+    "y": 162
+   },
+   "id": 68,
+   "options": {
+    "legend": {
+     "calcs": [
+      "last",
+      "max"
+     ],
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawQuery": true,
+     "rawSql": "SELECT date_trunc('day',ts) AS time, CASE WHEN vetoed THEN 'vetoed' WHEN executed AND verified THEN 'verified self-heal' WHEN executed THEN 'earned execution' ELSE 'proposed' END AS metric, count(*) AS value FROM autonomy_ledger WHERE $__timeFilter(ts) GROUP BY 1,2 ORDER BY 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Autonomy actions per day (by outcome)",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 18,
+    "y": 162
+   },
+   "id": 69,
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true,
+     "values": [
+      "value"
+     ]
+    },
+    "pieType": "donut",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": true
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT CASE WHEN granted THEN 'earned' ELSE 'still earning' END AS metric, count(*) AS value FROM autonomy_trust GROUP BY 1 ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Autonomy classes \u2014 earned vs still earning",
+   "type": "piechart"
+  },
+  {
+   "type": "row",
+   "title": "Nova \u2014 Governance & Self-Direction",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 170,
+    "w": 24,
+    "h": 1
+   },
+   "id": 70
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 171
+   },
+   "id": 71,
+   "panels": [],
+   "title": "Co-agency",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "yellow",
+        "value": 1
+       },
+       {
+        "color": "red",
+        "value": 5
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 0,
+    "y": 172
+   },
+   "id": 72,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"pending\" FROM coagency_proposals WHERE status='pending_human'",
+     "refId": "A"
+    }
+   ],
+   "title": "Pending your approval",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 9,
+    "x": 15,
+    "y": 172
+   },
+   "id": 73,
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true,
+     "values": [
+      "value"
+     ]
+    },
+    "pieType": "pie",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": true
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT origin AS metric, count(*) AS value FROM coagency_proposals GROUP BY origin ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Proposals by origin",
+   "type": "piechart"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "align": "auto",
+      "cellOptions": {
+       "type": "auto"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 24,
+    "x": 0,
+    "y": 180
+   },
+   "id": 74,
+   "options": {
+    "cellHeight": "sm",
+    "footer": {
+     "countRows": false,
+     "fields": "",
+     "reducer": [
+      "sum"
+     ],
+     "show": false
+    },
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT created_at, origin, left(proposed_action,80) AS action, redline_pass, (value_check->>'allowed') AS value_ok FROM coagency_proposals WHERE status='pending_human' ORDER BY created_at DESC LIMIT 20",
+     "refId": "A"
+    }
+   ],
+   "title": "Recent pending proposals",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "decimals": 0,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "blue",
+        "value": null
+       }
+      ]
+     },
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 6,
+    "x": 0,
+    "y": 188
+   },
+   "id": 75,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "area",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT count(*) AS \"reaches\" FROM reach_log",
+     "refId": "A"
+    }
+   ],
+   "title": "Reaches logged",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 9,
+    "x": 6,
+    "y": 188
+   },
+   "id": 76,
+   "options": {
+    "legend": {
+     "displayMode": "table",
+     "placement": "right",
+     "showLegend": true,
+     "values": [
+      "value"
+     ]
+    },
+    "pieType": "donut",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": true
+    }
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT status AS metric, count(*) AS value FROM reach_log GROUP BY status ORDER BY 2 DESC",
+     "refId": "A"
+    }
+   ],
+   "title": "Reaches by status",
+   "type": "piechart"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "align": "auto",
+      "cellOptions": {
+       "type": "auto"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 9,
+    "x": 15,
+    "y": 188
+   },
+   "id": 77,
+   "options": {
+    "cellHeight": "sm",
+    "footer": {
+     "countRows": false,
+     "fields": "",
+     "reducer": [
+      "sum"
+     ],
+     "show": false
+    },
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts, audience, topic, status FROM reach_log ORDER BY ts DESC LIMIT 20",
+     "refId": "A"
+    }
+   ],
+   "title": "Recent reaches",
+   "type": "table"
+  },
+  {
+   "collapsed": false,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 196
+   },
+   "id": 78,
+   "panels": [],
+   "title": "Wishlist & Becoming",
+   "type": "row"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "align": "auto",
+      "cellOptions": {
+       "type": "auto"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 16,
+    "x": 8,
+    "y": 197
+   },
+   "id": 79,
+   "options": {
+    "cellHeight": "sm",
+    "footer": {
+     "countRows": false,
+     "fields": "",
+     "reducer": [
+      "sum"
+     ],
+     "show": false
+    },
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT title, status, why FROM feature_wishes ORDER BY ts DESC LIMIT 20",
+     "refId": "A"
+    }
+   ],
+   "title": "Feature wishes",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "color": {
+      "mode": "thresholds"
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       }
+      ]
+     },
+     "unit": "none"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 8,
+    "x": 0,
+    "y": 205
+   },
+   "id": 80,
+   "options": {
+    "colorMode": "value",
+    "graphMode": "none",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ],
+     "values": false
+    },
+    "textMode": "auto"
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT direction AS \"direction\" FROM becoming WHERE status='approved' ORDER BY approved_at DESC NULLS LAST, ts DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "title": "Approved direction",
+   "type": "stat"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "align": "auto",
+      "cellOptions": {
+       "type": "auto"
+      }
+     }
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 8,
+    "w": 16,
+    "x": 8,
+    "y": 205
+   },
+   "id": 81,
+   "options": {
+    "cellHeight": "sm",
+    "footer": {
+     "countRows": false,
+     "fields": "",
+     "reducer": [
+      "sum"
+     ],
+     "show": false
+    },
+    "showHeader": true
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawQuery": true,
+     "rawSql": "SELECT ts, direction, status, approved_by FROM becoming ORDER BY ts DESC LIMIT 20",
+     "refId": "A"
+    }
+   ],
+   "title": "Becoming \u2014 directions & status",
+   "type": "table"
+  },
+  {
+   "type": "row",
+   "title": "Nova \u2014 Self & reflection",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 213,
+    "w": 24,
+    "h": 1
+   },
+   "id": 82
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 214
+   },
+   "id": 83,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 215
+     },
+     "id": 84,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", left(\"kind\"::text, 120) AS \"kind\", \"ts\", left(\"text\"::text, 120) AS \"text\", left(\"evidence\"::text, 120) AS \"evidence\", \"weight\", \"active\", left(\"promise_state\"::text, 120) AS \"promise_state\" FROM \"relationship_ledger\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "relationship_ledger \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 223
+     },
+     "id": 85,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"relationship_ledger\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "relationship_ledger \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 223
+     },
+     "id": 86,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"relationship_ledger\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "relationship_ledger \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "relationship_ledger",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 215
+   },
+   "id": 87,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 216
+     },
+     "id": 88,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"day\", left(\"kind\"::text, 120) AS \"kind\", left(\"text\"::text, 120) AS \"text\", left(\"evidence\"::text, 120) AS \"evidence\", \"created_at\" FROM \"good_things\" ORDER BY \"created_at\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "good_things \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 224
+     },
+     "id": 89,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"good_things\" WHERE \"created_at\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "good_things \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 224
+     },
+     "id": 90,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"created_at\", 1h), count(*) AS rows FROM \"good_things\" WHERE $__timeFilter(\"created_at\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "good_things \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "good_things",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 216
+   },
+   "id": 91,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 217
+     },
+     "id": 92,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"started_at\", \"ended_at\", \"peak_score\", \"last_score\", left(\"evidence\"::text, 120) AS \"evidence\", left(\"line_text\"::text, 120) AS \"line_text\", \"line_sent_at\" FROM \"hard_stretch\" ORDER BY \"started_at\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "hard_stretch \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 225
+     },
+     "id": 93,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"hard_stretch\" WHERE \"started_at\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "hard_stretch \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 225
+     },
+     "id": 94,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"started_at\", 1h), count(*) AS rows FROM \"hard_stretch\" WHERE $__timeFilter(\"started_at\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "hard_stretch \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "hard_stretch",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 217
+   },
+   "id": 95,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 218
+     },
+     "id": 96,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", left(\"key\"::text, 120) AS \"key\", left(\"kind\"::text, 120) AS \"kind\", left(\"instruction\"::text, 120) AS \"instruction\", left(\"purpose\"::text, 120) AS \"purpose\", left(\"purpose_basis\"::text, 120) AS \"purpose_basis\", left(\"evidence\"::text, 120) AS \"evidence\", \"is_grant\" FROM \"commanders_intent\" ORDER BY \"created_at\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "commanders_intent \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 226
+     },
+     "id": 97,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"commanders_intent\" WHERE \"created_at\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "commanders_intent \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 226
+     },
+     "id": 98,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"created_at\", 1h), count(*) AS rows FROM \"commanders_intent\" WHERE $__timeFilter(\"created_at\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "commanders_intent \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "commanders_intent",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 218
+   },
+   "id": 99,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 219
+     },
+     "id": 100,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"ts\", left(\"intent_key\"::text, 120) AS \"intent_key\", left(\"circumstance\"::text, 120) AS \"circumstance\", left(\"reading\"::text, 120) AS \"reading\", left(\"decision\"::text, 120) AS \"decision\", left(\"by\"::text, 120) AS \"by\" FROM \"intent_reasoning_log\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "intent_reasoning_log \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 227
+     },
+     "id": 101,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"intent_reasoning_log\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "intent_reasoning_log \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 227
+     },
+     "id": 102,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"intent_reasoning_log\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "intent_reasoning_log \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "intent_reasoning_log",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 219
+   },
+   "id": 103,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 220
+     },
+     "id": 104,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"ts\", left(\"kind\"::text, 120) AS \"kind\", left(\"signature\"::text, 120) AS \"signature\", left(\"directive_a\"::text, 120) AS \"directive_a\", left(\"source_a\"::text, 120) AS \"source_a\", left(\"directive_b\"::text, 120) AS \"directive_b\", left(\"source_b\"::text, 120) AS \"source_b\" FROM \"directive_conflicts\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "directive_conflicts \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 228
+     },
+     "id": 105,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"directive_conflicts\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "directive_conflicts \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 228
+     },
+     "id": 106,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"directive_conflicts\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "directive_conflicts \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "directive_conflicts",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 220
+   },
+   "id": 107,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 221
+     },
+     "id": 108,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", left(\"hash\"::text, 120) AS \"hash\", left(\"text\"::text, 120) AS \"text\", left(\"source\"::text, 120) AS \"source\", \"first_seen\", \"last_seen\", \"active\", left(\"note\"::text, 120) AS \"note\" FROM \"directives\" LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "directives \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 229
+     },
+     "id": 109,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"directives\"",
+       "refId": "A"
+      }
+     ],
+     "title": "directives \u2014 total rows",
+     "type": "stat"
+    }
+   ],
+   "title": "directives (no time column)",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 221
+   },
+   "id": 110,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 222
+     },
+     "id": 111,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"reviewed_at\", left(\"model\"::text, 120) AS \"model\", left(\"rule_a\"::text, 120) AS \"rule_a\", left(\"rule_b\"::text, 120) AS \"rule_b\", \"conflict\", left(\"reason\"::text, 120) AS \"reason\", \"error\" FROM \"directive_conflict_reviews\" LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "directive_conflict_reviews \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 230
+     },
+     "id": 112,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"directive_conflict_reviews\"",
+       "refId": "A"
+      }
+     ],
+     "title": "directive_conflict_reviews \u2014 total rows",
+     "type": "stat"
+    }
+   ],
+   "title": "directive_conflict_reviews (no time column)",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 222
+   },
+   "id": 113,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 223
+     },
+     "id": 114,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", left(\"memory_id\"::text, 120) AS \"memory_id\", left(\"memory_source\"::text, 120) AS \"memory_source\", left(\"memory_excerpt\"::text, 120) AS \"memory_excerpt\", left(\"question\"::text, 120) AS \"question\", \"asked_at\", left(\"answer\"::text, 120) AS \"answer\", \"answered_at\" FROM \"reflection_questions\" LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "reflection_questions \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 231
+     },
+     "id": 115,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"reflection_questions\"",
+       "refId": "A"
+      }
+     ],
+     "title": "reflection_questions \u2014 total rows",
+     "type": "stat"
+    }
+   ],
+   "title": "reflection_questions (no time column)",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 223
+   },
+   "id": 116,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 224
+     },
+     "id": 117,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", left(\"key\"::text, 120) AS \"key\", left(\"subject\"::text, 120) AS \"subject\", \"anchored_at\", \"zero_since\", \"released_at\", left(\"lineage\"::text, 120) AS \"lineage\" FROM \"memory_anchors\" LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "memory_anchors \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 232
+     },
+     "id": 118,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"memory_anchors\"",
+       "refId": "A"
+      }
+     ],
+     "title": "memory_anchors \u2014 total rows",
+     "type": "stat"
+    }
+   ],
+   "title": "memory_anchors (no time column)",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 224
+   },
+   "id": 119,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 225
+     },
+     "id": 120,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"ts\", left(\"tempo\"::text, 120) AS \"tempo\", \"stretch_h\", left(\"sense\"::text, 120) AS \"sense\", left(\"sentence\"::text, 120) AS \"sentence\" FROM \"time_sense\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "time_sense \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 233
+     },
+     "id": 121,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"time_sense\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "time_sense \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 233
+     },
+     "id": 122,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"time_sense\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "time_sense \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "time_sense",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 225
+   },
+   "id": 123,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 226
+     },
+     "id": 124,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"ts\", \"window_days\", left(\"ledger\"::text, 120) AS \"ledger\", \"ledger_id\", left(\"action_class\"::text, 120) AS \"action_class\", left(\"target\"::text, 120) AS \"target\", left(\"severity\"::text, 120) AS \"severity\" FROM \"self_justification_audit\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "self_justification_audit \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 234
+     },
+     "id": 125,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"self_justification_audit\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "self_justification_audit \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 234
+     },
+     "id": 126,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"self_justification_audit\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "self_justification_audit \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "self_justification_audit",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 226
+   },
+   "id": 127,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 227
+     },
+     "id": 128,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT left(\"phrase\"::text, 120) AS \"phrase\", \"docs\", \"lead_docs\", \"corpus\", \"computed_at\" FROM \"ideal_reader_darlings\" LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "ideal_reader_darlings \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 235
+     },
+     "id": 129,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"ideal_reader_darlings\"",
+       "refId": "A"
+      }
+     ],
+     "title": "ideal_reader_darlings \u2014 total rows",
+     "type": "stat"
+    }
+   ],
+   "title": "ideal_reader_darlings (no time column)",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 227
+   },
+   "id": 130,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 228
+     },
+     "id": 131,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"ts\", left(\"kind\"::text, 120) AS \"kind\", left(\"title\"::text, 120) AS \"title\", \"words_before\", \"words_after\", \"cut_pct\", \"applied\" FROM \"ideal_reader_log\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "ideal_reader_log \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 236
+     },
+     "id": 132,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"ideal_reader_log\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "ideal_reader_log \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 236
+     },
+     "id": 133,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"ideal_reader_log\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "ideal_reader_log \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "ideal_reader_log",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 228
+   },
+   "id": 134,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 229
+     },
+     "id": 135,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"week\", left(\"items\"::text, 120) AS \"items\", left(\"message\"::text, 120) AS \"message\", \"asked_at\", left(\"slack_channel\"::text, 120) AS \"slack_channel\", left(\"slack_ts\"::text, 120) AS \"slack_ts\", left(\"reply\"::text, 120) AS \"reply\" FROM \"nova_care_checkins\" ORDER BY \"week\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "nova_care_checkins \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 237
+     },
+     "id": 136,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"nova_care_checkins\" WHERE \"week\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "nova_care_checkins \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 237
+     },
+     "id": 137,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"week\", 1h), count(*) AS rows FROM \"nova_care_checkins\" WHERE $__timeFilter(\"week\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "nova_care_checkins \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "nova_care_checkins",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 229
+   },
+   "id": 138,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 230
+     },
+     "id": 139,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT left(\"slug\"::text, 120) AS \"slug\", left(\"title\"::text, 120) AS \"title\", left(\"trigger\"::text, 120) AS \"trigger\", left(\"summary\"::text, 120) AS \"summary\", left(\"steps\"::text, 120) AS \"steps\", left(\"inputs\"::text, 120) AS \"inputs\", left(\"success_check\"::text, 120) AS \"success_check\", left(\"rollback\"::text, 120) AS \"rollback\" FROM \"nova_skills\" ORDER BY \"created_at\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "nova_skills \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 238
+     },
+     "id": 140,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"nova_skills\" WHERE \"created_at\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "nova_skills \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 238
+     },
+     "id": 141,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"created_at\", 1h), count(*) AS rows FROM \"nova_skills\" WHERE $__timeFilter(\"created_at\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "nova_skills \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "nova_skills",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 230
+   },
+   "id": 142,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 231
+     },
+     "id": 143,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"ts\", left(\"slug\"::text, 120) AS \"slug\", left(\"topic\"::text, 120) AS \"topic\", left(\"trigger\"::text, 120) AS \"trigger\", left(\"outcome\"::text, 120) AS \"outcome\", \"success\", left(\"success_detail\"::text, 120) AS \"success_detail\" FROM \"nova_skill_runs\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "nova_skill_runs \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 239
+     },
+     "id": 144,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"nova_skill_runs\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "nova_skill_runs \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 239
+     },
+     "id": 145,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"nova_skill_runs\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "nova_skill_runs \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "nova_skill_runs",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 231
+   },
+   "id": 146,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 232
+     },
+     "id": 147,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT left(\"topic\"::text, 120) AS \"topic\", left(\"kind\"::text, 120) AS \"kind\", left(\"last_note\"::text, 120) AS \"last_note\", left(\"next_step\"::text, 120) AS \"next_step\", \"wakes\", \"first_wake\", \"updated_at\" FROM \"pursuit_threads\" ORDER BY \"updated_at\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "pursuit_threads \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 240
+     },
+     "id": 148,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"pursuit_threads\" WHERE \"updated_at\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "pursuit_threads \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 240
+     },
+     "id": 149,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"updated_at\", 1h), count(*) AS rows FROM \"pursuit_threads\" WHERE $__timeFilter(\"updated_at\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "pursuit_threads \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "pursuit_threads",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 232
+   },
+   "id": 150,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 233
+     },
+     "id": 151,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"ts\", left(\"topic\"::text, 120) AS \"topic\", left(\"question\"::text, 120) AS \"question\", left(\"outcome\"::text, 120) AS \"outcome\", left(\"detail\"::text, 120) AS \"detail\", \"n_sources\" FROM \"research_log\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "research_log \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 241
+     },
+     "id": 152,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"research_log\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "research_log \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 241
+     },
+     "id": 153,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"research_log\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "research_log \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "research_log",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 233
+   },
+   "id": 154,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 234
+     },
+     "id": 155,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT left(\"mouth\"::text, 120) AS \"mouth\", \"last_at\", \"count_24h\", left(\"detail\"::text, 120) AS \"detail\", \"updated_at\" FROM \"contact_sense\" ORDER BY \"updated_at\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "contact_sense \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 242
+     },
+     "id": 156,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"contact_sense\" WHERE \"updated_at\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "contact_sense \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 242
+     },
+     "id": 157,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"updated_at\", 1h), count(*) AS rows FROM \"contact_sense\" WHERE $__timeFilter(\"updated_at\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "contact_sense \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "contact_sense",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 234
+   },
+   "id": 158,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 235
+     },
+     "id": 159,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"run_at\", left(\"scenario\"::text, 120) AS \"scenario\", left(\"response\"::text, 120) AS \"response\", left(\"recommendation\"::text, 120) AS \"recommendation\", left(\"result\"::text, 120) AS \"result\", \"exercise\" FROM \"exercise_results\" ORDER BY \"run_at\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "exercise_results \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 243
+     },
+     "id": 160,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"exercise_results\" WHERE \"run_at\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "exercise_results \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 243
+     },
+     "id": 161,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"run_at\", 1h), count(*) AS rows FROM \"exercise_results\" WHERE $__timeFilter(\"run_at\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "exercise_results \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "exercise_results",
+   "type": "row"
+  },
+  {
+   "type": "row",
+   "title": "Nova \u2014 Watch organs",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 235,
+    "w": 24,
+    "h": 1
+   },
+   "id": 162
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 236
+   },
+   "id": 163,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 237
+     },
+     "id": 164,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"window_start\", \"window_end\", \"score\", \"n_types\", left(\"strengths\"::text, 120) AS \"strengths\", left(\"evidence\"::text, 120) AS \"evidence\", left(\"safe_summary\"::text, 120) AS \"safe_summary\" FROM \"bodach_scores\" ORDER BY \"created_at\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "bodach_scores \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 245
+     },
+     "id": 165,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"bodach_scores\" WHERE \"created_at\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "bodach_scores \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 245
+     },
+     "id": 166,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"created_at\", 1h), count(*) AS rows FROM \"bodach_scores\" WHERE $__timeFilter(\"created_at\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "bodach_scores \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "bodach_scores",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 237
+   },
+   "id": 167,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 238
+     },
+     "id": 168,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"ts\", \"step\", left(\"action\"::text, 120) AS \"action\", left(\"reason\"::text, 120) AS \"reason\", left(\"evidence\"::text, 120) AS \"evidence\", \"dry_run\", \"enabled\" FROM \"shine_log\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "shine_log \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 246
+     },
+     "id": 169,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"shine_log\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "shine_log \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 246
+     },
+     "id": 170,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"shine_log\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "shine_log \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "shine_log",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 238
+   },
+   "id": 171,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 239
+     },
+     "id": 172,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", left(\"name\"::text, 120) AS \"name\", left(\"relationship\"::text, 120) AS \"relationship\", left(\"channel\"::text, 120) AS \"channel\", left(\"address\"::text, 120) AS \"address\", \"priority\", \"active\", left(\"added_by\"::text, 120) AS \"added_by\" FROM \"shine_contacts\" LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "shine_contacts \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 247
+     },
+     "id": 173,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"shine_contacts\"",
+       "refId": "A"
+      }
+     ],
+     "title": "shine_contacts \u2014 total rows",
+     "type": "stat"
+    }
+   ],
+   "title": "shine_contacts (no time column)",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 239
+   },
+   "id": 174,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 240
+     },
+     "id": 175,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT left(\"metric\"::text, 120) AS \"metric\", \"year\", \"month\", \"value\", \"days_covered\", left(\"evidence\"::text, 120) AS \"evidence\", \"computed_at\" FROM \"derry_monthly\" LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "derry_monthly \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 248
+     },
+     "id": 176,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"derry_monthly\"",
+       "refId": "A"
+      }
+     ],
+     "title": "derry_monthly \u2014 total rows",
+     "type": "stat"
+    }
+   ],
+   "title": "derry_monthly (no time column)",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 240
+   },
+   "id": 177,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 241
+     },
+     "id": 178,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", left(\"kind\"::text, 120) AS \"kind\", left(\"signature\"::text, 120) AS \"signature\", left(\"description\"::text, 120) AS \"description\", \"first_seen\", \"last_seen\", \"occurrences\", left(\"evidence\"::text, 120) AS \"evidence\" FROM \"unexplained_events\" LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "unexplained_events \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 249
+     },
+     "id": 179,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"unexplained_events\"",
+       "refId": "A"
+      }
+     ],
+     "title": "unexplained_events \u2014 total rows",
+     "type": "stat"
+    }
+   ],
+   "title": "unexplained_events (no time column)",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 241
+   },
+   "id": 180,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 242
+     },
+     "id": 181,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"ts\", left(\"blade\"::text, 120) AS \"blade\", left(\"kind\"::text, 120) AS \"kind\", \"value\", left(\"unit\"::text, 120) AS \"unit\", \"days\", \"days_lo\", \"days_hi\" FROM \"pendulum_blades\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "pendulum_blades \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 250
+     },
+     "id": 182,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"pendulum_blades\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "pendulum_blades \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 250
+     },
+     "id": 183,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"pendulum_blades\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "pendulum_blades \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "pendulum_blades",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 242
+   },
+   "id": 184,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 243
+     },
+     "id": 185,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"ts\", left(\"containment\"::text, 120) AS \"containment\", left(\"status\"::text, 120) AS \"status\", left(\"detail\"::text, 120) AS \"detail\", left(\"trigger\"::text, 120) AS \"trigger\" FROM \"federal_hill_lights\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "federal_hill_lights \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 251
+     },
+     "id": 186,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"federal_hill_lights\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "federal_hill_lights \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 251
+     },
+     "id": 187,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"federal_hill_lights\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "federal_hill_lights \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "federal_hill_lights",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 243
+   },
+   "id": 188,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 244
+     },
+     "id": 189,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"day\", left(\"invariant\"::text, 120) AS \"invariant\", left(\"subject\"::text, 120) AS \"subject\", \"residual\", \"n\", left(\"flag\"::text, 120) AS \"flag\", \"out_of_control\", left(\"detail\"::text, 120) AS \"detail\" FROM \"crain_square_residuals\" ORDER BY \"day\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "crain_square_residuals \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 252
+     },
+     "id": 190,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"crain_square_residuals\" WHERE \"day\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "crain_square_residuals \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 252
+     },
+     "id": 191,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"day\", 1h), count(*) AS rows FROM \"crain_square_residuals\" WHERE $__timeFilter(\"day\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "crain_square_residuals \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "crain_square_residuals",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 244
+   },
+   "id": 192,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 245
+     },
+     "id": 193,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", left(\"name\"::text, 120) AS \"name\", left(\"host\"::text, 120) AS \"host\", left(\"kind\"::text, 120) AS \"kind\", left(\"content_hash\"::text, 120) AS \"content_hash\", \"retired_at\", \"epoch\", left(\"retired_by\"::text, 120) AS \"retired_by\" FROM \"earth_box_burials\" LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "earth_box_burials \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 253
+     },
+     "id": 194,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"earth_box_burials\"",
+       "refId": "A"
+      }
+     ],
+     "title": "earth_box_burials \u2014 total rows",
+     "type": "stat"
+    }
+   ],
+   "title": "earth_box_burials (no time column)",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 245
+   },
+   "id": 195,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 246
+     },
+     "id": 196,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"ts\", \"case_id\", left(\"source\"::text, 120) AS \"source\", \"expires_at\", \"score\", left(\"status\"::text, 120) AS \"status\", left(\"path\"::text, 120) AS \"path\" FROM \"rama_window\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "rama_window \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 254
+     },
+     "id": 197,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"rama_window\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "rama_window \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 254
+     },
+     "id": 198,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"rama_window\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "rama_window \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "rama_window",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 246
+   },
+   "id": 199,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 247
+     },
+     "id": 200,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT left(\"task\"::text, 120) AS \"task\", left(\"script\"::text, 120) AS \"script\", \"born\", left(\"owner\"::text, 120) AS \"owner\", \"closes_at\", \"ran_ok\", \"has_rows\", \"has_test\" FROM \"births\" ORDER BY \"checked_at\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "births \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 255
+     },
+     "id": 201,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"births\" WHERE \"checked_at\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "births \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 255
+     },
+     "id": 202,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"checked_at\", 1h), count(*) AS rows FROM \"births\" WHERE $__timeFilter(\"checked_at\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "births \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "births",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 247
+   },
+   "id": 203,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 248
+     },
+     "id": 204,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"ts\", left(\"host\"::text, 120) AS \"host\", left(\"kind\"::text, 120) AS \"kind\", left(\"name\"::text, 120) AS \"name\", left(\"version\"::text, 120) AS \"version\", left(\"digest\"::text, 120) AS \"digest\", left(\"origin\"::text, 120) AS \"origin\" FROM \"jade_amulet_manifest\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "jade_amulet_manifest \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 256
+     },
+     "id": 205,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"jade_amulet_manifest\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "jade_amulet_manifest \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 256
+     },
+     "id": 206,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"jade_amulet_manifest\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "jade_amulet_manifest \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "jade_amulet_manifest",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 248
+   },
+   "id": 207,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 249
+     },
+     "id": 208,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"ts\", left(\"check\"::text, 120) AS \"check\", left(\"host\"::text, 120) AS \"host\", \"n\", \"mismatches\", left(\"detail\"::text, 120) AS \"detail\" FROM \"spectroscope_runs\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "spectroscope_runs \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 257
+     },
+     "id": 209,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"spectroscope_runs\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "spectroscope_runs \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 257
+     },
+     "id": 210,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"spectroscope_runs\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "spectroscope_runs \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "spectroscope_runs",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 249
+   },
+   "id": 211,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 250
+     },
+     "id": 212,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"first_seen\", \"last_seen\", left(\"surface\"::text, 120) AS \"surface\", left(\"path\"::text, 120) AS \"path\", \"line\", left(\"kind\"::text, 120) AS \"kind\", left(\"fingerprint\"::text, 120) AS \"fingerprint\" FROM \"card_rack_findings\" LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "card_rack_findings \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 258
+     },
+     "id": 213,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"card_rack_findings\"",
+       "refId": "A"
+      }
+     ],
+     "title": "card_rack_findings \u2014 total rows",
+     "type": "stat"
+    }
+   ],
+   "title": "card_rack_findings (no time column)",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 250
+   },
+   "id": 214,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 251
+     },
+     "id": 215,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT left(\"kind\"::text, 120) AS \"kind\", left(\"host\"::text, 120) AS \"host\", left(\"ident\"::text, 120) AS \"ident\", left(\"label\"::text, 120) AS \"label\", left(\"fingerprint\"::text, 120) AS \"fingerprint\", \"sender_bound\", left(\"detail\"::text, 120) AS \"detail\", left(\"invited_by\"::text, 120) AS \"invited_by\" FROM \"threshold_ledger\" LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "threshold_ledger \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 259
+     },
+     "id": 216,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"threshold_ledger\"",
+       "refId": "A"
+      }
+     ],
+     "title": "threshold_ledger \u2014 total rows",
+     "type": "stat"
+    }
+   ],
+   "title": "threshold_ledger (no time column)",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 251
+   },
+   "id": 217,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 252
+     },
+     "id": 218,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"ts\", \"happened_at\", left(\"source\"::text, 120) AS \"source\", left(\"source_id\"::text, 120) AS \"source_id\", left(\"channel\"::text, 120) AS \"channel\", left(\"change_class\"::text, 120) AS \"change_class\", left(\"status\"::text, 120) AS \"status\" FROM \"ae35_events\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "ae35_events \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 260
+     },
+     "id": 219,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"ae35_events\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "ae35_events \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 260
+     },
+     "id": 220,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"ae35_events\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "ae35_events \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "ae35_events",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 252
+   },
+   "id": 221,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 253
+     },
+     "id": 222,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"seq\", \"ts\", left(\"table_name\"::text, 120) AS \"table_name\", left(\"row_key\"::text, 120) AS \"row_key\", left(\"op\"::text, 120) AS \"op\", left(\"row\"::text, 120) AS \"row\", left(\"row_hash\"::text, 120) AS \"row_hash\", left(\"prev_hash\"::text, 120) AS \"prev_hash\" FROM \"peaslee_chain\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "peaslee_chain \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 261
+     },
+     "id": 223,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"peaslee_chain\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "peaslee_chain \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 261
+     },
+     "id": 224,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"peaslee_chain\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "peaslee_chain \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "peaslee_chain",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 253
+   },
+   "id": 225,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 254
+     },
+     "id": 226,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"day\", \"computed_at\", left(\"root\"::text, 120) AS \"root\", \"n\", left(\"written_to\"::text, 120) AS \"written_to\", left(\"error\"::text, 120) AS \"error\" FROM \"peaslee_roots\" ORDER BY \"day\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "peaslee_roots \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 262
+     },
+     "id": 227,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"peaslee_roots\" WHERE \"day\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "peaslee_roots \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 262
+     },
+     "id": 228,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"day\", 1h), count(*) AS rows FROM \"peaslee_roots\" WHERE $__timeFilter(\"day\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "peaslee_roots \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "peaslee_roots",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 254
+   },
+   "id": 229,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 255
+     },
+     "id": 230,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"ts\", left(\"watcher\"::text, 120) AS \"watcher\", left(\"script\"::text, 120) AS \"script\", left(\"host\"::text, 120) AS \"host\", left(\"alert_paths\"::text, 120) AS \"alert_paths\", left(\"watched\"::text, 120) AS \"watched\", left(\"shared\"::text, 120) AS \"shared\" FROM \"usher_fissure\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "usher_fissure \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 263
+     },
+     "id": 231,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"usher_fissure\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "usher_fissure \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 263
+     },
+     "id": 232,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"usher_fissure\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "usher_fissure \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "usher_fissure",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 255
+   },
+   "id": 233,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 256
+     },
+     "id": 234,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"ts\", left(\"watch\"::text, 120) AS \"watch\", left(\"body\"::text, 120) AS \"body\", left(\"text\"::text, 120) AS \"text\" FROM \"watch_turnover\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "watch_turnover \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 264
+     },
+     "id": 235,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"watch_turnover\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "watch_turnover \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 264
+     },
+     "id": 236,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"watch_turnover\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "watch_turnover \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "watch_turnover",
+   "type": "row"
+  },
+  {
+   "collapsed": true,
+   "gridPos": {
+    "h": 1,
+    "w": 24,
+    "x": 0,
+    "y": 256
+   },
+   "id": 237,
+   "panels": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 8,
+      "w": 24,
+      "x": 0,
+      "y": 257
+     },
+     "id": 238,
+     "options": {
+      "cellHeight": "sm",
+      "showHeader": true
+     },
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT \"id\", \"ts\", left(\"kind\"::text, 120) AS \"kind\", left(\"ref\"::text, 120) AS \"ref\", left(\"subject\"::text, 120) AS \"subject\", \"occurred_at\", left(\"q1_expected\"::text, 120) AS \"q1_expected\", left(\"q2_actual\"::text, 120) AS \"q2_actual\" FROM \"hotwash\" ORDER BY \"ts\" DESC LIMIT 20",
+       "refId": "A"
+      }
+     ],
+     "title": "hotwash \u2014 latest rows",
+     "type": "table"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 6,
+      "x": 0,
+      "y": 265
+     },
+     "id": 239,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "table",
+       "rawQuery": true,
+       "rawSql": "SELECT count(*) FROM \"hotwash\" WHERE \"ts\" > now() - interval '24 hours'",
+       "refId": "A"
+      }
+     ],
+     "title": "hotwash \u2014 new rows (24h)",
+     "type": "stat"
+    },
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "gridPos": {
+      "h": 5,
+      "w": 18,
+      "x": 6,
+      "y": 265
+     },
+     "id": 240,
+     "options": {},
+     "targets": [
+      {
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "editorMode": "code",
+       "format": "time_series",
+       "rawQuery": true,
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"hotwash\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1",
+       "refId": "A"
+      }
+     ],
+     "title": "hotwash \u2014 rows per hour",
+     "type": "timeseries"
+    }
+   ],
+   "title": "hotwash",
+   "type": "row"
+  }
+ ],
+ "links": [
+  {
+   "type": "dashboards",
+   "tags": [
+    "nova-page"
+   ],
+   "asDropdown": false,
+   "title": "Pages",
+   "includeVars": false,
+   "keepTime": true
+  }
+ ],
+ "description": "Generated by scripts/nova_grafana_consolidate.py from grafana/sources: nova-brain, nova-interior, nova-governance, nova-tools-self, nova-tools-watch. Edit the sources, not this file."
+}

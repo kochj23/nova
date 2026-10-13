@@ -1,0 +1,89 @@
+{
+ "panels": [
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 12,
+    "w": 24,
+    "x": 0,
+    "y": 0
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT observed_at AS time, subject, observation FROM shared_observations WHERE observer='nova_ble_churn_report' AND observed_at > now() - interval '30 days' ORDER BY observed_at DESC"
+    }
+   ],
+   "title": "New / gone named devices (last 30 days)",
+   "type": "table"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {
+     "unit": "short"
+    },
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 24,
+    "x": 0,
+    "y": 12
+   },
+   "targets": [
+    {
+     "format": "time_series",
+     "rawSql": "SELECT date_trunc('day', ts) AS time, 'named' AS metric, count(DISTINCT device_mac) AS value FROM telemetry.bluetooth WHERE device_name IS NOT NULL AND device_name != '' AND ts > now() - interval '30 days' GROUP BY 1 UNION ALL SELECT date_trunc('day', ts) AS time, 'anonymous' AS metric, count(DISTINCT device_mac) AS value FROM telemetry.bluetooth WHERE (device_name IS NULL OR device_name = '') AND ts > now() - interval '30 days' GROUP BY 1 ORDER BY 1"
+    }
+   ],
+   "title": "Named vs anonymous BLE devices per day",
+   "type": "timeseries"
+  },
+  {
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "gridPos": {
+    "h": 10,
+    "w": 24,
+    "x": 0,
+    "y": 22
+   },
+   "targets": [
+    {
+     "format": "table",
+     "rawSql": "SELECT observed_at AS time, metadata->>'mac' AS mac, metadata->>'rssi' AS rssi FROM shared_observations WHERE observer='nova' AND subject='karr-vulnerable-device-detected' AND observed_at > now() - interval '30 days' ORDER BY observed_at DESC"
+    }
+   ],
+   "title": "Possible KARR/SWDS vulnerable car alarms detected (probable, name-match only)",
+   "type": "table"
+  }
+ ],
+ "refresh": "1h",
+ "schemaVersion": 39,
+ "tags": [
+  "nova",
+  "bluetooth",
+  "security"
+ ],
+ "timezone": "browser",
+ "title": "Bluetooth Device Churn",
+ "uid": "ble-churn",
+ "_folder": "General"
+}

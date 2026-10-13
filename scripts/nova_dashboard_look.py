@@ -49,15 +49,15 @@ OLLAMA_URL = os.environ.get("NOVA_OLLAMA_URL", "http://127.0.0.1:11434/api/gener
 # `thinking` and leaves `response` empty, so it is the fallback source, not the default.
 VISION_MODEL = os.environ.get("NOVA_VISION_MODEL", "qwen2.5vl:3b")
 SERVICE = "dashboard_look"
-DEFAULT_TARGETS = [            # uid: what it is (used in the prompt)
-    ("fleet-health", "Fleet Health & SLA"),
-    ("nova-kpis", "Nova Platform KPIs"),
-    ("nova-probes-uptime", "Nova / Probes & Uptime"),
-    ("data-platform", "Data Platform Health"),
-    ("nova-brain", "Nova Brain"),
-    ("nova-notifications-incidents", "Nova / Notifications & Incidents"),
+DEFAULT_TARGETS = [            # uid: what it is (used in the prompt). 2026-10-13: the 9 consolidated pages
+    ("nova-fleet", "Fleet & Platform"),   # (nova_grafana_consolidate.py). The renderer caps at 3000 px tall,
+    ("nova-data", "Data & Storage"),      # so each look covers a page's top sections.
+    ("nova-net", "Network"),
+    ("nova-sec", "Security"),
+    ("nova-mind", "Nova — Mind"),
+    ("nova-home", "Home"),
 ]
-RENDER_W, RENDER_H, RENDER_RANGE = 1400, 900, "now-6h"
+RENDER_W, RENDER_H, RENDER_RANGE = 1400, 3000, "now-6h"
 RENDER_TIMEOUT_S, VLM_TIMEOUT_S = 120, 300
 ALERT_DEDUPE_H = 6
 STATUSES = ("ok", "watch", "alarm")
@@ -69,7 +69,7 @@ def log(m):
 
 # ─────────────────────────── pure helpers (selftested) ───────────────────────────
 def render_url(uid: str) -> str:
-    q = urllib.parse.urlencode({"kiosk": "", "width": RENDER_W, "height": RENDER_H, "from": RENDER_RANGE,
+    q = urllib.parse.urlencode({"kiosk": 1, "width": RENDER_W, "height": RENDER_H, "from": RENDER_RANGE,
                                 "to": "now", "theme": "dark", "tz": "America/Los_Angeles"})
     return resolve_url("grafana", f"/render/d/{uid}?{q}")
 
@@ -156,12 +156,16 @@ def targets(cur) -> list[tuple[str, str]]:
     return DEFAULT_TARGETS
 
 
-def render(uid: str) -> bytes:
-    with urllib.request.urlopen(render_url(uid), timeout=RENDER_TIMEOUT_S) as resp:
+def _render_raw(url: str) -> bytes:
+    with urllib.request.urlopen(url, timeout=RENDER_TIMEOUT_S) as resp:
         png = resp.read()
     if not png.startswith(b"\x89PNG"):
         raise RuntimeError("renderer did not return a PNG")
     return png
+
+
+def render(uid: str) -> bytes:
+    return _render_raw(render_url(uid))
 
 
 def look_at(uid: str, title: str, png: bytes) -> dict:
@@ -247,7 +251,7 @@ def selftest() -> int:
     assert should_alert("alarm", None) is True
     assert should_alert("alarm", 1000.0, now=1000.0 + 3600) is False
     assert should_alert("alarm", 1000.0, now=1000.0 + ALERT_DEDUPE_H * 3600 + 1) is True
-    assert "/render/d/fleet-health?" in render_url("fleet-health") and "kiosk" in render_url("fleet-health")
+    assert "/render/d/fleet-health?" in render_url("fleet-health") and "kiosk=1" in render_url("fleet-health")
     assert "JSON only" in prompt_for("x", "X")
     assert memory_text("u", "T", {"status": "alarm", "summary": "s", "findings": ["f"]}).startswith("[Dashboard look] T (u) is ALARM")
     print("selftest ok")
