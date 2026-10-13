@@ -42,7 +42,7 @@ def _main(out, scp_rc=0, size=50_000):
     def run(cmd, **kw):
         calls.append(cmd); return MagicMock(returncode=scp_rc, stderr=b"no route")
     buf = io.StringIO()
-    with patch.object(cr, "CHROME", "/fake/chrome"), patch.object(cr, "render", side_effect=_fake_render(size)), \
+    with patch.object(cr, "render", side_effect=_fake_render(size)), \
          patch.object(cr.subprocess, "run", side_effect=run), patch.object(sys, "argv", ["x", "--out", str(out)]), \
          redirect_stdout(buf):
         rc = cr.main()
@@ -57,7 +57,7 @@ class TestSecurity(unittest.TestCase):
 
     def test_unmounted_share_never_renders_to_studio_disk(self):
         out = Path(tempfile.mkdtemp()) / "missing" / "dash"
-        with patch.object(cr, "CHROME", "/fake/chrome"), patch.object(cr, "render") as r, \
+        with patch.object(cr, "render") as r, \
              patch.object(sys, "argv", ["x", "--out", str(out)]), redirect_stdout(io.StringIO()):
             self.assertEqual(cr.main(), 1)
         r.assert_not_called()
@@ -108,15 +108,24 @@ class TestUnit(unittest.TestCase):
 
     def test_render_checks_min_bytes(self):
         tmp = Path(tempfile.mkdtemp()) / "x.png"
-        def run(cmd, **kw):
-            tmp.write_bytes(b"0" * 100); return MagicMock(returncode=0)
-        with patch.object(cr, "CHROME", "/fake/chrome"), patch.object(cr.subprocess, "run", side_effect=run) as r:
+        resp = MagicMock(); resp.__enter__.return_value.read.return_value = b"\x89PNG" + b"0" * 100
+        with patch.object(cr.urllib.request, "urlopen", return_value=resp) as u:
             self.assertFalse(cr.render(tmp))
-        self.assertIn("--headless=new", r.call_args[0][0])
+        self.assertIn("/render/d/nova-fleet", u.call_args[0][0])
 
-    def test_no_chrome_returns_2(self):
-        with patch.object(cr, "CHROME", None), redirect_stdout(io.StringIO()):
-            self.assertEqual(cr.main(), 2)
+    def test_render_rejects_non_png_and_unreachable(self):
+        tmp = Path(tempfile.mkdtemp()) / "x.png"
+        resp = MagicMock(); resp.__enter__.return_value.read.return_value = b"<html>login</html>" * 5000
+        with patch.object(cr.urllib.request, "urlopen", return_value=resp):
+            self.assertFalse(cr.render(tmp))
+        with patch.object(cr.urllib.request, "urlopen", side_effect=OSError("down")), redirect_stdout(io.StringIO()):
+            self.assertFalse(cr.render(tmp))
+
+    def test_render_accepts_real_frame(self):
+        tmp = Path(tempfile.mkdtemp()) / "x.png"
+        resp = MagicMock(); resp.__enter__.return_value.read.return_value = b"\x89PNG" + b"0" * cr.MIN_BYTES
+        with patch.object(cr.urllib.request, "urlopen", return_value=resp):
+            self.assertTrue(cr.render(tmp))
 
 
 class TestIntegration(unittest.TestCase):

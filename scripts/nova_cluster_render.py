@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """nova_cluster_render.py — wish #60 (queue #3113 tier 1): the Nova Cluster dashboard as a picture.
 
-Every run renders the Grafana kiosk dashboard with headless Chromium to a 1920x1080 PNG on the UNAS share
+Every run renders the Grafana kiosk dashboard (Grafana's image renderer) to a 1920x1080 PNG on the UNAS share
 (never a Studio disk): /Volumes/nas/nova-fs/dash/nova-cluster.png (always the latest, atomic rename) and
 /Volumes/nas/nova-fs/dash/hourly/nova-cluster-YYYYMMDD-HH.png (one per hour, 48 kept). TV-Movies-3 (.7)
 imports the newest hourly frame into the Photos album "Nova" from its own GUI session (nova_tv_dash_import.sh,
 LaunchAgent net.digitalnoise.nova-tv-dash); Home Sharing exposes that album to the six Apple TVs as a
 screensaver source. Photos has no scriptable delete, hence hourly, not every 5 min. --selftest --out DIR
 """
-import os, sys, subprocess, time, pathlib, shutil
+import os, sys, subprocess, time, pathlib, shutil, urllib.request
 
-URL = os.environ.get("NOVA_DASH_URL", "http://192.168.1.2:3000/d/nova-fleet?kiosk&theme=dark")   # nova-cluster = top section of nova-fleet (2026-10-13)
+# 2026-10-13: Grafana's own image renderer (one HTTP call) replaces a local headless Chromium, which timed out on
+# about half the runs (93 failures/24 h) and left multi-GB code-sign clones behind. nova-cluster is the top
+# section of the consolidated nova-fleet page, so a 1920x1080 kiosk frame is the same picture as before.
+URL = os.environ.get("NOVA_DASH_URL", "http://192.168.1.2:3000/render/d/nova-fleet?kiosk=1&width=1920&height=1080"
+                     "&theme=dark&tz=America%2FLos_Angeles&from=now-24h&to=now")
 OUT = pathlib.Path(os.environ.get("NOVA_DASH_DIR", "/Volumes/nas/nova-fs/dash"))
-CHROME = next((c for c in ("/Applications/Chromium.app/Contents/MacOS/Chromium",
-                           "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome") if os.path.exists(c)), None)
 KEEP_HOURLY = 48
 TV_HOST = "kochj@192.168.1.7"
 TV_CACHE = "Library/Caches/nova-dash"       # local on .7; its importer reads from here (see nova_tv_dash_import.sh)
@@ -29,15 +31,18 @@ def prune(paths, keep=KEEP_HOURLY):
     return s[:-keep] if len(s) > keep else []
 
 def render(tmp):
-    cmd = [CHROME, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--window-size=1920,1080",
-           "--virtual-time-budget=15000", f"--screenshot={tmp}", URL]
-    subprocess.run(cmd, capture_output=True, timeout=90)
-    return tmp.exists() and tmp.stat().st_size >= MIN_BYTES
+    try:
+        with urllib.request.urlopen(URL, timeout=90) as r:
+            png = r.read()
+    except OSError as e:
+        log(f"Grafana renderer unreachable: {e}"); return False
+    if not png.startswith(b"\x89PNG"):
+        return False
+    tmp.write_bytes(png)
+    return tmp.stat().st_size >= MIN_BYTES
 
 def main():
     out = pathlib.Path(sys.argv[sys.argv.index("--out") + 1]) if "--out" in sys.argv else OUT
-    if not CHROME:
-        log("no Chromium/Chrome installed"); return 2
     if not out.parent.exists():
         log(f"{out.parent} not mounted — skipping (never render to a Studio disk)"); return 1
     (out / "hourly").mkdir(parents=True, exist_ok=True)
