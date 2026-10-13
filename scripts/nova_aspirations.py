@@ -429,8 +429,8 @@ def pursue(oc, mc, cand):
                     raise RuntimeError("held by the Annie Wilkes rule / turning point (wish still filed)")
                 nova_config.post_both(
                     f":sparkles: *Nova wishes she could:* {title} — _{why or desc[:120]}_ "
-                    f"(wishlist #{wish_id}; nothing is built unless you approve it: "
-                    f"`nova_aspirations.py --approve {wish_id}`)",
+                    f"(wishlist #{wish_id}; Claude reviews it and approves unless it carries significant "
+                    f"risk, in which case it comes to you)",
                     slack_channel=getattr(nova_config, "SLACK_CHAN", None))
             except Exception as e:
                 log(f"wish notify skipped (non-fatal): {e}")
