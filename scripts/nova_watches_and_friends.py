@@ -1,6 +1,6 @@
 #!/opt/homebrew/bin/python3
-"""nova_watches_and_friends.py — "Watches and Friends", Nova's weekly 5,000-10,000-word watch
-roundup (Jordan 2026-10-06; replaces the daily Fishbowl dispatch).
+"""nova_watches_and_friends.py — "Watches and Friends", Nova's daily watch roundup (Jordan
+2026-10-06 as a weekly 5,000-10,000-word issue; daily since 2026-10-13 -- 2,000-4,500 words, same shape).
 
 Shape: WATCH NEWS first (the 32 horology channels in nova_yt_ingest_watch.CHANNELS plus the
 subscription-audio captures of the same channels), then a closing "Fishbowl / Hate Streams"
@@ -8,8 +8,9 @@ section (the fishbowl channels + the existing fishbowl_people dossiers), then a 
 built from the memory rows — every video/stream the piece drew on, linked, grouped by section.
 
 Written in parts so the length is reliable: one call for the news, one for the Fishbowl, and a
-grounded "deeper cuts" call only if the total is still under MIN_WORDS. Window: last DAYS days.
-Usage: nova_watches_and_friends.py [--days 7] [--dry-run]
+grounded "deeper cuts" call only if the total is still under the minimum. Window: last DAYS days
+(1 = daily issue, 7 = the old weekly sizes). A day with no watch news is skipped quietly (exit 0).
+Usage: nova_watches_and_friends.py [--days 1] [--dry-run]
 """
 import argparse
 import re
@@ -30,7 +31,6 @@ MEM_DSN = _nova_dsn.pg_dsn("nova_memories")
 import nova_dsn as _nova_dsn  # noqa: E402
 OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 SECTION = "watches"
-MIN_WORDS = 5000
 NEWS_PER_VIDEO, NEWS_MAX_VIDEOS = 1600, 36      # ~58k chars: under the size that hangs claude -p
 FISH_PER_VIDEO, FISH_MAX_VIDEOS = 1200, 18
 MODEL = "anthropic/claude-sonnet-4"             # call_openrouter maps any "sonnet" to the CLI's sonnet
@@ -99,7 +99,7 @@ def words(s):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--days", type=int, default=7)
+    ap.add_argument("--days", type=int, default=1)
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
@@ -117,6 +117,7 @@ def main():
                   WHERE created_at > now() - make_interval(days => %s)
                     AND coalesce(metadata->>'part', 'transcript') = 'transcript'
                     AND (metadata->>'video_id' = ANY(%s)
+                         OR source = 'horology'   -- 2026-10-11 run matched 0 via yt_ingest_seen alone
                          OR (metadata->>'pipeline' = 'yt_subs_audio' AND metadata->>'channel' = ANY(%s)))
                   ORDER BY created_at DESC, (metadata->>'idx')::int NULLS FIRST""",
                (a.days, news_vids, news_names))
@@ -128,25 +129,30 @@ def main():
     fish = group_videos(mc.fetchall(), FISH_PER_VIDEO, FISH_MAX_VIDEOS)
     log(f"{len(news)} news videos, {len(fish)} fishbowl streams in the last {a.days} days")
     if not news:
-        log("no watch-news transcripts in the window — aborting")
-        return 1
+        log("no watch-news transcripts in the window — no issue today")
+        return 0
 
     try:   # Jordan's ground truth about the scene (who's who, Farrer is archive-only, ...) — both sections
         from nova_fishbowl_summaries import KNOWN_FACTS
     except Exception:
         KNOWN_FACTS = ""
     week = nj.today_str()
+    daily = a.days == 1
+    period, span = ("daily", f"for {week}") if daily else ("weekly", f"for the week ending {week}")
+    # (news, whole-issue cap, fishbowl, deeper cuts, minimum) word targets
+    news_w, cap_w, fish_w, more_w, min_words = (("1,500-3,000", "4,500", "500-1,000", "800-1,500", 2000) if daily else
+                                                ("4,000-6,000", "10,000", "1,000-1,800", "1,500-3,000", 5000))
     rules = ("Ground every claim in the transcripts below; name the channel and the video when you use it. "
              "Never invent prices, references, model numbers or quotes that are not in the transcripts. "
              "Markdown with ## and ### headers, no H1. Do NOT write a sources or links list — it is appended "
              "automatically.\n\n" + KNOWN_FACTS)
-    news_ctx = (f"You are writing the WATCH NEWS part of 'Watches and Friends', Nova's weekly watch roundup for the "
-                f"week ending {week}. Voice: Nova — sharp, funny, opinionated, but the watch content is the point. "
-                "Open with a short intro to the week, then organise by STORY, not by channel: releases and novelties, "
+    news_ctx = (f"You are writing the WATCH NEWS part of 'Watches and Friends', Nova's {period} watch roundup "
+                f"{span}. Voice: Nova — sharp, funny, opinionated, but the watch content is the point. "
+                f"Open with a short intro to the {'day' if daily else 'week'}, then organise by STORY, not by channel: releases and novelties, "
                 "the market and prices, dealers and the grey market, brands, vintage, collecting advice, the industry. "
-                "Where several channels covered the same thing, compare their takes. Give real depth: 4,000-6,000 "
-                f"words (the whole issue must stay under 10,000). {rules}\nFirst line exactly: TITLE: <a punchy title for the whole weekly issue>")
-    raw = nj.call_openrouter(nova_voice.system_prompt(news_ctx), "--- THIS WEEK'S WATCH-NEWS TRANSCRIPTS ---\n\n"
+                "Where several channels covered the same thing, compare their takes. Give real depth: {news_w} "
+                f"words (the whole issue must stay under {cap_w}). {rules}\nFirst line exactly: TITLE: <a punchy title for the whole {period} issue>")
+    raw = nj.call_openrouter(nova_voice.system_prompt(news_ctx), f"--- THIS {'DAY' if daily else 'WEEK'}'S WATCH-NEWS TRANSCRIPTS ---\n\n"
                              + digest(news) + "\n\nWrite the Watch News section.",
                              model=MODEL, max_tokens=16000, temperature=0.75, timeout=1200)
     title, news_body = split_title(raw)
@@ -159,16 +165,16 @@ def main():
         dossier_block = "\n\n".join(f"### {n} ({c})\n{s[:450]}" for n, c, s in dossiers)
         fish_ctx = ("You are writing the closing 'Fishbowl / Hate Streams' section of 'Watches and Friends'. The "
                     "Fishbowl is the grey-market watch-community livestream drama scene — hate streams, beefs, "
-                    "superchat wars. A few sharp paragraphs to a few pages: 1,000-1,800 words. Lead with what is NEW "
-                    "this week, name names and catchphrases as observational data, be honest that the scene is toxic "
+                    f"superchat wars. A few sharp paragraphs to a few pages: {fish_w} words. Lead with what is NEW "
+                    f"this {'day' if daily else 'week'}, name names and catchphrases as observational data, be honest that the scene is toxic "
                     f"and that Nova tracks it as data, not endorsement. {rules} Start directly with the prose (no title line).")
         fish_body = nj.call_openrouter(nova_voice.system_prompt(fish_ctx),
-                                       f"--- THE CAST (dossiers) ---\n{dossier_block}\n\n--- THIS WEEK'S STREAMS ---\n\n"
+                                       f"--- THE CAST (dossiers) ---\n{dossier_block}\n\n--- THE STREAMS ---\n\n"
                                        + digest(fish) + "\n\nWrite the Fishbowl / Hate Streams section.",
                                        model=MODEL, max_tokens=6000, temperature=0.85, timeout=900) or ""
 
-    if words(news_body) + words(fish_body) < MIN_WORDS:
-        more_ctx = ("Continue 'Watches and Friends' with a 'Deeper Cuts' part: 1,500-3,000 more words on the watch-news "
+    if words(news_body) + words(fish_body) < min_words:
+        more_ctx = (f"Continue 'Watches and Friends' with a 'Deeper Cuts' part: {more_w} more words on the watch-news "
                     "videos below that the main piece covered least — specifics, comparisons, what it means for "
                     f"collectors. Do not repeat the existing text. {rules} Start with '## Deeper Cuts'.")
         more = nj.call_openrouter(nova_voice.system_prompt(more_ctx),
@@ -185,7 +191,7 @@ def main():
     body += ("\n\n## Sources\n\n### Watch News\n\n" + sources(news)
              + "\n\n### Fishbowl / Hate Streams\n\n" + sources(fish))
     if not title or len(title) < 8:
-        title = f"Watches and Friends — Week Ending {week}"
+        title = f"Watches and Friends — {week}" if daily else f"Watches and Friends — Week Ending {week}"
     title = title if title.lower().startswith("watches and friends") else f"Watches and Friends: {title}"
     log(f"{words(body)} words: {title}")
     if a.dry_run:
@@ -198,8 +204,8 @@ def main():
                                 width=1024, height=768, section=SECTION)
     except Exception as e:
         log(f"image failed (non-fatal): {e}")
-    if not nj.publish_hugo(title, body, SECTION, ["watches", "horology", "watch-news", "fishbowl", "weekly"],
-                           "Nova's weekly watch roundup: the week's watch news from 30-odd channels, then the "
+    if not nj.publish_hugo(title, body, SECTION, ["watches", "horology", "watch-news", "fishbowl", period],
+                           f"Nova's {period} watch roundup: the {'day' if daily else 'week'}'s watch news from 30-odd channels, then the "
                            "Fishbowl / Hate Streams — with every source linked.",
                            image_path=img, emoji="⌚", profile=None):
         log("NOT PUBLISHED — quality guard rejected")

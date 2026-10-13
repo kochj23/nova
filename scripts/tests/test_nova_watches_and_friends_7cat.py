@@ -201,9 +201,9 @@ class TestFunctional(unittest.TestCase):
         nj.git_push.assert_called_once()
         self.assertEqual(nj.notify_slack.call_args.args[0], "fishbowl")
 
-    def test_no_news_aborts(self):
+    def test_no_news_skips_quietly(self):
         rc, nj, _ = run_main(news=[])
-        self.assertEqual(rc, 1)
+        self.assertEqual(rc, 0)
         nj.call_openrouter.assert_not_called()
 
     def test_quality_guard_reject_returns_1_without_push(self):
@@ -217,9 +217,15 @@ class TestFunctional(unittest.TestCase):
         nj.publish_hugo.assert_not_called()
         nj.notify_slack.assert_not_called()
 
-    def test_missing_title_falls_back_to_week(self):
+    def test_missing_title_falls_back_to_date(self):
         with patch("builtins.print"):
             rc, nj, _ = run_main(llm=lambda *a, **k: "no title\n" + "w " * 6000)
+        self.assertEqual(nj.publish_hugo.call_args.args[0], "Watches and Friends — 2026-10-08")
+        self.assertIn("daily", nj.publish_hugo.call_args.args[3])
+
+    def test_days_7_keeps_weekly_title(self):
+        with patch("builtins.print"):
+            rc, nj, _ = run_main(["--days", "7"], llm=lambda *a, **k: "no title\n" + "w " * 6000)
         self.assertEqual(nj.publish_hugo.call_args.args[0], "Watches and Friends — Week Ending 2026-10-08")
 
 
