@@ -18,6 +18,10 @@ from nova_gateway.config import (
     OLLAMA_URL, MLX_URL, LLAMACPP_URL, OPENROUTER,
     is_private_content,
 )
+from nova_gateway import overload
+from nova_gateway.overload import (
+    LIMITER, AttemptGate, BackendSaturated, DeadlineExceeded, RetryBudgetExceeded, attempt_timeout,
+)
 
 log = logging.getLogger("nova_gateway_v2")
 
@@ -251,7 +255,7 @@ class ModelRouter:
                     private: bool = False, tokens: dict = None,
                     model_override: str = "",
                     tools: list = None, raw_response: bool = False,
-                    ctx=None, budget_s: float = None) -> str | dict:
+                    ctx=None, budget_s: float = None, is_retry: bool = False) -> str | dict:
         """Route a chat completion request through the priority chain.
 
         Args:
@@ -266,6 +270,8 @@ class ModelRouter:
             ctx: GatewayContext instance for accessing shared state.
             budget_s: wall-clock budget for the whole chain (default ROUTE_BUDGET_S). Each attempt's
                 timeout is clipped to what is left; when it is spent the chain stops.
+            is_retry: this whole call is itself a retry of a failed request (rescue pass, empty follow-up), so even
+                its first send spends retry budget (overload.AttemptGate).
 
         Returns:
             The assistant's response text (str), or full response dict if raw_response=True.
@@ -276,10 +282,16 @@ class ModelRouter:
         tokens = tokens or {}
         errors = []
         deadline = time.time() + (budget_s if budget_s else ROUTE_BUDGET_S)
+        # Overload protection (overload.py): one gate per call caps retries (per call + process-wide ratio).
+        gate = AttemptGate(is_retry=is_retry)
+        if not is_retry:
+            overload.RETRY_BUDGET.record_request()
+            overload.STATS["requests"] += 1
 
         for name, static_base_url, health_path, is_local in self.BACKENDS:
-            if deadline - time.time() < 3:
+            if deadline - time.time() < overload.MIN_ATTEMPT_S + 1:
                 errors.append((name, "route budget exhausted"))
+                overload.STATS["deadline_exceeded"] += 1
                 break
             # Skip cloud backends for private queries
             if not is_local and private:
@@ -323,7 +335,7 @@ class ModelRouter:
                 result = await self._call_backend(
                     name, base_url, messages, system, max_tokens, tokens,
                     model_override, tools=tools, raw_response=raw_response,
-                    ctx=ctx, deadline=deadline,
+                    ctx=ctx, deadline=deadline, gate=gate,
                 )
                 _elapsed_ms = int((_time.time() - _t0) * 1000)
 
@@ -347,6 +359,20 @@ class ModelRouter:
 
                 return result
 
+            except DeadlineExceeded:
+                errors.append((name, "route budget exhausted"))
+                overload.STATS["deadline_exceeded"] += 1
+                break
+            except RetryBudgetExceeded as e:
+                # Don't amplify load on a sick fleet: stop here (the caller has its own canned/rescue reply).
+                errors.append((name, str(e)))
+                log.warning(f"ModelRouter: retry budget denied before '{name}' — stopping chain")
+                break
+            except BackendSaturated as e:
+                # Shed: busy, not broken — keep its health, fall to the next backend.
+                errors.append((name, str(e)))
+                log.warning(f"ModelRouter: shed '{name}': {e}")
+                continue
             except Exception as e:
                 # Mid-request failure — invalidate health and try next
                 self.invalidate_health(name)
@@ -362,7 +388,8 @@ class ModelRouter:
     async def _call_backend(self, name: str, base_url: str, messages: list,
                             system: str, max_tokens: int, tokens: dict,
                             model_override: str, tools: list = None,
-                            raw_response: bool = False, ctx=None, deadline: float = None) -> str | dict:
+                            raw_response: bool = False, ctx=None, deadline: float = None,
+                            gate: AttemptGate = None) -> str | dict:
         """Call a specific backend. All use OpenAI-compatible format.
 
         Args:
@@ -379,13 +406,12 @@ class ModelRouter:
             msgs = [{"role": "system", "content": system}] + messages
 
         def _t(default: float) -> float:
-            """Per-attempt timeout clipped to the route budget."""
-            if deadline is None:
-                return default
-            left = deadline - time.time()
-            if left < 2:
-                raise TimeoutError("route budget exhausted")
-            return min(default, left)
+            """Per-attempt timeout clipped to the route budget (DeadlineExceeded below the floor)."""
+            return attempt_timeout(deadline, default)
+
+        def _slot(url: str):
+            """Per-node concurrency slot + retry-budget spend for one real send."""
+            return LIMITER.slot(f"{name}@{url}", gate)
 
         if name == "ollama":
             # Native API. Thinking is off for chat (CHAT_THINK) — see the note at CHAT_THINK.
@@ -401,20 +427,25 @@ class ModelRouter:
                 payload["tools"] = tools
             # 2026-10-08: one dead/slow node no longer fails the turn — try the next node holding the chat model
             # before falling through to MLX. The first try keeps most of the budget; later tries get the rest.
-            data, last_exc = None, None
-            for i, node_url in enumerate(_ollama_candidates(base_url)):
+            data, last_exc, sent = None, None, 0
+            for node_url in _ollama_candidates(base_url):
                 try:
-                    resp = await http.post(f"{node_url}/api/chat", json=payload,
-                                           timeout=_t(40 if i == 0 else 30))
+                    tmo = _t(40 if sent == 0 else 30)
+                    with _slot(node_url):
+                        sent += 1
+                        resp = await http.post(f"{node_url}/api/chat", json=payload, timeout=tmo)
                     resp.raise_for_status()
                     data = resp.json()
                     break
+                except (DeadlineExceeded, RetryBudgetExceeded):
+                    raise
+                except BackendSaturated as e:
+                    last_exc = e        # busy node: shed, try the next one (nothing was sent)
+                    continue
                 except Exception as e:
                     last_exc = e
                     _forget_sticky(node_url)
                     log.warning(f"ModelRouter: ollama node {node_url} failed ({_err(e)}) — trying next node")
-                    if isinstance(e, TimeoutError) and "budget" in str(e):
-                        break
             if data is None:
                 raise last_exc or RuntimeError("no ollama node answered")
             msg = data.get("message", {})
@@ -457,11 +488,9 @@ class ModelRouter:
             }
             if tools:
                 payload["tools"] = tools
-            resp = await http.post(
-                f"{base_url}/v1/chat/completions",
-                json=payload,
-                timeout=_t(45),
-            )
+            tmo = _t(45)
+            with _slot(base_url):
+                resp = await http.post(f"{base_url}/v1/chat/completions", json=payload, timeout=tmo)
             resp.raise_for_status()
             data = resp.json()
             try:
@@ -484,15 +513,13 @@ class ModelRouter:
                 "max_tokens": max_tokens,
                 "temperature": 0.7,
             }
-            resp = await http.post(
-                f"{base_url}/v1/chat/completions",
-                json=payload,
-                timeout=_t(45),
-            )
-            if resp.status_code == 400 and "exceed" in (getattr(resp, "text", "") or ""):
-                # token-dense text beat the chars/token estimate — halve the window once and retry
-                payload["messages"] = _compact_for_small_ctx(msgs, max_tokens, LLAMACPP_CTX // 2)
-                resp = await http.post(f"{base_url}/v1/chat/completions", json=payload, timeout=_t(45))
+            tmo = _t(45)
+            with _slot(base_url):
+                resp = await http.post(f"{base_url}/v1/chat/completions", json=payload, timeout=tmo)
+                if resp.status_code == 400 and "exceed" in (getattr(resp, "text", "") or ""):
+                    # token-dense text beat the chars/token estimate — halve the window once and retry
+                    payload["messages"] = _compact_for_small_ctx(msgs, max_tokens, LLAMACPP_CTX // 2)
+                    resp = await http.post(f"{base_url}/v1/chat/completions", json=payload, timeout=_t(45))
             resp.raise_for_status()
             data = resp.json()
             try:
@@ -515,15 +542,17 @@ class ModelRouter:
             }
             if tools:
                 payload["tools"] = tools
-            resp = await http.post(
-                f"{base_url}/chat/completions",
-                json=payload,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "HTTP-Referer": "https://nova.digitalnoise.net",
-                },
-                timeout=_t(120),
-            )
+            tmo = _t(120)
+            with _slot(base_url):
+                resp = await http.post(
+                    f"{base_url}/chat/completions",
+                    json=payload,
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "HTTP-Referer": "https://nova.digitalnoise.net",
+                    },
+                    timeout=tmo,
+                )
             resp.raise_for_status()
             data = resp.json()
             if raw_response:

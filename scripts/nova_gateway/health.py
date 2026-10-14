@@ -11,6 +11,7 @@ import time
 from nova_gateway.config import VERSION, STARTUP_GRACE
 from nova_gateway.context import GatewayContext
 from nova_gateway.agent import run_agent, _is_degraded
+from nova_gateway import overload
 
 log = logging.getLogger("nova_gateway_v2")
 
@@ -67,6 +68,9 @@ async def reload_config(ctx: GatewayContext) -> dict:
             if new_ttl and new_ttl != ctx.router.HEALTH_TTL:
                 changes.append(f"health_ttl: {ctx.router.HEALTH_TTL} -> {new_ttl}")
                 ctx.router.HEALTH_TTL = float(new_ttl)
+
+        if isinstance(cfg.get("overload"), dict):
+            changes += [f"overload.{c}" for c in overload.configure(cfg["overload"])]
 
         if "context_limits" in cfg:
             c = cfg["context_limits"]
@@ -133,6 +137,7 @@ async def health_server(ctx: GatewayContext):
             "uptime_s": int(time.time() - ctx.start_time),
             "last_reload": ctx.last_reload,
             "backends": router_status,
+            "overload": overload.snapshot(),   # shed / deadline_exceeded / retries_budget_denied / inflight
             "claude_active_task": ctx.claude_active_task,
             "claude_editing": ctx.claude_editing_files,
             "circuit_breakers": {

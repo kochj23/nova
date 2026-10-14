@@ -207,7 +207,8 @@ class TestRetry(unittest.TestCase):
         with patch.object(ag.asyncio, "sleep", sleeps):
             self.assertEqual(_run(ag._remember_exchange(ctx, "gw2:slack:C1", "chat", "a b c", "d")), "m9")
         self.assertEqual(ctx.http.post.call_count, 3)
-        self.assertEqual([c.args[0] for c in sleeps.call_args_list], [1, 2])
+        d = [c.args[0] for c in sleeps.call_args_list]   # jittered: ~1 s then ~2 s
+        self.assertEqual(len(d), 2); self.assertTrue(0.5 <= d[0] <= 1 and 1 <= d[1] <= 2, d)
 
     def test_memory_write_gives_up_loudly(self):
         ctx = _ctx(); ctx.http.post = AsyncMock(side_effect=ConnectionError("down"))
@@ -227,7 +228,8 @@ class TestRetry(unittest.TestCase):
                 patch.object(sl, "slack_post_message", post), patch.object(tl.asyncio, "sleep", sleeps):
             _run(tl._slack_notify(_ctx(), "approve p1?"))
         self.assertEqual(post.call_count, 3)
-        self.assertEqual([c.args[0] for c in sleeps.call_args_list], [1, 2])
+        d = [c.args[0] for c in sleeps.call_args_list]   # jittered: ~1 s then ~2 s
+        self.assertEqual(len(d), 2); self.assertTrue(0.5 <= d[0] <= 1 and 1 <= d[1] <= 2, d)
 
     def test_slack_notify_all_fail_is_logged(self):
         with patch("nova_gateway.config.keychain", return_value="tok"), \

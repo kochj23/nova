@@ -36,6 +36,7 @@ try:
 except Exception:                                # pragma: no cover
     _untrusted = None
 from nova_gateway.router import build_tools_payload
+from nova_gateway.overload import backoff_s
 
 log = logging.getLogger("nova_gateway_v2")
 
@@ -446,7 +447,7 @@ async def _remember_exchange(ctx: GatewayContext, session_id: str, agent_id: str
     who = "Jordan" if person == "jordan" else person.capitalize()
     text = f"{who}: {user_msg.strip()[:1200]}\nNova: {reply.strip()[:1200]}"
     last = ""
-    for attempt in (1, 2, 3):              # 3 tries, backoff 1 s then 2 s (7-category retry rule)
+    for attempt in (1, 2, 3):              # 3 tries, jittered backoff ~1 s then ~2 s (7-category retry rule)
         try:
             r = await ctx.http.post(
                 "http://memory-server.digitalnoise.net:18790/remember",
@@ -469,7 +470,7 @@ async def _remember_exchange(ctx: GatewayContext, session_id: str, agent_id: str
         except Exception as e:
             last = f"{type(e).__name__}: {e}"
         if attempt < 3:
-            await asyncio.sleep(attempt)
+            await asyncio.sleep(backoff_s(attempt + 1, base=0.5, cap=2.0))   # uniform [d/2, d], d = 1 s, 2 s
     log.warning(f"[{trace_id}] reflect-after memory write failed: {last}")
     return ""
 
@@ -705,6 +706,7 @@ async def _compact_if_needed(ctx: GatewayContext, session_id: str, agent_id: str
             max_tokens=300,
             private=True,  # Compaction contains conversation history — keep local
             ctx=ctx,
+            budget_s=30.0,  # bounded: on failure we just drop the oldest turns
         )
         compacted = [{"role": "system", "content": f"[Earlier context summary]\n{summary}"}]
         log.info(f"Compacted session {session_id}: {len(to_summarize)} turns -> summary")
@@ -1355,6 +1357,7 @@ async def do_agent_work(ctx: GatewayContext, message: str, session_id: str,
                     tokens=ctx.tokens,
                     ctx=ctx,
                     budget_s=max(5.0, deadline - time.time()),
+                    is_retry=True,  # spends process-wide retry budget (overload.py)
                 )
         except Exception:
             # Tool follow-up failed — return the text from the original LLM response
@@ -1435,7 +1438,7 @@ async def _rescue_reply(ctx: GatewayContext, history: list, message: str, privat
     try:
         out = await ctx.router.route(messages=turns + [{"role": "user", "content": message}], system=system,
                                      max_tokens=512, private=private, tokens=ctx.tokens, ctx=ctx,
-                                     budget_s=min(35.0, left - 3))
+                                     budget_s=min(35.0, left - 3), is_retry=True)
         out = (out or "").strip() if isinstance(out, str) else ""
         if out:
             log.warning(f"[{trace_id}] rescued by compact retry on {ctx.router.active_backend}")
