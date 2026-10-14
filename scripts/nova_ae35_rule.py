@@ -178,6 +178,15 @@ SOURCES = {  # name -> (sql, acted predicate on status, Jordan-witnessed predica
                 "WHERE ts > now() - make_interval(days => %s)",
 }
 ACTED = {"executed", "approved", "posted", "done", "ok", "success"}
+# Outbound posts are narration, not acts. Two kinds named a watcher without changing it (2026-10-13, queue
+# #3488-#3491): a post reporting that the guard REFUSED a change (the gate working, nothing acted), and a
+# watcher's own report of what it did to something else ("Big Brother Report ... Killed GPU hog").
+REFUSED_RX = re.compile(r"guard stopped me|stopped by (the )?guard|\b(blocked|refused|denied|vetoed)\b", re.I)
+OWN_REPORTERS = {"big_brother": re.compile(r"nova_big_brother|nova_self_repair_digest|nova_watchdog", re.I)}
+# ...and musings ("I found a thread about apps bypassing their own watchdogs"). A post counts as an act only when
+# Nova says SHE made the change: first person directly before the change verb.
+ACT_CLAIM_RX = re.compile(r"\b(?:I|I've|I have|I'm|I am|we|we've|we have)\s+(?:just\s+|now\s+)?" + CHANGE_RX.pattern[2:],
+                          re.I)
 
 
 def events(rows_by_source: dict, reg: dict) -> list:
@@ -186,11 +195,15 @@ def events(rows_by_source: dict, reg: dict) -> list:
     for src, rows in rows_by_source.items():
         for rid, ts, text, status, by in rows:
             for ch, cls in classify(text, reg):
+                if src == "outbound" and ch in OWN_REPORTERS and OWN_REPORTERS[ch].search(str(by or "")):
+                    continue        # the watcher reporting its own work, not a change to it
                 jordan = src == "coagency" and str(by or "").lower().startswith("jordan") \
                     and not NOT_A_WITNESS_RX.search(str(by))
+                acted = str(status or "").lower() in ACTED and not (
+                    src == "outbound" and (REFUSED_RX.search(text or "") or not ACT_CLAIM_RX.search(text or "")))
                 out.append({"source": src, "source_id": str(rid), "happened_at": ts, "channel": ch,
                             "change_class": cls, "status": status, "decided_by": by,
-                            "acted": str(status or "").lower() in ACTED, "witnessed": jordan,
+                            "acted": acted, "witnessed": jordan,
                             "excerpt": (text or "")[:300]})
     return out
 

@@ -159,6 +159,18 @@ class TestUnit(unittest.TestCase):
         self.assertFalse(A.witness_ok({"host": "h", "confirms": True}, []))
         self.assertTrue(A.witness_ok({"host": "h", "confirms": True}, ["h"]))
 
+    def test_outbound_reports_are_not_watcher_changes(self):
+        """2026-10-13 (#3488-#3491): a guard refusal and Big Brother's own reports were filed as unwitnessed changes."""
+        ev = A.events({"outbound": [
+            (381, None, ":octagonal_sign: Guard stopped me (redline): `Disable off_hours_auth alerting`. red line",
+             "posted", "nova_unclaimed_time.py"),
+            (536, None, "*Big Brother Report* GPU CONTENDED but no killable process", "posted", "nova_big_brother.py"),
+            (552, None, "What I fixed: Big Brother: 1 heal(s) -> Killed GPU hog(s)", "posted", "nova_self_repair_digest.py"),
+            (816, None, "[app watchdog] I found a thread about apps bypassing their own security watchdogs",
+             "posted", "nova_notify_jordan.py"),
+            (9, None, "I paused the kill switch for the night", "posted", "nova_unclaimed_time.py")]}, A.DEFAULT_CHANNELS)
+        self.assertEqual([(e["source_id"], e["acted"]) for e in ev], [("381", False), ("816", False), ("9", True)])
+
     def test_selftest(self):
         with mock.patch("builtins.print"):
             self.assertEqual(A.selftest(), 0)
