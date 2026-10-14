@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS slo_status (
     target           double precision,
     budget_remaining double precision,   -- 1.0 = untouched, 0 = spent, negative = overspent
     burn             jsonb,              -- {"5m": x, "30m": x, "1h": x, "6h": x, "3d": x}
-    state            text,               -- ok | ticket | page | no_data
+    state            text,               -- ok | ticket | page | stale | no_data
     PRIMARY KEY (name, at)
 );
 CREATE INDEX IF NOT EXISTS scheduler_runs_started ON scheduler_runs (started_at);
@@ -116,6 +116,11 @@ def budget_remaining(good, total, target):
     return 1 - (total - good) / (total * (1 - target))
 
 
+def is_stale(total_window, total_1h, window_days):
+    """An SLI that averages more than one event an hour, with none in the last hour, has gone blind. Pure."""
+    return total_1h == 0 and total_window > window_days * 24
+
+
 def evaluate(burns):
     """-> 'page' | 'ticket' | 'ok' from {window: burn}, by RULES. Pure."""
     for sev in ("page", "ticket"):
@@ -146,12 +151,15 @@ def run(dry_run=False):
     for name, desc, sql, target, wdays in cur.fetchall():
         try:
             good, total = _sli(cur, sql, now - timedelta(days=wdays), now)
-            burns = {w: round(burn_rate(*_sli(cur, sql, now - d, now), target), 3) for w, d in WINDOWS.items()}
+            counts = {w: _sli(cur, sql, now - d, now) for w, d in WINDOWS.items()}
+            burns = {w: round(burn_rate(g, t, target), 3) for w, (g, t) in counts.items()}
         except Exception as e:  # one bad SLI query must not stop the others
             conn.rollback() if not conn.autocommit else None
             print(f"[slo] {name}: SLI query failed: {e}", file=sys.stderr)
             continue
         state = evaluate(burns) if total else "no_data"
+        if is_stale(total, counts["1h"][1], wdays):
+            state = "stale"   # the SLI normally has hourly data and the last hour has none: monitoring is blind
         row = dict(name=name, desc=desc, good=good, total=total, target=target,
                    sli=(good / total) if total else None,
                    budget=budget_remaining(good, total, target), burn=burns, state=state)
@@ -162,7 +170,7 @@ def run(dry_run=False):
         cur.execute("INSERT INTO slo_status (name, at, good, total, sli, target, budget_remaining, burn, state) "
                     "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
                     (name, now, good, total, row["sli"], target, row["budget"], json.dumps(burns), state))
-        if state in ("page", "ticket"):
+        if state in ("page", "ticket", "stale"):
             _alert(row)
     conn.close()
     return out
@@ -170,6 +178,13 @@ def run(dry_run=False):
 
 def _alert(row):
     from nova_notify import notify
+    if row["state"] == "stale":
+        notify(f"SLO {row['name']} has no data for the last hour",
+               body=f"{row['desc']}. Its SLI normally has data every hour; whatever records it has stopped, "
+                    f"so this objective is unmonitored until it resumes.",
+               level="warning", category="slo", dedup_key=f"slo:{row['name']}:stale",
+               meta={"slo": row["name"]})
+        return
     page = row["state"] == "page"
     b = row["burn"]
     notify(f"SLO {row['name']} is burning its error budget{' fast' if page else ''}",

@@ -32,3 +32,9 @@ def test_seed_targets_valid():
     assert len(names) == len(set(names))
     for n, desc, sql, target, comps in s.SEED:
         assert 0 < target < 1 and "%(s)s" in sql and "%(e)s" in sql and comps
+
+
+def test_is_stale():
+    assert s.is_stale(13000, 0, 28) is True          # probe-fed SLI went quiet
+    assert s.is_stale(13000, 30, 28) is False
+    assert s.is_stale(28, 0, 28) is False            # daily SLI (morning BLUF): an empty hour is normal
