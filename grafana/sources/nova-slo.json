@@ -1,0 +1,355 @@
+{
+ "uid": "nova-slo",
+ "title": "Reliability \u2014 SLOs, error budgets, postmortems, toil",
+ "tags": [
+  "nova"
+ ],
+ "schemaVersion": 39,
+ "time": {
+  "from": "now-7d",
+  "to": "now"
+ },
+ "templating": {
+  "list": []
+ },
+ "panels": [
+  {
+   "type": "table",
+   "title": "Error budgets \u2014 service level objectives (28 days)",
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 24,
+    "h": 9
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT s.name AS \"Objective\", d.description AS \"What it means\", s.state AS \"State\",\n  round((s.sli*100)::numeric,3) AS \"SLI %\", round((s.target*100)::numeric,2) AS \"Target %\",\n  round((s.budget_remaining*100)::numeric,1) AS \"Budget left %\",\n  (s.burn->>'1h')::float AS \"Burn 1h\", (s.burn->>'6h')::float AS \"Burn 6h\", (s.burn->>'3d')::float AS \"Burn 3d\", s.total AS \"Events\"\n  FROM (SELECT DISTINCT ON (name) * FROM slo_status ORDER BY name, at DESC) s JOIN slo_definitions d USING (name) ORDER BY s.budget_remaining",
+     "refId": "A"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Budget left %"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-background"
+        }
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "red",
+           "value": null
+          },
+          {
+           "color": "orange",
+           "value": 0
+          },
+          {
+           "color": "yellow",
+           "value": 25
+          },
+          {
+           "color": "green",
+           "value": 50
+          }
+         ]
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "State"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-text"
+        }
+       },
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "type": "value",
+          "options": {
+           "ok": {
+            "color": "green"
+           },
+           "ticket": {
+            "color": "orange"
+           },
+           "page": {
+            "color": "red"
+           },
+           "stale": {
+            "color": "purple"
+           }
+          }
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "Error budget remaining (%)",
+   "gridPos": {
+    "x": 0,
+    "y": 9,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT at AS time, name AS metric, budget_remaining*100 AS value FROM slo_status WHERE $__timeFilter(at) ORDER BY at",
+     "refId": "A"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "custom": {
+      "lineWidth": 2
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "timeseries",
+   "title": "Burn rate, 1 hour (page at 14.4\u00d7)",
+   "gridPos": {
+    "x": 12,
+    "y": 9,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT at AS time, name AS metric, (burn->>'1h')::float AS value FROM slo_status WHERE $__timeFilter(at) ORDER BY at",
+     "refId": "A"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "lineWidth": 2,
+      "thresholdsStyle": {
+       "mode": "line"
+      }
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 1
+       },
+       {
+        "color": "red",
+        "value": 14.4
+       }
+      ]
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "stat",
+   "title": "Pages to #nova-alerts, last 24h (target < 10)",
+   "gridPos": {
+    "x": 0,
+    "y": 17,
+    "w": 6,
+    "h": 5
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(*) AS value FROM telemetry.events WHERE status='sent' AND channel='C0BMK83BLFJ' AND sent_at > now()-interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 10
+       },
+       {
+        "color": "red",
+        "value": 30
+       }
+      ]
+     }
+    },
+    "overrides": []
+   }
+  },
+  {
+   "type": "stat",
+   "title": "Production readiness",
+   "gridPos": {
+    "x": 6,
+    "y": 17,
+    "w": 6,
+    "h": 5
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT readiness_pct AS \"Ready %\", fully_ready AS \"Fully ready\", components AS \"Components\" FROM prr_history ORDER BY run_at DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "fields": "",
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Ready %"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "percent"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "type": "table",
+   "title": "Postmortems \u2014 open action items",
+   "gridPos": {
+    "x": 12,
+    "y": 17,
+    "w": 12,
+    "h": 10
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT a.created_at AS \"Filed\", a.kind AS \"Type\", a.description AS \"Action\", a.owner AS \"Owner\", a.queue_id AS \"Queue #\" FROM postmortem_actions a WHERE a.status='open' ORDER BY a.created_at DESC LIMIT 50",
+     "refId": "A"
+    }
+   ]
+  },
+  {
+   "type": "table",
+   "title": "Toil \u2014 top causes, last 7 days",
+   "gridPos": {
+    "x": 0,
+    "y": 22,
+    "w": 12,
+    "h": 5
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT cause_key AS \"Cause\", category AS \"Kind\", count(*) AS \"Events\", round(sum(minutes_estimate)) AS \"Est. minutes\" FROM toil_events WHERE human AND at > now()-interval '7 days' GROUP BY 1,2 ORDER BY 3 DESC LIMIT 10",
+     "refId": "A"
+    }
+   ]
+  }
+ ]
+}

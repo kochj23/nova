@@ -43,7 +43,7 @@
  "panels": [
   {
    "type": "row",
-   "title": "Nova Cluster",
+   "title": "Reliability \u2014 SLOs, error budgets, postmortems, toil",
    "collapsed": false,
    "panels": [],
    "gridPos": {
@@ -55,13 +55,371 @@
    "id": 1
   },
   {
+   "type": "table",
+   "title": "Error budgets \u2014 service level objectives (28 days)",
+   "gridPos": {
+    "x": 0,
+    "y": 1,
+    "w": 24,
+    "h": 9
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT s.name AS \"Objective\", d.description AS \"What it means\", s.state AS \"State\",\n  round((s.sli*100)::numeric,3) AS \"SLI %\", round((s.target*100)::numeric,2) AS \"Target %\",\n  round((s.budget_remaining*100)::numeric,1) AS \"Budget left %\",\n  (s.burn->>'1h')::float AS \"Burn 1h\", (s.burn->>'6h')::float AS \"Burn 6h\", (s.burn->>'3d')::float AS \"Burn 3d\", s.total AS \"Events\"\n  FROM (SELECT DISTINCT ON (name) * FROM slo_status ORDER BY name, at DESC) s JOIN slo_definitions d USING (name) ORDER BY s.budget_remaining",
+     "refId": "A"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Budget left %"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-background"
+        }
+       },
+       {
+        "id": "thresholds",
+        "value": {
+         "mode": "absolute",
+         "steps": [
+          {
+           "color": "red",
+           "value": null
+          },
+          {
+           "color": "orange",
+           "value": 0
+          },
+          {
+           "color": "yellow",
+           "value": 25
+          },
+          {
+           "color": "green",
+           "value": 50
+          }
+         ]
+        }
+       }
+      ]
+     },
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "State"
+      },
+      "properties": [
+       {
+        "id": "custom.cellOptions",
+        "value": {
+         "type": "color-text"
+        }
+       },
+       {
+        "id": "mappings",
+        "value": [
+         {
+          "type": "value",
+          "options": {
+           "ok": {
+            "color": "green"
+           },
+           "ticket": {
+            "color": "orange"
+           },
+           "page": {
+            "color": "red"
+           },
+           "stale": {
+            "color": "purple"
+           }
+          }
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   "id": 2
+  },
+  {
+   "type": "timeseries",
+   "title": "Error budget remaining (%)",
+   "gridPos": {
+    "x": 0,
+    "y": 10,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT at AS time, name AS metric, budget_remaining*100 AS value FROM slo_status WHERE $__timeFilter(at) ORDER BY at",
+     "refId": "A"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "custom": {
+      "lineWidth": 2
+     }
+    },
+    "overrides": []
+   },
+   "id": 3
+  },
+  {
+   "type": "timeseries",
+   "title": "Burn rate, 1 hour (page at 14.4\u00d7)",
+   "gridPos": {
+    "x": 12,
+    "y": 10,
+    "w": 12,
+    "h": 8
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "time_series",
+     "rawSql": "SELECT at AS time, name AS metric, (burn->>'1h')::float AS value FROM slo_status WHERE $__timeFilter(at) ORDER BY at",
+     "refId": "A"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "lineWidth": 2,
+      "thresholdsStyle": {
+       "mode": "line"
+      }
+     },
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 1
+       },
+       {
+        "color": "red",
+        "value": 14.4
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "id": 4
+  },
+  {
+   "type": "stat",
+   "title": "Pages to #nova-alerts, last 24h (target < 10)",
+   "gridPos": {
+    "x": 0,
+    "y": 18,
+    "w": 6,
+    "h": 5
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT count(*) AS value FROM telemetry.events WHERE status='sent' AND channel='C0BMK83BLFJ' AND sent_at > now()-interval '24 hours'",
+     "refId": "A"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 10
+       },
+       {
+        "color": "red",
+        "value": 30
+       }
+      ]
+     }
+    },
+    "overrides": []
+   },
+   "id": 5
+  },
+  {
+   "type": "stat",
+   "title": "Production readiness",
+   "gridPos": {
+    "x": 6,
+    "y": 18,
+    "w": 6,
+    "h": 5
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT readiness_pct AS \"Ready %\", fully_ready AS \"Fully ready\", components AS \"Components\" FROM prr_history ORDER BY run_at DESC LIMIT 1",
+     "refId": "A"
+    }
+   ],
+   "options": {
+    "reduceOptions": {
+     "fields": "",
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   },
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": [
+     {
+      "matcher": {
+       "id": "byName",
+       "options": "Ready %"
+      },
+      "properties": [
+       {
+        "id": "unit",
+        "value": "percent"
+       }
+      ]
+     }
+    ]
+   },
+   "id": 6
+  },
+  {
+   "type": "table",
+   "title": "Postmortems \u2014 open action items",
+   "gridPos": {
+    "x": 12,
+    "y": 18,
+    "w": 12,
+    "h": 10
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT a.created_at AS \"Filed\", a.kind AS \"Type\", a.description AS \"Action\", a.owner AS \"Owner\", a.queue_id AS \"Queue #\" FROM postmortem_actions a WHERE a.status='open' ORDER BY a.created_at DESC LIMIT 50",
+     "refId": "A"
+    }
+   ],
+   "id": 7
+  },
+  {
+   "type": "table",
+   "title": "Toil \u2014 top causes, last 7 days",
+   "gridPos": {
+    "x": 0,
+    "y": 23,
+    "w": 12,
+    "h": 5
+   },
+   "datasource": {
+    "type": "grafana-postgresql-datasource",
+    "uid": "nova-ops-pg"
+   },
+   "targets": [
+    {
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "format": "table",
+     "rawSql": "SELECT cause_key AS \"Cause\", category AS \"Kind\", count(*) AS \"Events\", round(sum(minutes_estimate)) AS \"Est. minutes\" FROM toil_events WHERE human AND at > now()-interval '7 days' GROUP BY 1,2 ORDER BY 3 DESC LIMIT 10",
+     "refId": "A"
+    }
+   ],
+   "id": 8
+  },
+  {
+   "type": "row",
+   "title": "Nova Cluster",
+   "collapsed": false,
+   "panels": [],
+   "gridPos": {
+    "x": 0,
+    "y": 28,
+    "w": 24,
+    "h": 1
+   },
+   "id": 9
+  },
+  {
    "gridPos": {
     "h": 2,
     "w": 7,
     "x": 0,
-    "y": 1
+    "y": 29
    },
-   "id": 2,
+   "id": 10,
    "options": {
     "content": "<div style=\"display:flex;align-items:baseline;gap:18px;padding:2px 6px 0 6px;font-family:Inter,system-ui,sans-serif\">\n<span style=\"font-size:34px;font-weight:800;letter-spacing:.06em;color:#cad3f5\">NOVA</span>\n<span style=\"font-size:34px;font-weight:300;color:#8b5cf6\">&mdash;</span>\n<span style=\"font-size:26px;font-weight:500;letter-spacing:.14em;color:#22d3ee\">CLUSTER</span>\n<span style=\"font-size:12px;color:#8087a2;margin-left:auto\">pg-primary &middot; nova_ops &middot; refresh 30 s</span>\n</div>",
     "mode": "html"
@@ -129,9 +487,9 @@
     "h": 2,
     "w": 13,
     "x": 7,
-    "y": 1
+    "y": 29
    },
-   "id": 3,
+   "id": 11,
    "options": {
     "colorMode": "value",
     "graphMode": "none",
@@ -196,9 +554,9 @@
     "h": 2,
     "w": 4,
     "x": 20,
-    "y": 1
+    "y": 29
    },
-   "id": 4,
+   "id": 12,
    "options": {
     "colorMode": "value",
     "graphMode": "none",
@@ -273,9 +631,9 @@
     "h": 5,
     "w": 4,
     "x": 0,
-    "y": 3
+    "y": 31
    },
-   "id": 5,
+   "id": 13,
    "options": {
     "colorMode": "background",
     "graphMode": "none",
@@ -348,9 +706,9 @@
     "h": 5,
     "w": 4,
     "x": 4,
-    "y": 3
+    "y": 31
    },
-   "id": 6,
+   "id": 14,
    "options": {
     "colorMode": "background",
     "graphMode": "area",
@@ -423,9 +781,9 @@
     "h": 5,
     "w": 4,
     "x": 8,
-    "y": 3
+    "y": 31
    },
-   "id": 7,
+   "id": 15,
    "options": {
     "colorMode": "background",
     "graphMode": "area",
@@ -498,9 +856,9 @@
     "h": 5,
     "w": 4,
     "x": 12,
-    "y": 3
+    "y": 31
    },
-   "id": 8,
+   "id": 16,
    "options": {
     "colorMode": "background",
     "graphMode": "area",
@@ -573,9 +931,9 @@
     "h": 5,
     "w": 4,
     "x": 16,
-    "y": 3
+    "y": 31
    },
-   "id": 9,
+   "id": 17,
    "options": {
     "colorMode": "background",
     "graphMode": "area",
@@ -640,9 +998,9 @@
     "h": 5,
     "w": 4,
     "x": 20,
-    "y": 3
+    "y": 31
    },
-   "id": 10,
+   "id": 18,
    "options": {
     "colorMode": "background",
     "graphMode": "area",
@@ -1102,9 +1460,9 @@
     "h": 9,
     "w": 11,
     "x": 0,
-    "y": 8
+    "y": 36
    },
-   "id": 11,
+   "id": 19,
    "options": {
     "cellHeight": "sm",
     "footer": {
@@ -1232,9 +1590,9 @@
     "h": 9,
     "w": 4,
     "x": 11,
-    "y": 8
+    "y": 36
    },
-   "id": 12,
+   "id": 20,
    "options": {
     "cellHeight": "sm",
     "footer": {
@@ -1313,9 +1671,9 @@
     "h": 9,
     "w": 9,
     "x": 15,
-    "y": 8
+    "y": 36
    },
-   "id": 13,
+   "id": 21,
    "options": {
     "colorMode": "background_gradient",
     "graphMode": "none",
@@ -1491,9 +1849,9 @@
     "h": 4,
     "w": 8,
     "x": 0,
-    "y": 17
+    "y": 45
    },
-   "id": 14,
+   "id": 22,
    "options": {
     "legend": {
      "calcs": [],
@@ -1572,9 +1930,9 @@
     "h": 7,
     "w": 8,
     "x": 0,
-    "y": 21
+    "y": 49
    },
-   "id": 15,
+   "id": 23,
    "options": {
     "colorMode": "background_gradient",
     "graphMode": "none",
@@ -1681,9 +2039,9 @@
     "h": 4,
     "w": 8,
     "x": 8,
-    "y": 17
+    "y": 45
    },
-   "id": 16,
+   "id": 24,
    "options": {
     "legend": {
      "calcs": [],
@@ -1861,9 +2219,9 @@
     "h": 7,
     "w": 8,
     "x": 8,
-    "y": 21
+    "y": 49
    },
-   "id": 17,
+   "id": 25,
    "options": {
     "cellHeight": "sm",
     "footer": {
@@ -1933,9 +2291,9 @@
     "h": 4,
     "w": 8,
     "x": 16,
-    "y": 17
+    "y": 45
    },
-   "id": 18,
+   "id": 26,
    "options": {
     "minVizHeight": 75,
     "minVizWidth": 75,
@@ -2003,9 +2361,9 @@
     "h": 4,
     "w": 8,
     "x": 16,
-    "y": 21
+    "y": 49
    },
-   "id": 19,
+   "id": 27,
    "options": {
     "displayMode": "gradient",
     "maxVizHeight": 24,
@@ -2103,9 +2461,9 @@
     "h": 3,
     "w": 8,
     "x": 16,
-    "y": 25
+    "y": 53
    },
-   "id": 20,
+   "id": 28,
    "options": {
     "colorMode": "background_solid",
     "graphMode": "none",
@@ -2149,11 +2507,11 @@
    "panels": [],
    "gridPos": {
     "x": 0,
-    "y": 28,
+    "y": 56,
     "w": 24,
     "h": 1
    },
-   "id": 21
+   "id": 29
   },
   {
    "datasource": {
@@ -2175,9 +2533,9 @@
     "h": 9,
     "w": 12,
     "x": 0,
-    "y": 29
+    "y": 57
    },
-   "id": 22,
+   "id": 30,
    "options": {
     "legend": {
      "calcs": [
@@ -2224,9 +2582,9 @@
     "h": 9,
     "w": 12,
     "x": 12,
-    "y": 29
+    "y": 57
    },
-   "id": 23,
+   "id": 31,
    "options": {
     "legend": {
      "calcs": [
@@ -2288,9 +2646,9 @@
     "h": 8,
     "w": 12,
     "x": 0,
-    "y": 38
+    "y": 66
    },
-   "id": 24,
+   "id": 32,
    "options": {
     "displayMode": "gradient",
     "orientation": "horizontal",
@@ -2348,9 +2706,9 @@
     "h": 8,
     "w": 12,
     "x": 12,
-    "y": 38
+    "y": 66
    },
-   "id": 25,
+   "id": 33,
    "options": {
     "displayMode": "gradient",
     "orientation": "horizontal",
@@ -2384,9 +2742,9 @@
     "h": 9,
     "w": 24,
     "x": 0,
-    "y": 46
+    "y": 74
    },
-   "id": 26,
+   "id": 34,
    "options": {
     "showHeader": true
    },
@@ -2407,9 +2765,9 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 55
+    "y": 83
    },
-   "id": 27,
+   "id": 35,
    "panels": [],
    "title": "Capacity & Headroom",
    "type": "row"
@@ -2427,9 +2785,9 @@
     "h": 9,
     "w": 24,
     "x": 0,
-    "y": 56
+    "y": 84
    },
-   "id": 28,
+   "id": 36,
    "options": {
     "showHeader": true
    },
@@ -2466,9 +2824,9 @@
     "h": 8,
     "w": 8,
     "x": 0,
-    "y": 65
+    "y": 93
    },
-   "id": 29,
+   "id": 37,
    "options": {
     "legend": {
      "calcs": [
@@ -2515,9 +2873,9 @@
     "h": 8,
     "w": 8,
     "x": 8,
-    "y": 65
+    "y": 93
    },
-   "id": 30,
+   "id": 38,
    "options": {
     "legend": {
      "calcs": [
@@ -2564,9 +2922,9 @@
     "h": 8,
     "w": 8,
     "x": 16,
-    "y": 65
+    "y": 93
    },
-   "id": 31,
+   "id": 39,
    "options": {
     "legend": {
      "calcs": [
@@ -2630,9 +2988,9 @@
     "h": 8,
     "w": 12,
     "x": 0,
-    "y": 73
+    "y": 101
    },
-   "id": 32,
+   "id": 40,
    "options": {
     "legend": {
      "displayMode": "list",
@@ -2684,9 +3042,9 @@
     "h": 4,
     "w": 6,
     "x": 12,
-    "y": 73
+    "y": 101
    },
-   "id": 33,
+   "id": 41,
    "options": {
     "colorMode": "background",
     "reduceOptions": {
@@ -2737,9 +3095,9 @@
     "h": 4,
     "w": 6,
     "x": 18,
-    "y": 73
+    "y": 101
    },
-   "id": 34,
+   "id": 42,
    "options": {
     "colorMode": "value",
     "reduceOptions": {
@@ -2772,9 +3130,9 @@
     "h": 8,
     "w": 12,
     "x": 12,
-    "y": 77
+    "y": 105
    },
-   "id": 35,
+   "id": 43,
    "options": {
     "showHeader": true
    },
@@ -2804,9 +3162,9 @@
     "h": 8,
     "w": 12,
     "x": 0,
-    "y": 81
+    "y": 109
    },
-   "id": 36,
+   "id": 44,
    "options": {
     "legend": {
      "displayMode": "table",
@@ -2839,9 +3197,9 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 89
+    "y": 117
    },
-   "id": 37,
+   "id": 45,
    "panels": [],
    "title": "Backups",
    "type": "row"
@@ -2892,9 +3250,9 @@
     "h": 5,
     "w": 6,
     "x": 0,
-    "y": 90
+    "y": 118
    },
-   "id": 38,
+   "id": 46,
    "options": {
     "colorMode": "background",
     "graphMode": "none",
@@ -2953,9 +3311,9 @@
     "h": 5,
     "w": 6,
     "x": 6,
-    "y": 90
+    "y": 118
    },
-   "id": 39,
+   "id": 47,
    "options": {
     "colorMode": "background",
     "graphMode": "none",
@@ -3008,9 +3366,9 @@
     "h": 5,
     "w": 6,
     "x": 12,
-    "y": 90
+    "y": 118
    },
-   "id": 40,
+   "id": 48,
    "options": {
     "colorMode": "value",
     "graphMode": "none",
@@ -3063,9 +3421,9 @@
     "h": 5,
     "w": 6,
     "x": 18,
-    "y": 90
+    "y": 118
    },
-   "id": 41,
+   "id": 49,
    "options": {
     "colorMode": "background",
     "graphMode": "none",
@@ -3106,9 +3464,9 @@
     "h": 8,
     "w": 12,
     "x": 0,
-    "y": 95
+    "y": 123
    },
-   "id": 42,
+   "id": 50,
    "options": {
     "legend": {
      "displayMode": "list",
@@ -3165,9 +3523,9 @@
     "h": 8,
     "w": 12,
     "x": 12,
-    "y": 95
+    "y": 123
    },
-   "id": 43,
+   "id": 51,
    "options": {
     "legend": {
      "displayMode": "list",
@@ -3220,9 +3578,9 @@
     "h": 8,
     "w": 24,
     "x": 0,
-    "y": 103
+    "y": 131
    },
-   "id": 44,
+   "id": 52,
    "options": {
     "showHeader": true,
     "sortBy": [
@@ -3250,11 +3608,11 @@
    "panels": [],
    "gridPos": {
     "x": 0,
-    "y": 111,
+    "y": 139,
     "w": 24,
     "h": 1
    },
-   "id": 45
+   "id": 53
   },
   {
    "datasource": {
@@ -3283,7 +3641,7 @@
     "h": 4,
     "w": 6,
     "x": 0,
-    "y": 112
+    "y": 140
    },
    "options": {
     "colorMode": "value",
@@ -3309,7 +3667,7 @@
    ],
    "title": "Services UP now",
    "type": "stat",
-   "id": 46
+   "id": 54
   },
   {
    "datasource": {
@@ -3342,7 +3700,7 @@
     "h": 4,
     "w": 6,
     "x": 6,
-    "y": 112
+    "y": 140
    },
    "options": {
     "colorMode": "value",
@@ -3368,7 +3726,7 @@
    ],
    "title": "Services DOWN now",
    "type": "stat",
-   "id": 47
+   "id": 55
   },
   {
    "datasource": {
@@ -3405,7 +3763,7 @@
     "h": 4,
     "w": 6,
     "x": 12,
-    "y": 112
+    "y": 140
    },
    "options": {
     "colorMode": "value",
@@ -3431,7 +3789,7 @@
    ],
    "title": "Overall availability (range)",
    "type": "stat",
-   "id": 48
+   "id": 56
   },
   {
    "datasource": {
@@ -3460,7 +3818,7 @@
     "h": 4,
     "w": 6,
     "x": 18,
-    "y": 112
+    "y": 140
    },
    "options": {
     "colorMode": "value",
@@ -3486,7 +3844,7 @@
    ],
    "title": "Avg check latency now (ms)",
    "type": "stat",
-   "id": 49
+   "id": 57
   },
   {
    "datasource": {
@@ -3510,7 +3868,7 @@
     "h": 9,
     "w": 12,
     "x": 0,
-    "y": 116
+    "y": 144
    },
    "options": {
     "legend": {
@@ -3540,7 +3898,7 @@
    ],
    "title": "Service check latency (ms) \u2014 top services",
    "type": "timeseries",
-   "id": 50
+   "id": 58
   },
   {
    "datasource": {
@@ -3564,7 +3922,7 @@
     "h": 9,
     "w": 12,
     "x": 12,
-    "y": 116
+    "y": 144
    },
    "options": {
     "legend": {
@@ -3594,7 +3952,7 @@
    ],
    "title": "SLA uptime % over time (by service)",
    "type": "timeseries",
-   "id": 51
+   "id": 59
   },
   {
    "datasource": {
@@ -3609,7 +3967,7 @@
     "h": 10,
     "w": 12,
     "x": 0,
-    "y": 125
+    "y": 153
    },
    "options": {},
    "targets": [
@@ -3627,7 +3985,7 @@
    ],
    "title": "Current health (per service)",
    "type": "table",
-   "id": 52
+   "id": 60
   },
   {
    "datasource": {
@@ -3647,7 +4005,7 @@
     "h": 10,
     "w": 12,
     "x": 12,
-    "y": 125
+    "y": 153
    },
    "options": {
     "displayMode": "gradient",
@@ -3669,7 +4027,7 @@
    ],
    "title": "Uptime % per service (range)",
    "type": "bargauge",
-   "id": 53
+   "id": 61
   },
   {
    "type": "row",
@@ -3678,11 +4036,11 @@
    "panels": [],
    "gridPos": {
     "x": 0,
-    "y": 135,
+    "y": 163,
     "w": 24,
     "h": 1
    },
-   "id": 54
+   "id": 62
   },
   {
    "datasource": {
@@ -3718,9 +4076,9 @@
     "h": 5,
     "w": 4,
     "x": 0,
-    "y": 136
+    "y": 164
    },
-   "id": 55,
+   "id": 63,
    "targets": [
     {
      "datasource": {
@@ -3760,9 +4118,9 @@
     "h": 5,
     "w": 4,
     "x": 4,
-    "y": 136
+    "y": 164
    },
-   "id": 56,
+   "id": 64,
    "targets": [
     {
      "datasource": {
@@ -3802,9 +4160,9 @@
     "h": 5,
     "w": 4,
     "x": 8,
-    "y": 136
+    "y": 164
    },
-   "id": 57,
+   "id": 65,
    "targets": [
     {
      "datasource": {
@@ -3845,9 +4203,9 @@
     "h": 5,
     "w": 4,
     "x": 12,
-    "y": 136
+    "y": 164
    },
-   "id": 58,
+   "id": 66,
    "targets": [
     {
      "datasource": {
@@ -3888,9 +4246,9 @@
     "h": 5,
     "w": 4,
     "x": 16,
-    "y": 136
+    "y": 164
    },
-   "id": 59,
+   "id": 67,
    "targets": [
     {
      "datasource": {
@@ -3931,9 +4289,9 @@
     "h": 5,
     "w": 4,
     "x": 20,
-    "y": 136
+    "y": 164
    },
-   "id": 60,
+   "id": 68,
    "targets": [
     {
      "datasource": {
@@ -3971,9 +4329,9 @@
     "h": 9,
     "w": 12,
     "x": 0,
-    "y": 141
+    "y": 169
    },
-   "id": 61,
+   "id": 69,
    "targets": [
     {
      "datasource": {
@@ -4012,9 +4370,9 @@
     "h": 9,
     "w": 12,
     "x": 12,
-    "y": 141
+    "y": 169
    },
-   "id": 62,
+   "id": 70,
    "targets": [
     {
      "datasource": {
@@ -4052,9 +4410,9 @@
     "h": 9,
     "w": 12,
     "x": 0,
-    "y": 150
+    "y": 178
    },
-   "id": 63,
+   "id": 71,
    "targets": [
     {
      "datasource": {
@@ -4089,9 +4447,9 @@
     "h": 9,
     "w": 12,
     "x": 12,
-    "y": 150
+    "y": 178
    },
-   "id": 64,
+   "id": 72,
    "targets": [
     {
      "datasource": {
@@ -4122,11 +4480,11 @@
    "panels": [],
    "gridPos": {
     "x": 0,
-    "y": 159,
+    "y": 187,
     "w": 24,
     "h": 1
    },
-   "id": 65
+   "id": 73
   },
   {
    "datasource": {
@@ -4176,9 +4534,9 @@
     "h": 8,
     "w": 12,
     "x": 0,
-    "y": 160
+    "y": 188
    },
-   "id": 66,
+   "id": 74,
    "options": {
     "showHeader": true
    },
@@ -4250,9 +4608,9 @@
     "h": 8,
     "w": 12,
     "x": 12,
-    "y": 160
+    "y": 188
    },
-   "id": 67,
+   "id": 75,
    "options": {
     "showHeader": true
    },
@@ -4287,9 +4645,9 @@
     "h": 8,
     "w": 16,
     "x": 0,
-    "y": 168
+    "y": 196
    },
-   "id": 68,
+   "id": 76,
    "options": {
     "legend": {
      "calcs": [
@@ -4360,9 +4718,9 @@
     "h": 8,
     "w": 8,
     "x": 16,
-    "y": 168
+    "y": 196
    },
-   "id": 69,
+   "id": 77,
    "options": {
     "colorMode": "background",
     "graphMode": "none",
@@ -4409,9 +4767,9 @@
     "h": 8,
     "w": 24,
     "x": 0,
-    "y": 176
+    "y": 204
    },
-   "id": 70,
+   "id": 78,
    "options": {
     "legend": {
      "displayMode": "list",
@@ -4439,11 +4797,11 @@
    "panels": [],
    "gridPos": {
     "x": 0,
-    "y": 184,
+    "y": 212,
     "w": 24,
     "h": 1
    },
-   "id": 71
+   "id": 79
   },
   {
    "datasource": {
@@ -4627,9 +4985,9 @@
     "h": 13,
     "w": 24,
     "x": 0,
-    "y": 185
+    "y": 213
    },
-   "id": 72,
+   "id": 80,
    "options": {
     "showHeader": true,
     "sortBy": []
@@ -4695,9 +5053,9 @@
     "h": 6,
     "w": 24,
     "x": 0,
-    "y": 198
+    "y": 226
    },
-   "id": 73,
+   "id": 81,
    "options": {
     "showHeader": true
    },
@@ -4735,9 +5093,9 @@
     "h": 10,
     "w": 12,
     "x": 0,
-    "y": 204
+    "y": 232
    },
-   "id": 74,
+   "id": 82,
    "options": {
     "legend": {
      "calcs": [
@@ -4786,9 +5144,9 @@
     "h": 10,
     "w": 12,
     "x": 12,
-    "y": 204
+    "y": 232
    },
-   "id": 75,
+   "id": 83,
    "options": {
     "legend": {
      "calcs": [
@@ -4840,9 +5198,9 @@
     "h": 5,
     "w": 8,
     "x": 0,
-    "y": 214
+    "y": 242
    },
-   "id": 76,
+   "id": 84,
    "options": {
     "colorMode": "value",
     "graphMode": "none",
@@ -4896,9 +5254,9 @@
     "h": 5,
     "w": 8,
     "x": 8,
-    "y": 214
+    "y": 242
    },
-   "id": 77,
+   "id": 85,
    "options": {
     "colorMode": "background",
     "graphMode": "none",
@@ -4948,9 +5306,9 @@
     "h": 5,
     "w": 8,
     "x": 16,
-    "y": 214
+    "y": 242
    },
-   "id": 78,
+   "id": 86,
    "options": {
     "colorMode": "value",
     "graphMode": "none",
@@ -4983,11 +5341,11 @@
    "panels": [],
    "gridPos": {
     "x": 0,
-    "y": 219,
+    "y": 247,
     "w": 24,
     "h": 1
    },
-   "id": 79
+   "id": 87
   },
   {
    "collapsed": false,
@@ -4995,9 +5353,9 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 220
+    "y": 248
    },
-   "id": 80,
+   "id": 88,
    "panels": [],
    "title": "Signal vs Noise",
    "type": "row"
@@ -5026,9 +5384,9 @@
     "h": 8,
     "w": 12,
     "x": 0,
-    "y": 221
+    "y": 249
    },
-   "id": 81,
+   "id": 89,
    "options": {
     "legend": {
      "calcs": [
@@ -5074,9 +5432,9 @@
     "h": 4,
     "w": 6,
     "x": 12,
-    "y": 221
+    "y": 249
    },
-   "id": 82,
+   "id": 90,
    "options": {
     "colorMode": "value",
     "graphMode": "area",
@@ -5118,9 +5476,9 @@
     "h": 4,
     "w": 6,
     "x": 18,
-    "y": 221
+    "y": 249
    },
-   "id": 83,
+   "id": 91,
    "options": {
     "colorMode": "value",
     "graphMode": "area",
@@ -5167,9 +5525,9 @@
     "h": 8,
     "w": 12,
     "x": 12,
-    "y": 225
+    "y": 253
    },
-   "id": 84,
+   "id": 92,
    "options": {
     "legend": {
      "calcs": [
@@ -5214,9 +5572,9 @@
     "h": 8,
     "w": 12,
     "x": 0,
-    "y": 229
+    "y": 257
    },
-   "id": 85,
+   "id": 93,
    "options": {
     "showHeader": true
    },
@@ -5237,9 +5595,9 @@
     "h": 1,
     "w": 24,
     "x": 0,
-    "y": 237
+    "y": 265
    },
-   "id": 86,
+   "id": 94,
    "panels": [],
    "title": "Alert-source health",
    "type": "row"
@@ -5259,9 +5617,9 @@
     "h": 8,
     "w": 8,
     "x": 0,
-    "y": 238
+    "y": 266
    },
-   "id": 87,
+   "id": 95,
    "options": {
     "legend": {
      "displayMode": "table",
@@ -5308,9 +5666,9 @@
     "h": 8,
     "w": 16,
     "x": 8,
-    "y": 238
+    "y": 266
    },
-   "id": 88,
+   "id": 96,
    "options": {
     "showHeader": true
    },
@@ -5340,9 +5698,9 @@
     "h": 8,
     "w": 8,
     "x": 0,
-    "y": 246
+    "y": 274
    },
-   "id": 89,
+   "id": 97,
    "options": {
     "legend": {
      "displayMode": "table",
@@ -5389,9 +5747,9 @@
     "h": 8,
     "w": 16,
     "x": 8,
-    "y": 246
+    "y": 274
    },
-   "id": 90,
+   "id": 98,
    "options": {
     "showHeader": true
    },
@@ -5425,9 +5783,9 @@
     "h": 8,
     "w": 6,
     "x": 0,
-    "y": 254
+    "y": 282
    },
-   "id": 91,
+   "id": 99,
    "options": {
     "colorMode": "value",
     "graphMode": "area",
@@ -5468,9 +5826,9 @@
     "h": 8,
     "w": 18,
     "x": 6,
-    "y": 254
+    "y": 282
    },
-   "id": 92,
+   "id": 100,
    "options": {
     "showHeader": true
    },
@@ -5492,11 +5850,11 @@
    "panels": [],
    "gridPos": {
     "x": 0,
-    "y": 262,
+    "y": 290,
     "w": 24,
     "h": 1
    },
-   "id": 93
+   "id": 101
   },
   {
    "datasource": {
@@ -5522,9 +5880,9 @@
     "h": 8,
     "w": 12,
     "x": 0,
-    "y": 263
+    "y": 291
    },
-   "id": 94,
+   "id": 102,
    "options": {
     "legend": {
      "displayMode": "list",
@@ -5560,9 +5918,9 @@
     "h": 8,
     "w": 12,
     "x": 12,
-    "y": 263
+    "y": 291
    },
-   "id": 95,
+   "id": 103,
    "options": {
     "legend": {
      "displayMode": "list",
@@ -5609,9 +5967,9 @@
     "h": 8,
     "w": 12,
     "x": 0,
-    "y": 271
+    "y": 299
    },
-   "id": 96,
+   "id": 104,
    "options": {
     "legend": {
      "calcs": [
@@ -5670,9 +6028,9 @@
     "h": 4,
     "w": 6,
     "x": 12,
-    "y": 271
+    "y": 299
    },
-   "id": 97,
+   "id": 105,
    "options": {
     "colorMode": "value",
     "graphMode": "none",
@@ -5729,9 +6087,9 @@
     "h": 4,
     "w": 6,
     "x": 18,
-    "y": 271
+    "y": 299
    },
-   "id": 98,
+   "id": 106,
    "options": {
     "colorMode": "value",
     "graphMode": "none",
@@ -5772,9 +6130,9 @@
     "h": 8,
     "w": 12,
     "x": 12,
-    "y": 275
+    "y": 303
    },
-   "id": 99,
+   "id": 107,
    "options": {
     "legend": {
      "displayMode": "list",
@@ -5814,9 +6172,9 @@
     "h": 8,
     "w": 12,
     "x": 0,
-    "y": 279
+    "y": 307
    },
-   "id": 100,
+   "id": 108,
    "options": {
     "legend": {
      "displayMode": "list",
@@ -5849,9 +6207,9 @@
     "h": 8,
     "w": 12,
     "x": 12,
-    "y": 283
+    "y": 311
    },
-   "id": 101,
+   "id": 109,
    "options": {
     "showHeader": true
    },
@@ -5879,9 +6237,9 @@
     "h": 8,
     "w": 12,
     "x": 0,
-    "y": 287
+    "y": 315
    },
-   "id": 102,
+   "id": 110,
    "options": {
     "showHeader": true
    },
@@ -5909,9 +6267,9 @@
     "h": 8,
     "w": 12,
     "x": 12,
-    "y": 291
+    "y": 319
    },
-   "id": 103,
+   "id": 111,
    "options": {
     "showHeader": true
    },
@@ -5939,5 +6297,5 @@
    "keepTime": true
   }
  ],
- "description": "Generated by scripts/nova_grafana_consolidate.py from grafana/sources: nova-cluster, nova-hosts-fleet, fleet-health, nova-kpis, nova-probes-uptime, nova-components, nova-signal-health, nova-notifications-incidents. Edit the sources, not this file."
+ "description": "Generated by scripts/nova_grafana_consolidate.py from grafana/sources: nova-slo, nova-cluster, nova-hosts-fleet, fleet-health, nova-kpis, nova-probes-uptime, nova-components, nova-signal-health, nova-notifications-incidents. Edit the sources, not this file."
 }

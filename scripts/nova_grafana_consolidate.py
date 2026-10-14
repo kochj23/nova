@@ -22,7 +22,7 @@ import sys
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "grafana")
 PAGES = [   # (uid, title, default range, [source uids in order])
     ("nova-fleet", "Fleet & Platform", "now-24h",
-     ["nova-cluster", "nova-hosts-fleet", "fleet-health", "nova-kpis", "nova-probes-uptime", "nova-components",
+     ["nova-slo", "nova-cluster", "nova-hosts-fleet", "fleet-health", "nova-kpis", "nova-probes-uptime", "nova-components",
       "nova-signal-health", "nova-notifications-incidents"]),
     ("nova-home", "Home", "now-24h",
      ["nova-home-overview", "nova-home-sensors", "nova-home-environment", "nova-home-sensors-ha", "homekit-sensors",
