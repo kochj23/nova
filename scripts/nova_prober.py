@@ -426,7 +426,10 @@ def main():
     all_ok = sweep(quiet=args.quiet)
     if not args.quiet:
         print("RESULT:", "all probes passed" if all_ok else "ONE OR MORE PROBES FAILED")
-    return 0 if all_ok else 1
+    # A failed probe is data (recorded, alerted, read by nova_slo), not a failed job. Exiting non-zero
+    # let the scheduler dead-letter the prober after 10 bad sweeps — it went blind at 17:36 on
+    # 2026-10-13 exactly while embeddings were down. Only a sweep that could not run is a failure.
+    return 0
 
 
 if __name__ == "__main__":

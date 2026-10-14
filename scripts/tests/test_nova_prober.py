@@ -208,7 +208,7 @@ class TestFunctional(_Base):
         with patch.object(pr, "PROBES", specs), patch.object(pr, "_ops_conn", return_value=_Conn(prev=True)), \
              patch.object(pr.time, "time", side_effect=lambda: next(clock)), \
              patch.object(sys, "argv", ["nova_prober.py", "--quiet"]):
-            self.assertEqual(pr.main(), 1)
+            self.assertEqual(pr.main(), 0)   # a failed probe is recorded + alerted, never a failed job
         self.assertEqual(pr.notify.call_args[0][0], "PROBE FAIL: bad @ h")
         with patch.object(pr, "PROBES", specs[:1]), patch.object(pr, "_ops_conn", return_value=_Conn(prev=True)), \
              patch.object(pr.time, "time", side_effect=iter([0.0, 1.0]).__next__), \
