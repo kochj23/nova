@@ -160,6 +160,30 @@ class TestUnit(unittest.TestCase):
         self.assertEqual([f["level"] for f in out], ["warning"])
         self.assertIn("(rootcheck)", out[0]["title"])
 
+    def test_firmware_rule_ignores_rootcheck_hit_inside_container_layer(self):
+        rk = _ev(desc="Host-based anomaly detection event (rootcheck).", groups=("rootcheck",),
+                 log="Rootkit 'LRK' detected by the presence of file '/var/lib/docker/rootfs/overlayfs/ab/home/"
+                     "pentester/go/pkg/mod/x/rootkit'")
+        host_rk = _ev(desc="rootkit file found", log="/lib/modules/evil.ko", groups=("rootcheck",))
+        conn = _Conn([("rule_groups && ARRAY['dpkg'", []), ("syscheck", [rk, host_rk])])
+        out = v7.rule_firmware_tamper(conn)
+        self.assertEqual(len(out), 1)
+        self.assertIn("(rootcheck)", out[0]["title"])
+
+    def test_firmware_rule_scheduled_fim_looks_back_a_scan_interval(self):
+        sched = _ev(desc="Integrity checksum changed.", log="File '/boot/initrd.img-7.0.0-38-generic' modified Mode: scheduled")
+        rt = _ev(desc="Integrity checksum changed.", log="File '/boot/grub/grub.cfg' modified Mode: realtime")
+        seen = []
+
+        def dpkg(params):
+            seen.append(params[2])
+            return [(1,)] if params[2] == "12 hours" else []   # the 06:31 apt run, 3.5h before the 10:03 scan
+        conn = _Conn([("rule_groups && ARRAY['dpkg'", dpkg), ("syscheck", [sched, rt])])
+        out = v7.rule_firmware_tamper(conn)
+        self.assertEqual(seen, ["12 hours", "12 min"])
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["level"], "info")
+
     def test_antiforensic_regex(self):
         conn = _Conn([("security_events", [_ev(desc="auditd service stopped"), _ev(desc="user logged in")])])
         out = v7.rule_antiforensic_gap(conn)

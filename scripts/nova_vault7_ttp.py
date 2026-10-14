@@ -123,6 +123,10 @@ def _recently_alerted(conn, dedup_key, hours=24) -> bool:
 _FW_RE = re.compile(r"(/boot|/efi|efi|firmware|grub|initramfs|initrd|vmlinuz|"
                     r"kernel\s*module|\.ko\b|rootkit|bootloader|uboot|u-boot)", re.I)
 
+_CONTAINER_RE = re.compile(r"/var/lib/(docker|containerd|containers)/", re.I)
+SCHEDULED_FIM_LOOKBACK = "12 hours"   # = syscheck <frequency>43200</frequency> on the fleet
+
+
 def rule_firmware_tamper(conn):
     findings = []
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as c:
@@ -136,13 +140,21 @@ def rule_firmware_tamper(conn):
             if not _FW_RE.search(blob):
                 continue
             is_rootkit = "rootcheck" in (e["rule_groups"] or [])
-            # A dpkg/apt op on the same host in the same window explains a legit
-            # FIM change (kernel/firmware package update) — not an implant.
+            # A rootcheck signature hit on a file inside a container image layer is the
+            # container's content (2026-10: an LRK name match in a pentest image's vendored
+            # Go module cache), not the host's boot/firmware — out of this rule's scope.
+            if is_rootkit and _CONTAINER_RE.search(blob):
+                continue
+            # A dpkg/apt op on the same host explains a legit FIM change (kernel/firmware
+            # package update, dracut/initramfs trigger) — not an implant. A *scheduled* FIM
+            # scan reports up to one syscheck interval (12h) after the change, so look back
+            # that far; realtime/whodata changes keep the tight +-12 min window.
+            back = SCHEDULED_FIM_LOOKBACK if "Mode: scheduled" in blob else "12 min"
             c2 = conn.cursor()
             c2.execute("SELECT 1 FROM security_events WHERE agent_name=%s "
                        "AND rule_groups && ARRAY['dpkg','config_changed'] "
-                       "AND ts BETWEEN %s - interval '12 min' AND %s + interval '12 min' LIMIT 1",
-                       (e["agent_name"], e["ts"], e["ts"]))
+                       "AND ts BETWEEN %s - %s::interval AND %s + interval '12 min' LIMIT 1",
+                       (e["agent_name"], e["ts"], back, e["ts"]))
             explained = c2.fetchone() is not None
             c2.close()
             if explained and not is_rootkit:
