@@ -322,3 +322,9 @@ class TestFrame(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_scheduled_jobs_slo_covers_every_task():
+    rows = [{"name": "scheduled_jobs", "components": ["nova_scheduler", "scheduler:*"], "enabled": True}]
+    assert prr.check_slo(rows, ["name", "components", "enabled"], ["some_task"], "task")[0] is True
+    assert prr.check_slo(rows, ["name", "components", "enabled"], ["some_service"], "service")[0] is False

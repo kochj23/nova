@@ -94,7 +94,7 @@ SEED = [  # (name, description, sli_sql, target, components)
      """SELECT count(*) FILTER (WHERE status = 'success'), count(*) FROM scheduler_runs
         WHERE status IN ('success', 'failure', 'timeout', 'orphaned')
           AND started_at >= extract(epoch FROM %(s)s) * 1000 AND started_at < extract(epoch FROM %(e)s) * 1000""",
-     0.98, ["nova_scheduler"]),
+     0.98, ["nova_scheduler", "scheduler:*"]),   # scheduler:* = covers every scheduled task (nova_prr)
     ("alert_delivery", "Notifications reach Slack (no delivery errors)",
      """SELECT count(*) FILTER (WHERE status <> 'error'), count(*) FROM telemetry.events
         WHERE status IN ('sent', 'suppressed', 'rollup', 'error') AND ts >= %(s)s AND ts < %(e)s""",

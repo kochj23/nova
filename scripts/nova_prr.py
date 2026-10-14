@@ -338,12 +338,17 @@ def slo_cover_columns(cols) -> list:
     return picked or list(cols)
 
 
-def check_slo(slo_rows, cols, names) -> tuple:
-    """slo_rows None = table absent -> n/a. Else pass if any covering column mentions any name."""
+def check_slo(slo_rows, cols, names, kind=None) -> tuple:
+    """slo_rows None = table absent -> n/a. Else pass if any covering column mentions any name.
+    A row listing the component "scheduler:*" (nova_slo's scheduled_jobs) covers every scheduled task."""
     if slo_rows is None:
         return None, "n/a: slo_definitions does not exist yet"
     cover = slo_cover_columns(cols)
     label_col = next((c for c in ("name", "slo_name", "slo_id", "id") if c in cols), cols[0] if cols else None)
+    if kind == "task":
+        for row in slo_rows:
+            if row.get("enabled") is not False and "scheduler:*" in (row.get("components") or []):
+                return True, f"SLO {row.get(label_col)!s:.60} covers every scheduled task"
     variants = set()
     for n in filter(None, names):
         base = n[5:] if n.startswith("nova_") else n
@@ -377,7 +382,7 @@ def evaluate_component(comp, ctx) -> dict:
         "tests": check_tests(script, ctx["test_names"]),
         "docs": check_docs([stem or comp["name"]] + ([comp["name"]] if stem else []), ctx["docs"]),
         "header": check_header(script, source),
-        "slo": check_slo(ctx.get("slo_rows"), ctx.get("slo_cols") or [], names),
+        "slo": check_slo(ctx.get("slo_rows"), ctx.get("slo_cols") or [], names, comp["kind"]),
         "alerts": check_alerts(script, source),
     }
     if comp["kind"] == "task":
