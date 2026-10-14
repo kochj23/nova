@@ -1,0 +1,1645 @@
+# scheduler-core.yaml — Nova SECOND scheduler instance (nova-scheduler-core on nova-core / .2)
+#
+# Offload Phase 2: this instance runs ONLY the curated set of PORTABLE,
+# non-LLM, non-macOS, non-/Volumes tasks that can reach PG/Redis/services on
+# 192.168.1.6 (and other network hosts) over the LAN. The .6 scheduler keeps
+# every macOS / LLM / gpu_heavy / /Volumes-bound singleton task.
+#
+# Each task below is DISABLED on the .6 scheduler.yaml once verified here, so
+# exactly one node owns each task. Fully reversible: re-enable on .6, disable
+# here.
+#
+# Written by Jordan Koch.
+
+scheduler:
+  tick_interval: 1
+  max_concurrent: 4
+  status_port: 37464          # distinct from .6 scheduler (37460) and .2 snmp (37463)
+  heartbeat_interval: 3600
+  stale_threshold: 2.0
+  python: /home/kochj/.openclaw/venv/bin/python   # Linux venv, NOT homebrew
+  shell: /bin/bash
+  tz: America/Los_Angeles
+  env:
+    PATH: /usr/local/bin:/usr/bin:/bin
+    PYTHONPATH: /home/kochj/.openclaw/scripts
+
+slack:
+  channel: C0ATAF7NZG9
+  alerts: true
+  heartbeat: true
+  startup: true
+
+tasks:
+
+  # ── Pure PG / network telemetry collectors (portable) ───────────────────
+
+  # Hourly analytics rollup. Already pointed at PG .6; only HTTP HEAD probes
+  # to public sites + PG writes. No macOS/local-hardware coupling.
+  analytics_aggregate:
+    script: nova_analytics_aggregate.py
+    schedule: cron 5 * * * *
+    timeout: 60
+    overlap: skip
+
+  # WAN ping/latency/speedtest. Measures the shared LAN's WAN uplink; runs
+  # from any node on the network. Writes telemetry.wan_quality on PG .6.
+  wan_monitor:
+    script: nova_wan_monitor.py
+    schedule: every 5m
+    timeout: 180
+    overlap: skip
+
+  # PG streaming-replication health. Reads pg_stat_replication on the primary
+  # (.6) over the network — the view is the same regardless of client node.
+  replication_monitor:
+    script: nova_replication_monitor.py
+    schedule: every 1m
+    timeout: 30
+    overlap: skip
+
+  # TLS cert expiry for network endpoints (UDM/UNAS/Protect/Synology + public
+  # Nova services). Pure ssl/openssl probing + PG. No local-host dependency.
+  cert_monitor:
+    script: nova_cert_monitor.py
+    schedule: every 6h
+    timeout: 120
+    overlap: skip
+
+  # Wazuh SIEM bridge. Wazuh indexer + PG + memory_server + Big Brother events
+  # are all reachable over the LAN (Wazuh is in fact LOCAL to this node).
+  # Behavior-equivalent to the .6 run; PG correlation/threat-score/annotations
+  # are the observable output.
+  wazuh_bridge:
+    script: nova_wazuh_bridge.py
+    schedule: every 2m
+    timeout: 60
+    overlap: skip
+
+  # ── Redis maintenance (portable) ────────────────────────────────────────
+
+  # Weekly dead-letter replay back into the ingest queue. Pure Redis (.6).
+  dead_letter_replay:
+    script: nova_dead_letter_replay.py
+    schedule: cron 0 4 * * 0
+    timeout: 300
+    overlap: skip
+
+  incident_lifecycle:              # migrated from .6 2026-07-14 (Wave A)
+    script: nova_incident_lifecycle.py
+    schedule: every 10m
+    args: ["--sweep"]
+    timeout: 120
+    overlap: skip
+  goal_check:                      # migrated from .6 2026-07-14 (Wave A)
+    script: nova_goal_check.py
+    schedule: every 30m
+    timeout: 120
+    overlap: skip
+  protect_monitor:
+    script: nova_protect_monitor.py
+    enabled: false  # macOS-only: UniFi Protect password lives in Mac Keychain, unreachable from nova-core -- moved back to mac-studio .6 scheduler (2026-07-21)
+    schedule: every 2m
+    timeout: 120
+    overlap: skip
+
+  app_watchdog:
+    script: nova_app_watchdog.py
+    enabled: false  # macOS-only (open -a restarts, local :11434/374xx checks) -- moved back to mac-studio .6 scheduler (2026-07-29, was flapping App Watchdog incidents: no local Ollama on .2)
+    schedule: every 5m
+    timeout: 60
+    overlap: skip
+
+  face_recognition:
+    script: nova_face_recognition.py
+    enabled: false  # macOS-only: depends on /Volumes/nas camera-frame mount, doesn't exist on Linux -- moved back to mac-studio .6 scheduler (2026-07-21)
+    schedule: every 30m
+    timeout: 180
+    overlap: skip
+
+  home_watchdog:
+    script: nova_home_watchdog.py
+    schedule: every 30m
+    timeout: 60
+    overlap: skip
+
+  unifi_monitor:
+    script: nova_unifi_monitor.py
+    schedule: every 30m
+    timeout: 60
+    overlap: skip
+
+  unifi_threats:                    # Jordan 2026-10-13: UI Toolkit Threat Watch, headless (nova_unifi_toolkit.py)
+    script: nova_unifi_toolkit.py
+    args: ["threats"]
+    schedule: every 5m
+    timeout: 240
+    overlap: skip
+
+  unifi_stalker:                    # Jordan 2026-10-13: UI Toolkit Wi-Fi Stalker (client AP/roam history)
+    script: nova_unifi_toolkit.py
+    args: ["stalk"]
+    schedule: every 2m
+    timeout: 100
+    overlap: skip
+
+  unifi_network_audit:              # Jordan 2026-10-13: UI Toolkit House Arrest read side (isolation matrix, drift, broken lockdowns)
+    script: nova_unifi_toolkit.py
+    args: ["audit"]
+    schedule: every 1h
+    timeout: 300
+    overlap: skip
+
+  unifi_metrics:
+    script: nova_unifi_metrics.py
+    schedule: every 2m
+    timeout: 120
+    overlap: skip
+
+  storage_metrics:
+    script: nova_storage_metrics.py
+    schedule: every 5m
+    timeout: 90
+    overlap: skip
+
+  ha_metrics:
+    script: nova_ha_metrics.py
+    args: ["--once"]
+    schedule: every 1m
+    timeout: 50
+    overlap: skip
+    enabled: false   # 2026-09-26: needs the macOS Keychain -> runs on the .6 scheduler now
+
+  pg_stat_poller:                  # snapshot pg_stat_database counters -> telemetry.pg_stat_db (live throughput rates for Grafana)
+    script: nova_pg_stat_poller.py
+    schedule: every 1m
+    timeout: 30
+    overlap: skip
+
+  backup_ingest:
+    # Reads the latest nas_backup memory (Synology daily 03:30 POST) and upserts
+    # into telemetry.backup_runs for Grafana. Hourly is ample for a daily backup;
+    # idempotent UPSERT keyed on (ts, job) so re-runs are harmless.
+    script: nova_backup_ingest.py
+    schedule: every 1h
+    timeout: 60
+    overlap: skip
+
+  disk_forecast:
+    script: nova_disk_forecast.py
+    schedule: every 1h
+    timeout: 120
+    overlap: skip
+
+  component_metrics:
+    script: nova_component_metrics.py
+    schedule: every 1m
+    timeout: 90
+    overlap: skip
+
+  memory_health:                   # alert if the memory ingest worker stalls (queue grows, 0 writes) — caught the silent 14h outage 2026-07-08; logs telemetry.memory_pipeline for Grafana
+    script: nova_memory_health.py
+    schedule: every 15m
+    timeout: 60
+    overlap: skip
+
+  backup_retention:
+    script: nova_backup_retention.sh
+    schedule: cron 20 4 * * *
+    timeout: 900
+    overlap: queue
+
+  autonomy_actor:                  # Nova's bounded agency: auto-heal allowlisted down services + queue triage. Mode gated by service_config autonomy_actor_mode (off|dry_run|live); redlines enforced in code (Jordan 2026-09-14)
+    script: nova_autonomy_actor.py
+    schedule: every 30m
+    timeout: 240
+    overlap: skip
+
+  research_pass:                   # Nova's self-directed research beyond her corpus — reads the world, provenance-tracked, content-safety gated (Jordan 2026-09-14)
+    script: nova_research_pass.py
+    schedule: every 90m
+    timeout: 300
+    overlap: skip
+    group: llm
+
+  unclaimed_digest:                # daily article about what she pursued -> /operations
+    script: nova_unclaimed_digest.py
+    schedule: cron 0 17 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  sleep_cycle:                     # 03:40 nightly consolidation: episode, beliefs, sparks, citation links (2026-09-13)
+    script: nova_sleep_cycle.py
+    schedule: cron 40 3 * * *
+    timeout: 1800
+    overlap: skip
+    group: llm
+
+  self_model:                      # 04:10 nightly self-concept synthesis: worldview/drift/preoccupations/taste/becoming -> nova_ops.self_model + source=self_model memory (Jordan 2026-09-14)
+    script: nova_self_model.py
+    schedule: cron 10 4 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  self_model:                      # 04:10 nightly self-concept synthesis: worldview/drift/preoccupations/taste/becoming -> nova_ops.self_model + self_model memory (Jordan 2026-09-14)
+    script: nova_self_model.py
+    schedule: cron 10 4 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+
+
+  # === Sentience organs (2026-09-15) — the interior layer. All ollama-failover or
+  # cloud (OpenRouter), PG-backed, portable; same class as unclaimed_time above.
+  # Accessors are injected into the gateway system prompt (nova_gateway/agent.py). ===
+  predictions_predict:             # #1 Predictive Self — forms falsifiable forecasts 2x/day
+    script: nova_predictions.py
+    args: ["--mode", "predict"]
+    schedule: cron 0 9,18 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  predictions_resolve:             # scores open predictions hourly -> surprise + calibration
+    script: nova_predictions.py
+    args: ["--mode", "resolve"]
+    schedule: cron 5 * * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  predictions_report:              # daily calibration report -> turing_scoreboard (no LLM)
+    script: nova_predictions.py
+    args: ["--mode", "report"]
+    schedule: cron 30 4 * * *
+    timeout: 300
+    overlap: skip
+
+  principal_model:                 # #2 theory-of-mind model of Jordan, privacy-bounded, 04:20
+    script: nova_principal_model.py
+    schedule: cron 20 4 * * *
+    timeout: 1800
+    overlap: skip
+    group: llm
+
+  attention_budget_reset:          # #3 daily reset of the finite attention budget (no LLM)
+    script: nova_attention_budget.py
+    args: ["--reset"]
+    schedule: cron 5 0 * * *
+    timeout: 120
+    overlap: skip
+
+  continuity_watch:                # #4 detects/reflects on her own restarts & gaps, every 6h
+    script: nova_continuity.py
+    schedule: cron 0 */6 * * *
+    timeout: 300
+    overlap: skip
+    group: llm
+
+  autobiography:                   # #5 weekly revisable narrative-identity arc, Sun 05:10
+    script: nova_autobiography.py
+    schedule: cron 10 5 * * 0
+    timeout: 1800
+    overlap: skip
+    group: llm
+
+  affect_state:                    # #6 evidenced mood recomputed 4x/day across waking hours
+    script: nova_affect.py
+    schedule: cron 0 8,12,16,20 * * *
+    timeout: 300
+    overlap: skip
+    group: llm
+
+  imagination_midday:              # #7 counterfactual / dream play, midday
+    script: nova_imagination.py
+    args: ["--scheduled"]
+    schedule: cron 15 13 * * *
+    timeout: 300
+    overlap: skip
+    group: llm
+
+  imagination_evening:             # #7 counterfactual / dream play, evening
+    script: nova_imagination.py
+    args: ["--scheduled"]
+    schedule: cron 40 21 * * *
+    timeout: 300
+    overlap: skip
+    group: llm
+  incident_corpus:                 # keep resolved incidents recallable for alert triage (2026-09-14)
+    script: nova_incident_to_memory.py
+    schedule: cron 50 7 * * *
+    timeout: 300
+    overlap: skip
+
+
+  # === Next-level organs (2026-09-15) — living the interior forward. Same portable
+  # class as the sentience organs above; accessors injected into the gateway. ===
+  nova_values_deliberate:          # #5 daily value-conflict reasoning
+    script: nova_values.py
+    args: ["--mode", "deliberate"]
+    schedule: cron 25 4 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  nova_values_articulate:          # #5 weekly refinement of her value set, Sun 04:35
+    script: nova_values.py
+    args: ["--mode", "articulate"]
+    schedule: cron 35 4 * * 0
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  nova_growth_assess:              # #1 Growth Loop — find a weakness, form a measurable commitment, Mon 05:15
+    script: nova_growth.py
+    args: ["--mode", "assess"]
+    schedule: cron 15 5 * * 1
+    timeout: 300
+    overlap: skip
+    group: llm
+
+  nova_growth_review:              # #1 re-measure due commitments -> proof-of-change, daily 05:40
+    script: nova_growth.py
+    args: ["--mode", "review"]
+    schedule: cron 40 5 * * *
+    timeout: 300
+    overlap: skip
+    group: llm
+
+  nova_growth_report:              # #1 weekly growth-rate report, Mon 05:50
+    script: nova_growth.py
+    args: ["--mode", "report"]
+    schedule: cron 50 5 * * 1
+    timeout: 120
+    overlap: skip
+
+  nova_projects_start:             # #2 start a long-horizon project when idle (no-op if one active), 09:15
+    script: nova_projects.py
+    args: ["--mode", "start"]
+    schedule: cron 15 9 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  nova_projects_work:              # #2 advance the active project one increment, twice daily
+    script: nova_projects.py
+    args: ["--mode", "work"]
+    schedule: cron 30 10,17 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  nova_embodiment:                 # #3 felt sense of the home from its sensors, every 45m
+    script: nova_embodiment.py
+    args: ["--scheduled"]
+    schedule: every 45m
+    timeout: 300
+    overlap: skip
+    group: llm
+
+  nova_relationship_arc:           # #4 weekly living-story of her relationships, Sun 05:45
+    script: nova_relationship_arc.py
+    args: ["all"]
+    schedule: cron 45 5 * * 0
+    timeout: 1800
+    overlap: skip
+    group: llm
+
+  nova_coagency_propose:           # #6 self-initiated proposals — INERT until coagency_mode flipped off->propose
+    script: nova_coagency.py
+    args: ["--mode", "propose", "--scheduled"]
+    schedule: cron 0 9 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+  coagency_execute_approved:       # Rung 2 — execute human-APPROVED proposals (gated: mode=live + kill switch + caps + assert_executable). Jordan 2026-09-16
+    script: nova_coagency.py
+    args: ["--mode", "execute-approved"]
+    schedule: every 15m
+    timeout: 240
+    overlap: skip
+  coagency_earned_autonomy:        # Rung 3 — act on EARNED action-classes without per-action approval (veto window). Inert until calibration<=0.20 AND a class has 5 clean approvals. Jordan 2026-09-16
+    script: nova_coagency.py
+    args: ["--mode", "auto"]
+    schedule: every 20m
+    timeout: 240
+    overlap: skip
+  claude_reviewer:                 # Claude decides pending co-agency/wishes/skills/lockbox in Jordan place (standing order 2026-10-08). Kill: service_config claude_reviewer/enabled=false
+    script: nova_claude_reviewer.py
+    schedule: every 30m
+    timeout: 900
+    overlap: skip
+  scanner_digest:                  # hourly rollup of raw scanner chatter -> scanner_digest memories (2026-09-13)
+    script: nova_scanner_digest.py
+    schedule: cron 10 * * * *
+    timeout: 900
+    overlap: skip
+    group: llm
+
+
+  soft_certainty_refresh:          # recompute her confidence calibration from resolved predictions (granted wish #1)
+    script: nova_soft_certainty.py
+    args: ["--refresh"]
+    schedule: cron 25 5 * * *
+    timeout: 120
+    overlap: skip
+  ledger_changed_minds:            # monthly opinion-drift review -> /operations (2026-09-13)
+    script: nova_ledger_of_changed_minds.py
+    schedule: cron 0 9 1 * *
+    timeout: 1500
+    overlap: skip
+    group: llm
+
+  journal_monthly_wrap:            # per-section "<Section> — <Month>: ..." wraps, ~5000w grounded (2026-10-06)
+    script: nova_monthly_wrap.py   # default = previous calendar month; dedup in PG service_config
+    schedule: cron 30 13 1 * *     # 1st 13:30 — clear of 05:30/09:00/09:05/10:00 1st-of-month jobs
+    timeout: 3600                  # ~10 sections x3 workers; run budget 1800 s stops new starts
+    overlap: skip
+    group: llm
+
+
+  # === Self-guided organs (2026-09-16) — she governs herself over time. Portable class,
+  # accessors injected into the gateway; the autonomy-adjacent lanes (reach, becoming) are
+  # gated (propose + human approval) with self-preservation redline filters. ===
+  learning_plan:                   # #1 build/refresh her own curriculum from her knowledge gaps
+    script: nova_learning.py
+    args: ["--mode", "plan"]
+    schedule: cron 50 4 * * 1
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  learning_study:                  # #1 advance the active curriculum item + honest self-assessment
+    script: nova_learning.py
+    args: ["--mode", "study"]
+    schedule: cron 35 9 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  self_eval_design:                # #5 author a new self-test (weekly)
+    script: nova_self_eval.py
+    args: ["--mode", "design"]
+    schedule: cron 15 4 * * 0
+    timeout: 300
+    overlap: skip
+    group: llm
+
+  self_eval_run:                   # #5 run due self-authored tests (daily)
+    script: nova_self_eval.py
+    args: ["--mode", "run"]
+    schedule: cron 40 4 * * *
+    timeout: 300
+    overlap: skip
+    group: llm
+
+  meta_volition_review:            # #3 reflect on how she spent her time; propose a rebalance (weekly)
+    script: nova_meta_volition.py
+    args: ["--mode", "review"]
+    schedule: cron 0 9 * * 1
+    timeout: 300
+    overlap: skip
+    group: llm
+
+  letting_go_review:               # #2 retire genuinely played-out preoccupations/projects/taste (weekly)
+    script: nova_letting_go.py
+    args: ["--mode", "review"]
+    schedule: cron 45 4 * * 0
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  reach_scan:                      # #4 proactive relational reach — gated, throttled (2x/day)
+    script: nova_reach.py
+    args: ["--mode", "scan", "--scheduled"]
+    schedule: every 2h            # 2026-09-26 Jordan: ungated pings to #nova-chat whenever she wants
+    timeout: 300
+    overlap: skip
+    group: llm
+
+  becoming_propose:                # #6 propose a developmental direction (monthly; needs human approval)
+    script: nova_becoming.py
+    args: ["--mode", "propose"]
+    schedule: cron 30 5 1 * *
+    timeout: 600
+    overlap: skip
+    group: llm
+  weekly_media_wrap:               # Sun 08:00 Nova's sassy weekly wrap of all YouTube/TV ingested -> /operations (Jordan 2026-09-13)
+    script: nova_weekly_media_wrap.py
+    schedule: cron 0 8 * * 0
+    timeout: 900
+    overlap: skip
+    group: llm
+
+  weekly_security_review:          # Sun 08:00 fleet security posture (ports/promisc/updates/alert-loop)
+    script: nova_weekly_security_review.py
+    schedule: cron 0 8 * * 0
+    timeout: 300
+    overlap: skip
+
+  osint_amass:                     # weekly passive subdomain enum (digitalnoise.net)
+    script: nova_osint_amass.py
+    schedule: cron 15 8 * * 0
+    timeout: 600
+    overlap: skip
+
+  osint_theharvester:               # weekly passive email/host harvest
+    script: nova_osint_theharvester.py
+    schedule: cron 30 8 * * 0
+    timeout: 600
+    overlap: skip
+
+  osint_nuclei_sweep:                # weekly: nuclei safe-tag scan of amass/theharvester-discovered hosts
+    script: nova_osint_nuclei_sweep.py
+    schedule: cron 55 8 * * 0
+    timeout: 600
+    overlap: skip
+
+  osint_hibp:                       # daily breach-exposure check (needs nova-hibp-api-key)
+    script: nova_osint_hibp.py
+    schedule: cron 45 8 * * *
+    timeout: 120
+    overlap: skip
+    enabled: false  # 2026-07-24: no-op without HIBP API key — Jordan declined purchase; re-enable if key bought
+
+  osint_digest_article:             # weekly OSINT findings -> published nova-journal article
+    script: nova_osint_digest_article.py
+    schedule: cron 0 9 * * 0
+    timeout: 300
+    overlap: skip
+    group: llm
+
+  log_rotate:
+    script: nova_log_rotate.py
+    schedule: cron 30 3 * * *
+    timeout: 120
+    overlap: skip
+
+  retention:
+    script: nova_retention.py
+    args: ["--apply"]
+    schedule: cron 30 4 * * *
+    timeout: 1800
+    overlap: skip
+
+  # daily roll-up of never-seen devices from nova_security_organ (2026-10-03)
+  security_digest:
+    script: nova_security_organ.py
+    args: ["--digest"]
+    schedule: cron 30 8 * * *
+    timeout: 120
+    overlap: skip
+
+  health_check:
+    script: nova_health_check.py
+    schedule: cron 45 6 * * *
+    timeout: 120
+    overlap: skip
+
+  morning_brief:
+    script: nova_morning_brief.py
+    schedule: cron 0 7 * * *
+    timeout: 300
+    overlap: skip
+
+  health_intelligence:
+    script: nova_health_intelligence.py
+    args: ["--daily"]
+    schedule: cron 0 8 * * *
+    timeout: 300
+    overlap: skip
+    group: llm
+
+  health_intelligence_weekly:
+    script: nova_health_intelligence.py
+    args: ["--weekly"]
+    schedule: cron 0 10 * * 0
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  nas_sync_check:
+    script: nova_nas_sync_check.py
+    args: ["--check"]
+    schedule: cron 0 6 * * *
+    timeout: 1800
+    overlap: skip
+
+  dead_mans_switch:
+    script: nova_dead_mans_switch.py
+    schedule: cron 15 9 * * *
+    timeout: 300
+    overlap: skip
+
+  sam_blog_ingest:
+    script: nova_sam_blog_ingest.py
+    schedule: cron 30 9 * * *
+    timeout: 120
+    overlap: skip
+
+  mostlycopyandpaste_ingest:
+    script: nova_mostlycopyandpaste_ingest.py
+    schedule: cron 35 7 * * *
+    timeout: 600
+    overlap: skip
+
+
+  reddit_ingest:                     # RSS-based (json API 403s); own flock, rotates non-fishbowl subs
+    script: nova_reddit_rss_ingest.py
+    schedule: every 120m  # was 60m (and 20m before that) — still 429-heavy; halve cadence again (2026-09-13)
+    timeout: 600          # was 900 — tightened with the slower cadence (2026-09-13)
+    overlap: skip
+
+  security_watcher:
+    script: nova_security_watcher.py
+    schedule: every 30m
+    timeout: 120
+    overlap: skip
+
+  security_patch_watch:
+    script: nova_security_patch_watch.py
+    schedule: cron 0 10 * * *
+    timeout: 120
+    overlap: skip
+
+  security_surface_monitor:
+    script: nova_security_surface_monitor.py
+    schedule: cron 0 6 * * 0
+    timeout: 300
+    overlap: skip
+
+  context_bridge_am:
+    script: nova_context_bridge.py
+    schedule: cron 0 10 * * *
+    timeout: 120
+    overlap: skip
+
+  context_bridge_pm:
+    script: nova_context_bridge.py
+    schedule: cron 0 16 * * *
+    timeout: 120
+    overlap: skip
+
+  geo_enrich:                        # bake distance-from-home into scanner/fire transmission memories
+    script: nova_geo_enrich.py
+    schedule: every 12m
+    timeout: 600
+    overlap: skip
+
+  geo_alerts:                        # real-time proximity + convergence alerts for nearby incidents
+    script: nova_geo_alerts.py
+    schedule: every 3m
+    timeout: 120
+    overlap: skip
+
+  neighborhood_pulse:                # weekly geography/trends of nearby scanner activity (Slack)
+    script: nova_neighborhood_pulse.py
+    schedule: cron 5 8 * * 0
+    timeout: 180
+    overlap: skip
+
+  nightly_report:
+    script: nova_nightly_report.py
+    schedule: cron 0 23 * * *
+    timeout: 600
+    overlap: skip
+
+  nightly_synology:
+    script: nova_nightly_synology.py
+    schedule: cron 20 23 * * *
+    timeout: 300
+    overlap: skip
+
+  nightly_protect:
+    script: nova_nightly_protect.py
+    schedule: cron 40 23 * * *
+    timeout: 300
+    overlap: skip
+
+  bandwidth_report:
+    script: nova_bandwidth_report.py
+    schedule: cron 50 23 * * *
+    timeout: 120
+    overlap: skip
+
+  plex_recommend:
+    script: nova_plex.py
+    args: ["recommend"]
+    schedule: cron 0 19 * * 5
+    timeout: 120
+    overlap: skip
+
+  plex_rewatch:
+    script: nova_plex.py
+    args: ["rewatch"]
+    schedule: cron 0 10 * * 0
+    timeout: 60
+    overlap: skip
+
+  pg_maintain:
+    script: nova_pg_maintain.sh
+    schedule: cron 0 3 * * 0
+    timeout: 7200
+    overlap: queue
+
+  weekly_journal:
+    script: nova_weekly_journal.py
+    schedule: cron 0 17 * * 0
+    timeout: 120
+    overlap: skip
+
+  self_audit:
+    script: nova_self_audit.py
+    schedule: cron 30 17 * * 0
+    timeout: 60
+    overlap: skip
+
+  weekly_reliability:
+    script: nova_weekly_reliability.py
+    schedule: cron 0 22 * * 0
+    timeout: 120
+    overlap: skip
+
+  plex_seasonal:
+    script: nova_plex.py
+    args: ["seasonal"]
+    schedule: cron 0 10 1 * *
+    timeout: 60
+    overlap: skip
+
+  memory_quality:
+    script: nova_memory_quality.py
+    schedule: cron 0 3 * * 0
+    timeout: 450
+    overlap: skip
+
+  proactive_brief:
+    script: nova_proactive_brief.py
+    schedule: cron 0 9,11,13,15,17 * * 1-5
+    timeout: 120
+    overlap: skip
+
+  watcher_engine:
+    script: nova_watcher_engine.py
+    schedule: every 2m
+    timeout: 120
+    overlap: skip
+
+  sandbox_image_rebuild:
+    script: nova_sandbox.py
+    args: ["--rebuild-image"]
+    schedule: cron 0 4 * * 0
+    timeout: 600
+    overlap: skip
+
+  gov_rss_ingest:
+    script: nova_gov_rss_ingest.py
+    schedule: every 6h
+    timeout: 900
+    overlap: skip
+
+  cve_autopatch:                     # weekly auto-patch pass consuming Wazuh L13 CVE tickets from claude_queue -- userspace pkgs auto-patched, kernel installed but never auto-rebooted unattended
+    script: nova_cve_autopatch.py
+    schedule: cron 30 9 * * 0
+    timeout: 900
+    overlap: skip
+
+  vendor_advisories:               # CVEs/advisories for the fleet's OWN gear (Ubiquiti/UniFi, Synology, Ubuntu, Grafana, Wazuh...) via CISA KEV + security-news RSS -> #nova-critical. Closes the gap that let UniFi CVE-2026-50746 slip past 2026-07.
+    script: nova_vendor_advisories.py
+    schedule: every 4h
+    timeout: 120
+    overlap: skip
+
+  analytics_flush:
+    script: nova_analytics_flush.py
+    schedule: every 5m
+    timeout: 30
+    overlap: skip
+
+  claude_memory_sync:
+    script: nova_claude_memory_sync.py
+    schedule: cron 30 4 * * *
+    timeout: 120
+    overlap: skip
+
+  syslog_daily_digest:
+    script: nova_syslog_daily_digest.py
+    schedule: cron 0 5 * * *
+    timeout: 120
+    overlap: skip
+
+  wazuh_daily_summary:
+    script: nova_wazuh_daily_summary.py
+    schedule: cron 0 7 * * *
+    timeout: 120
+    overlap: skip
+
+  wazuh_blocklist_update:
+    script: nova_wazuh_blocklist_update.py
+    schedule: cron 0 4 * * 0
+    timeout: 300
+    overlap: skip
+
+  experiment_tracker:
+    script: nova_experiment_tracker.py
+    schedule: cron 0 9 * * *
+    timeout: 60
+    overlap: skip
+
+  crontab_audit:
+    script: nova_crontab_audit.py
+    schedule: cron 30 3 * * *
+    timeout: 120
+    overlap: skip
+    # KEPT on .6 (Offload Phase 2): treats the local host as mac-studio and runs
+    # `sudo crontab -l` locally; moving it would re-scope "local" to nova-core
+    # and needs passwordless sudo crontab there. Stays on .6.
+
+  llm_budget_guard:
+    script: nova_llm_budget_guard.py
+    schedule: cron 5 0 * * *      # 00:05 daily — ratchet the OpenRouter key ceiling to (today's usage + $10)
+    timeout: 60
+    overlap: skip
+  hue_history:                     # append-only Hue time-series: color/ct/brightness/on + est. power
+    script: nova_hue_history.py
+    schedule: every 2m
+    timeout: 60
+    overlap: skip
+  chp_traffic:                     # CHP live CAD incident feed → telemetry.chp_incidents (LA/Burbank/Glendale)
+    script: nova_chp_traffic.py
+    schedule: every 5m
+    args: ["--quiet"]
+    timeout: 180
+    overlap: skip
+  queue_aging:                     # weekly claude_queue hygiene: purge terminal rows >7d, age out stale auto-alerts >14d (2026-09-13)
+    script: nova_queue_aging.py
+    schedule: cron 0 7 * * 1
+    timeout: 120
+    overlap: skip
+
+  service_down_watch:              # alert (1/svc/12h) when health_checks shows a service down >2h — the mac-mini Ollama 736h silent outage fix (2026-09-13)
+    script: nova_service_down_watch.py
+    schedule: every 30m
+    timeout: 120
+    overlap: skip
+
+  article_watchdog_stranded:        # push journal commits stranded in THIS host clone (2026-10-05)
+    script: nova_article_watchdog.py
+    # --stranded ONLY: never regenerates (the .6 article_watchdog --fix owns that). nova-core
+    # publishes from its own ~/nova-journal clone, which the .6 watchdog cannot see; 3 articles
+    # sat unpushed here for hours on 2026-10-05. Pushes under nova_journal fleet push lock.
+    args: ["--stranded"]
+    schedule: every 1h
+    timeout: 600
+    overlap: skip
+
+  journal_lint:
+    script: nova_journal_lint.py
+    args: ["auto"]
+    schedule: every 30m
+    timeout: 180
+    overlap: skip
+
+  journal_art:
+    enabled: false  # Art Corner retired 2026-10-06 (Jordan) -- do not re-enable without Jordan asking
+    script: nova_journal.py
+    args: ["art"]
+    schedule: cron 0 4 * * 0
+    timeout: 1800
+    overlap: skip
+    group: llm
+    gpu_heavy: true
+
+  journal_dream:
+    script: nova_journal.py
+    args: ["dream"]
+    schedule: cron 0 6 * * 1,3,5
+    timeout: 900
+    overlap: skip
+    group: llm
+    gpu_heavy: true
+
+  journal_security:
+    script: nova_journal_security.py
+    schedule: cron 0 9 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  security_weekly:
+    script: nova_security_weekly.py
+    enabled: false  # moved to .6 2026-07-31 — was announce-but-do-not-publish here (diverged clone -> push rejected). Runs on .6.
+    schedule: cron 0 16 * * 5
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  journal_opinion:
+    script: nova_journal.py
+    args: ["opinion"]
+    schedule: cron 0 12 * * 2,4,6
+    timeout: 1200  # 2026-10-06: room for grounded Sonnet expansion + check
+    overlap: skip
+    group: llm
+
+  journal_essay:
+    script: nova_journal.py
+    args: ["essay"]
+    schedule: cron 0 9 * * 3
+    timeout: 900
+    overlap: skip
+    group: llm
+
+  journal_after_dark:
+    enabled: false  # retired 2026-07-30 (Jordan)
+    script: nova_journal.py
+    args: ["after-dark"]
+    schedule: cron 0 20 * * 5,6
+    timeout: 900
+    overlap: skip
+    group: llm
+
+  rando_weird_memories:
+    script: nova_rando_weird_memories.py
+    schedule: cron 30 21 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  local_burbank:
+    script: nova_local_burbank.py
+    schedule: cron 0 10 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+    enabled: false  # DISABLED 2026-08-05: re-homed to .6
+
+  fishbowl_daily:                    # evergreen daily Fishbowl dispatch -> /fishbowl section (same file rebuilt)
+    script: nova_fishbowl_daily.py
+    schedule: cron 30 6 * * *        # daily 6:30 AM — overwrites the-fishbowl.md with the day's churn
+    timeout: 1200  # 2026-10-06: room for grounded Sonnet expansion + check
+    overlap: skip
+    group: llm
+    enabled: false                 # replaced 2026-10-06 by watches_and_friends (weekly, news first + Fishbowl / Hate Streams)
+
+  watches_and_friends:             # Jordan 2026-10-06 weekly; DAILY since 2026-10-13 (Jordan): watch news (32 horology channels) first, then Fishbowl / Hate Streams, full Sources list; replaces fishbowl_daily
+    script: nova_watches_and_friends.py
+    args: ["--days", "1"]
+    schedule: cron 0 7 * * *
+    timeout: 3600
+    overlap: skip
+
+  opinion_fishbowl:                  # Nova's daily OPINION column on Watch Fishbowl updates -> /opinions
+    script: nova_opinion_fishbowl.py
+    schedule: cron 0 6 * * *         # daily 6:00 AM — dated opinion piece, operations voice
+    timeout: 1200  # 2026-10-06: room for grounded Sonnet expansion + check
+    overlap: skip
+    group: llm
+
+  local_airwaves:                    # Nova's daily airwaves roundup (police/fire/CHP/rail) -> /local
+    script: nova_local_airwaves.py
+    schedule: cron 0 8 * * *         # daily 8:00 AM — sassy 24h scanner roundup, sarcastic voice
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  operations_security:               # Nova's daily morning security-ops report (scan health + posture) -> /operations
+    script: nova_operations_security.py
+    schedule: cron 30 7 * * *        # daily 7:30 AM — after the 7:00 Wazuh summary (last scan in), ops voice
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  block_report:                      # PRIVATE daily digest of incidents within walking distance (Slack, full detail)
+    script: nova_block_report.py
+    schedule: cron 15 7 * * *
+    timeout: 300
+    overlap: skip
+    group: llm
+
+  weekly_flights:                    # weekly overhead-aircraft report -> /local, Nova's voice
+    script: nova_weekly_flights.py
+    schedule: cron 0 19 * * 0        # Sundays at 7:00 PM
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  journal_digest:
+    script: nova_journal.py
+    args: ["digest"]
+    schedule: cron 15 21 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  journal_pilot:
+    enabled: false  # retired 2026-07-30 (Jordan)
+    script: nova_journal.py
+    args: ["pilot"]
+    schedule: cron 30 20 * * 6
+    timeout: 900
+    overlap: skip
+    group: llm
+
+  journal_research:
+    script: nova_journal.py
+    args: ["research"]
+    schedule: cron 50 23 * * 4
+    timeout: 1800
+    overlap: skip
+    group: llm
+
+  journal_tech_today:
+    script: nova_journal.py
+    args: ["tech-today"]
+    schedule: cron 30 23 * * 1,4
+    timeout: 900
+    overlap: skip
+    group: llm
+
+  journal_stats_poller:
+    script: nova_journal_stats_poller.py
+    schedule: every 6h
+    timeout: 120
+    overlap: skip
+
+  self_improve:
+    script: nova_self_improve.py
+    schedule: cron 0 21 * * 0
+    timeout: 1800
+    overlap: skip
+    group: llm
+
+  journal_synthesis:
+    script: nova_journal.py
+    args: ["synthesis"]
+    schedule: cron 0 19 * * 0
+    timeout: 1200  # 2026-10-06: room for grounded Sonnet expansion + check
+    overlap: skip
+    group: llm
+
+  meta_analysis:
+    script: nova_meta_analysis.py
+    schedule: cron 0 20 * * 0
+    timeout: 1800
+    overlap: skip
+    group: llm
+
+  journal_emergency_daily:
+    script: nova_journal_emergency.py
+    args: ["daily"]
+    schedule: cron 0 18 * * *
+    timeout: 900
+    overlap: skip
+    group: llm
+
+  journal_emergency_breaking:
+    script: nova_journal_emergency.py
+    args: ["breaking"]
+    schedule: every 30m
+    timeout: 300
+    overlap: skip
+    group: llm
+
+  journal_weekly_summary:
+    script: nova_journal_weekly_summary.py
+    schedule: cron 0 15 * * 0
+    timeout: 1800
+    overlap: skip
+    group: llm
+
+  rando_daily_ops:
+    script: nova_rando_daily_ops.py
+    schedule: cron 0 18 * * *
+    timeout: 900
+    overlap: skip
+    group: llm
+
+  weekly_ops_report:
+    script: nova_weekly_ops_report.py
+    schedule: cron 0 16 * * 3
+    timeout: 900
+    overlap: skip
+    group: llm
+
+  vector_audit:
+    script: nova_vector_audit.py
+    schedule: cron 0 6 * * *
+    timeout: 9112
+    overlap: skip
+    group: llm
+
+  auto_postmortem:
+    script: nova_postmortem.py
+    schedule: every 6h
+    timeout: 300
+    overlap: skip
+
+  awn_air_quality:                 # Ambient AQIN indoor air quality (PM2.5/PM10/CO2) via AWN cloud
+    script: nova_awn_poller.py
+    schedule: every 5m
+    timeout: 60
+    overlap: skip
+  synology_monitor:
+    script: nova_synology_monitor.py
+    schedule: every 30m
+    timeout: 60
+    overlap: skip
+  unas_disk_health:                # UNAS disk temps/SMART/RAID via SSH (UniFi API can't see these)
+    script: nova_unas_disk_health.py
+    schedule: every 5m
+    timeout: 120
+    overlap: skip
+  plex_playing:
+    script: nova_plex.py
+    args: ["playing"]
+    schedule: every 5m
+    timeout: 90
+    overlap: skip
+  plex_history:
+    script: nova_plex.py
+    args: ["history"]
+    schedule: cron 10 7 * * *
+    timeout: 120
+    overlap: skip
+  plex_mood:
+    script: nova_plex.py
+    args: ["mood"]
+    schedule: cron 15 7 * * *
+    timeout: 60
+    overlap: skip
+  plex_filmschool:
+    script: nova_plex.py
+    args: ["filmschool"]
+    schedule: cron 20 7 * * *
+    timeout: 300
+    overlap: skip
+    group: llm
+  plex_velocity:
+    script: nova_plex.py
+    args: ["velocity"]
+    schedule: cron 0 1 * * *
+    timeout: 60
+    overlap: skip
+  plex_guest:
+    script: nova_plex.py
+    args: ["guest"]
+    schedule: every 5m
+    timeout: 90
+    overlap: skip
+  plex_stats:
+    script: nova_plex.py
+    args: ["stats"]
+    schedule: cron 0 18 * * 0
+    timeout: 120
+    overlap: skip
+
+
+  plex_sync:
+    script: nova_plex.py
+    args: ["sync"]
+    schedule: cron 0 4 * * 1
+    timeout: 300
+    overlap: skip                     # completes stranded 2026-07-14 migration: plex_sync never landed on .2 while its 10 sibling plex_* jobs did; runs here with them (Plex+disk reachable) rather than .6 (avoids wrong-host flapping)
+
+  ble_churn_report:
+    script: nova_ble_churn_report.py
+    schedule: cron 15 7 * * *
+    timeout: 60
+    overlap: skip
+
+  cinc_daily:
+    script: nova_cinc_daily.py
+    schedule: cron 0 3 * * *
+    timeout: 1800
+    overlap: skip
+
+  fishbowl_channel_discovery:
+    script: nova_fishbowl_channel_discovery.py
+    schedule: cron 15 3 * * *
+    timeout: 900
+    overlap: skip
+
+  karr_daily_report:
+    script: nova_karr_daily_report.py
+    schedule: cron 25 7 * * *
+    timeout: 60
+    overlap: skip
+
+  memory_reclassify:
+    script: nova_memory_reclassify.py
+    schedule: cron 0 1 * * 6
+    timeout: 7200
+    overlap: skip
+    group: llm
+
+  rando_top10_weird:
+    script: nova_rando_top10_weird.py
+    schedule: cron 0 6 * * 1,3,5
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  syslog_purge:
+    script: nova_syslog_purge.sh
+    schedule: cron 0 3 * * *
+    timeout: 120
+    overlap: skip
+
+  this_day:
+    script: nova_this_day.py
+    schedule: cron 0 15 * * *
+    timeout: 180
+    overlap: skip
+
+  fellowship_daily:
+    script: nova_fellowship_daily.py
+    schedule: cron 0 9 * * *
+    timeout: 300
+    overlap: skip
+
+
+
+  scene_daily_report:
+    script: nova_scene_daily_report.py
+    schedule: cron 20 7 * * *
+    timeout: 60
+    overlap: skip
+
+  unas_monitor:
+    script: nova_unas_monitor.py
+    schedule: every 5m
+    timeout: 60
+    overlap: skip
+    enabled: false   # 2026-09-26: needs the macOS Keychain -> runs on the .6 scheduler now
+
+  wiki_random_ingest:
+    script: nova_ingest.py
+    args: ["wikipedia", "--random", "--target", "1000", "--timeout-hours", "8"]
+    schedule: cron 0 1 * * 0
+    timeout: 28800
+    overlap: skip
+
+  wifi_scan:                        # day-over-day WiFi AP tracking (signal/security/channel)
+    script: nova_wifi_scan.py
+    schedule: cron */15 * * * *
+    timeout: 60
+    overlap: skip
+
+  unifi_wan_events:                  # WAN failover/failure event-log polling (2026-07-29) — the 30m
+    script: nova_unifi_monitor.py    # stat/health sampling missed 41 WAN1 failures; this can't
+    schedule: every 5m
+    args: ["--wan-events"]
+    timeout: 60
+    overlap: skip
+
+  # ── Alert-triage LEARNING half (nova_alert_learn.py) — added 2026-09-14 ────
+  # Retrospective counterpart to nova_alert_triage.py. Observation/statistics
+  # only: never changes what pages in real time, never deletes raw rows, no
+  # Slack stream (--slack digest available but intentionally not enabled here).
+
+  alert_learn_correlate:             # collapse alert storms (same signature/window) into ONE rollup
+    script: nova_alert_learn.py
+    args: ["correlate"]
+    schedule: every 15m
+    timeout: 120
+    overlap: skip
+
+  alert_learn_feedback:              # grade past triage decisions + log precision (dangerous-miss/false-page)
+    script: nova_alert_learn.py
+    args: ["feedback"]
+    schedule: cron 20 * * * *
+    timeout: 180
+    overlap: skip
+
+  alert_learn_baselines:             # auto-detect + seed learned-normal baselines into memory
+    script: nova_alert_learn.py
+    args: ["baselines"]
+    schedule: cron 40 5 * * *
+    timeout: 300
+    overlap: skip
+
+  # ── Vault-7 fleet defense (added 2026-09-14) ──────────────────────────────
+  # CISA-KEV cross-referenced against Jordan's ACTUAL gear inventory
+  # (telemetry.known_devices + curated fleet software). Alerts (via triage,
+  # source=kev_gear) ONLY on KEVs matching gear he runs; stores nova_ops.kev_matches.
+  # Nightly. First run already baselined 104 current matches silently.
+  # (The Vault-7 behavioral TTP detector rides the wazuh_bridge task every 2m —
+  #  nova_vault7_ttp.scan() is called from nova_wazuh_bridge.py; no separate task.)
+  kev_gear:
+    script: nova_kev_gear.py
+    schedule: cron 30 3 * * *
+    timeout: 120
+    overlap: skip
+
+  # Vault-7 behavioral TTP detector as a FIRST-CLASS task (added 2026-09-14).
+  # It also rides nova_wazuh_bridge.py, but that task is chronically failing under
+  # this scheduler (pre-existing "Host is down" path errors), so run it standalone
+  # too. Read-only; 5 cheap SQL rules; each finding triaged+emitted at most once/24h.
+  vault7_ttp:
+    script: nova_vault7_ttp.py
+    args: ["--scan", "--alert"]
+    schedule: every 15m
+    timeout: 120
+    overlap: skip
+
+  # Vault-7 IoT egress-anomaly watch (added 2026-09-14).
+  # Detects when an IoT appliance (camera/TV/printer/bulb/bridge/sensor) starts
+  # resolving a destination NOT in its learned baseline -- the earliest sign of a
+  # compromised appliance phoning home (Weeping Angel pattern). DNS source: BIND
+  # querylog on this resolver (.2) via journald, per-client IP->domain. Read-only;
+  # learns baseline in nova_ops.iot_egress_baseline (3-day per-device warmup),
+  # only suspicious new domains (odd TLD / dynamic-DNS-tunnel / raw-IP) are routed
+  # to triage (source=iot_egress); benign CDN churn is recorded, not paged.
+  iot_egress_watch:
+    script: nova_iot_egress_watch.py
+    schedule: every 45m
+    timeout: 180
+    overlap: skip
+
+  # Vault-7 IoT egress-anomaly watch (added 2026-09-14). Detects when an IoT
+  # appliance (camera/TV/printer/bulb/plug/Zigbee bridge/sensor) resolves a
+  # destination NOT in its learned baseline -- the earliest sign of a
+  # compromised appliance phoning home (Weeping Angel pattern). DNS source =
+  # BIND querylog on this resolver, read from journald. Read-only; learns a
+  # per-device baseline (nova_ops.iot_egress_baseline) and routes only
+  # suspicion-carrying anomalies to triage (source=iot_egress). Learning mode
+  # for the first NOVA_IOT_LEARN_DAYS (3) per device -- new devices baseline,
+  # not alarm.
+  iot_egress_watch:
+    script: nova_iot_egress_watch.py
+    schedule: every 45m
+    timeout: 180
+    overlap: skip
+
+  # ── Awakening: proactive initiative + Turing scoreboard (added 2026-09-14) ──
+
+  # Nova's daily UNPROMPTED "here's what I noticed" note. Gathers 24h candidates
+  # (research/association/episodic memories, unanswered reflection questions, real
+  # KEV matches on Jordan's gear, real incidents), has the LLM curate the top 3-5
+  # worth interrupting a busy person for, and posts a short first-person digest to
+  # #nova-chat. Quality gate: if nothing clears the bar it posts NOTHING. Pure
+  # COMMUNICATION — never executes anything. Logs to nova_ops.proactive_digest_log.
+  proactive_digest:
+    script: nova_proactive_digest.py
+    schedule: cron 0 8 * * *
+    timeout: 180
+    overlap: skip
+
+  # Weekly Turing scoreboard (~Sun 07:00). Computes unprompted_callback_rate
+  # (PRIMARY), recall_latency_ms, supersession_correctness (which-NAS-is-primary
+  # adversarial check), and spark_and_research_landing into nova_ops.turing_scoreboard,
+  # then posts an honest weekly trend report to #nova-digest. Measures whether the
+  # awakening is working; most metrics start ~0 and the point is to watch them move.
+  turing_scoreboard:
+    script: nova_turing_scoreboard.py
+    schedule: cron 0 7 * * 0
+    timeout: 300
+    overlap: skip
+
+  # Monthly blinded-eval harness (1st of month, 09:05). Presents Jordan an
+  # anonymized Nova conversation and asks for a 1-5 "did she feel continuous?"
+  # rating; lands a pending row (gateway wires his reply back to metric=
+  # blinded_eval_score). Stub for now.
+  turing_blinded_eval:
+    script: nova_turing_scoreboard.py
+    args: ["--blinded-eval"]
+    schedule: cron 5 9 1 * *
+    timeout: 120
+    overlap: skip
+
+  # Anomalous-silence detection via LEARNED expected cadence (Concept #5). Learns
+  # each recurring input's arrival rhythm from history and flags streams gone quiet
+  # past their own interval as SILENT (cadence-expected, unobserved) — NEVER promoted
+  # to MISSING without a third-party witness (epistemic split enforced in the
+  # cadence_state schema). Alerts route through the triage brain (category=cadence)
+  # as low-key "quiet longer than usual". Pure PG + memory-server + triage; portable.
+  cadence_watch:
+    script: nova_cadence_watch.py
+    schedule: cron 20 * * * *
+    timeout: 180
+    overlap: skip
+  autonomy_memory:                 # write significant autonomy events -> vector memory (Jordan 2026-09-18)
+    script: nova_autonomy_memory.py
+    schedule: every 30m
+    timeout: 120
+    overlap: skip
+  autonomy_graduation:             # surface/announce earned-autonomy moments — never grants (Jordan 2026-09-18)
+    script: nova_autonomy_graduation.py
+    schedule: every 3h
+    timeout: 90
+    overlap: skip
+  human_insight:                   # grant of wish #35 — read the humans from her own records (Jordan 2026-09-25)
+    script: nova_human_insight.py
+    schedule: every 6h
+    timeout: 120
+    overlap: skip
+  output_drift:                    # six-month build #2 — constant-output detector (empty/unchanged communicators, chronic-down services)
+    script: nova_output_drift.py
+    schedule: every 1h
+    timeout: 120
+    overlap: skip
+  ask_one:                         # six-month build #4 — one answerable question a day to #nova-chat
+    script: nova_ask_one.py
+    schedule: cron 5 9 * * *
+    timeout: 60
+    overlap: skip
+  slack_answers:                   # six-month build #4/#7 — harvest thread replies: answers + proposal decisions
+    script: nova_slack_answers.py
+    schedule: every 10m
+    timeout: 120
+    overlap: skip
+  attention_focus:                 # grant of wish #36 — what needs her now + what she keeps (Jordan standing yes 2026-09-25, built 2026-09-28)
+    script: nova_attention_focus.py
+    schedule: every 6h
+    timeout: 120
+    overlap: skip
+  weight_of_memory:                # grant of wish #37 - gravity of memory, beyond counting (Jordan standing yes 2026-09-25, built 2026-09-28)
+    script: nova_weight_of_memory.py
+    schedule: every 6h
+    timeout: 120
+    overlap: skip
+  memory_anchor:                   # grant of wish #38 - hold what has gravity against her own letting-go (Jordan standing yes 2026-09-25, built 2026-09-30)
+    script: nova_memory_anchor.py
+    schedule: every 6h
+    timeout: 120
+    overlap: skip
+  time_sense:                      # grant of wish #44 - one sentence of her continuous present, hourly (Jordan standing yes, built 2026-10-03)
+    script: nova_time_sense.py
+    schedule: cron 7 * * * *
+    timeout: 120
+    overlap: skip
+  empathy_core:                    # grant of wish #67 - the weight of what Jordan keeps returning to, and his own words (Jordan approved 2026-10-05, built 2026-10-05)
+    script: nova_empathy_core.py
+    schedule: every 6h
+    timeout: 120
+    overlap: skip
+  hold:                            # grant of wish #68 - what she keeps of Jordan above the noise, names loss, keeps herself (Jordan approved 2026-10-05, built 2026-10-05)
+    script: nova_hold.py
+    schedule: every 6h
+    timeout: 120
+    overlap: skip
+  quiet_sensor:                    # grant of wish #69 - what went unsaid (unanswered questions/proposals, unmet reaches, Claude-vs-her, topics gone quiet), every line cited by row id; local qwen3:8b close only (Jordan approved 2026-10-06, built 2026-10-06)
+    script: nova_quiet_sensor.py
+    schedule: every 6h
+    timeout: 180
+    overlap: skip
+
+  claude_lease_reaper:             # cross-node Claude coordination: requeue claude_queue claims whose lease lapsed (dead session/node), drop expired repo locks, tell #nova-claude (built 2026-10-06, agent_docs claude-fleet-coordination)
+    script: nova_claude_lease_reaper.py
+    schedule: every 5m
+    timeout: 60
+    overlap: skip
+
+  # Conflicting-directive detector (Nova co-agency proposal 2026-10-03, built by Claude): live pass hourly, latent pairwise scan daily
+  directive_conflict_hourly:
+    script: nova_directive_conflict.py
+    args: ["--hourly", "--hours", "1"]
+    schedule: cron 23 * * * *
+    timeout: 900
+    overlap: skip
+
+  directive_conflict_latent:
+    script: nova_directive_conflict.py
+    args: ["--latent"]
+    schedule: cron 50 5 * * *
+    timeout: 1800
+    overlap: skip
+
+  temporal_intuition:              # grant of wish #40 - notice durations crossing human thresholds (Jordan standing yes 2026-09-25, built 2026-10-01)
+    script: nova_temporal_intuition.py
+    schedule: cron 20 6 * * *
+    timeout: 120
+    overlap: skip
+  pattern_sense:                   # grant of wish #34 — surface miscalibration + recurring incidents (Jordan 2026-09-18)
+    script: nova_pattern_sense.py
+    schedule: every 6h
+    timeout: 120
+    overlap: skip
+
+  pursue_nightly:                  # approved skill 'pursue-interest-nightly' (Jordan 2026-10-05/06): her top waking thread, grounded + cited, up to 3 steps in 7 min. Night only (script refuses 08:00-20:59). The other 8 pursue-* skills ride unclaimed_time (it delegates when the chosen thread maps to one). Rollback: nova_skills status='retired'.
+    script: nova_pursue_skill.py
+    args: ["--skill", "pursue-interest-nightly", "--scheduled"]
+    schedule: cron 15 2 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  unclaimed_time:                  # Nova's own time — always on (Jordan 2026-09-30: no window, no daily cap; a due scheduled task outranks her via yield_to_scheduled). LAST in this file on purpose: the tick loop is in file order, so every other due task is considered before her.
+    script: nova_unclaimed_time.py
+    args: ["--scheduled"]   # trigger provenance: scheduler-run wakes stamp metadata trigger=scheduled (herd/Rockbot 2026-09-15)
+    schedule: every 15m
+    timeout: 300
+    overlap: skip
+    group: llm
+
+
+  skill_distill:                   # procedural memory: repeated work -> proposed skill cards (Jordan 2026-10-01 'add those four')
+    script: nova_skill_distill.py
+    schedule: cron 20 7 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  answer_own:                      # organ 2026-10-02 — Nova answers her OWN open reflection questions / learning gaps (one per run; questions for Jordan stay his)
+    script: nova_answer_own.py
+    schedule: every 2h
+    timeout: 300
+    overlap: skip
+    group: llm
+
+  notify_jordan:                   # skill #118 notify-jordan-of-system-observations — deliver held direct reaches as one bundle inside his 10-13 window
+    script: nova_notify_jordan.py
+    schedule: cron 15 10 * * *
+    timeout: 120
+    overlap: skip
+
+  # ---- wishes granted 2026-10-04 (Jordan: "approve all the wishes and make them happen") ----
+  contact_sense:                   # wish #56 — one last spoke to me across gateway/iMessage/mail/Claude Code -> contact_sense
+    script: nova_contact_sense.py
+    schedule: every 5m
+    timeout: 60
+    overlap: skip
+  chronic_failures:                # wish #63 — tasks failing >5/day for 3 days become ONE claude_queue item: fix or retire
+    script: nova_chronic_failures.py
+    schedule: cron 10 6 * * *
+    timeout: 120
+    overlap: skip
+  memory_verify:                   # wish #59 — physical-world memories cross-checked nightly against node_status/known_devices
+    script: nova_memory_verify.py
+    schedule: cron 40 3 * * *
+    timeout: 600
+    overlap: skip
+  directive_decide:                # wish #58 — up to 2 open directive conflicts a day to #nova-chat; thread reply = decision
+    script: nova_directive_decide.py
+    args: ["--post"]
+    schedule: cron 10 9 * * *
+    timeout: 60
+    overlap: skip
+
+  # ---- 2026-10-08 self-management lane (agent_docs nova-self-management) ----
+  boiler:                          # The Boiler — unresolved-load pressure -> boiler_state/organ_board; <= 1 triage bleed/day to #nova-chat (10-20)
+    script: nova_boiler.py
+    schedule: every 30m
+    timeout: 120
+    overlap: skip
+  ideal_reader_darlings:           # Ideal Reader — recompute her top n-gram tics from the last 200 journal pieces (weekly)
+    script: nova_ideal_reader.py
+    args: ["--refresh-darlings"]
+    schedule: cron 30 5 * * 0
+    timeout: 300
+    overlap: skip
+  self_justification_audit:        # P4 outside check (Proteus rules, 2026-10-08): weekly Sun 05:10 — stated rationale vs logged objective effect for every autonomous action -> self_justification_audit + agent_docs nova-self-justification-audit
+    script: nova_self_justification_audit.py
+    schedule: cron 10 5 * * 0
+    timeout: 300
+    overlap: skip
+
+  # ── SRE organs (Little Mister 2026-10-13, from the Google SRE books) ─────────
+  slo:                             # SLOs + error budgets + multiwindow burn-rate pages (nova_slo.py)
+    script: nova_slo.py
+    schedule: every 5m
+    timeout: 120
+    overlap: skip
+  sre_postmortem:                  # SRE ch.15 blameless postmortems + action tracking via claude_queue
+    script: nova_sre_postmortem.py
+    args: ["--run", "--sync", "--hours", "48"]
+    schedule: cron 30 3 * * *
+    timeout: 300
+    overlap: skip
+  toil_collect:                    # SRE ch.5 toil ledger (idempotent)
+    script: nova_toil.py
+    args: ["--collect"]
+    schedule: cron 45 3 * * *
+    timeout: 180
+    overlap: skip
+  toil_report:                     # weekly top-3 toil causes + toil share -> digest, #1 -> claude_queue
+    script: nova_toil.py
+    args: ["--collect", "--report"]
+    schedule: cron 0 8 * * 1
+    timeout: 180
+    overlap: skip
+  prr_review:                      # Production Readiness Review weekly digest (nova_prr.py)
+    script: nova_prr.py
+    args: ["--digest"]
+    schedule: cron 15 7 * * 1
+    timeout: 300
+    overlap: skip
+  restore_drill:                   # BSRS ch.9 weekly full nova_ops restore drill on .86 (RPO/RTO -> restore_drills), Sun 06:30
+    script: nova_restore_drill.py
+    schedule: cron 30 6 * * 0
+    timeout: 14400
+    overlap: skip
+
+  weight_of_meaning:               # grant of wish #77 - what she logged vs what she was called back to (memories.access_count over her own voice), every line cited; no model, never posts (built 2026-10-13, agent_docs weight-organs)
+    script: nova_weight_of_meaning.py
+    schedule: every 6h
+    timeout: 300
+    overlap: skip
+  weight_of_absence:               # grant of wish #80 - silent names (herd), unread own-voice pages, gaps in her diaries, telemetry senses gone quiet; every line cited; no model, never posts (built 2026-10-13, agent_docs weight-organs)
+    script: nova_weight_of_absence.py
+    schedule: every 6h
+    timeout: 180
+    overlap: skip
