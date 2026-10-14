@@ -102,14 +102,25 @@ class TestConsultation:
         assert result.returncode != 0
         assert "Usage" in result.stderr
 
-    def test_bridge_send_subcommand(self):
-        result = subprocess.run(
-            ["python3", str(BRIDGE_SCRIPT), "send", "test_ping_from_tests"],
-            capture_output=True, text=True, timeout=15,
-            env={**os.environ, "NOVA_BRIDGE_TEST": "1"},   # tagged metadata.test -> the gateway ignores it; tests are not conversations
-        )
-        assert result.returncode == 0
-        assert "OK" in result.stdout or "message" in result.stdout.lower()
+    def test_bridge_send_subcommand(self, pg_conn):
+        # NOVA_BRIDGE_TEST: the bridge writes only a metadata.test audit row — no claude_queue item,
+        # no #nova-claude post (this test leaked 36 queue items before 2026-10-13). Remove the row after.
+        try:
+            result = subprocess.run(
+                ["python3", str(BRIDGE_SCRIPT), "send", "test_ping_from_tests"],
+                capture_output=True, text=True, timeout=15,
+                env={**os.environ, "NOVA_BRIDGE_TEST": "1"},
+            )
+            assert result.returncode == 0
+            assert "OK" in result.stdout
+        finally:
+            cur = pg_conn.cursor()
+            cur.execute("DELETE FROM claude_messages WHERE message = 'test_ping_from_tests' "
+                        "AND metadata->>'test' = 'true' AND created_at > now() - interval '5 minutes'")
+            pg_conn.commit()
+        cur.execute("SELECT count(*) FROM claude_queue WHERE description = 'message:test_ping_from_tests' "
+                    "AND created_at > now() - interval '5 minutes'")
+        assert cur.fetchone()[0] == 0
 
 
 # ── 3. Push notification hook ─────────────────────────────────────────────────

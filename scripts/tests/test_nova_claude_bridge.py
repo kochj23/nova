@@ -167,6 +167,13 @@ class TestIntegration(unittest.TestCase):
         meta = [json.loads(p[3]) for q, p in s.pg if "INSERT INTO claude_messages" in q][0]
         self.assertTrue(meta["test"])
 
+    def test_test_env_never_reaches_live_queue_or_slack(self):
+        with _Sinks() as s, patch.dict(os.environ, {"NOVA_BRIDGE_TEST": "1"}):
+            out = _out(cb.cmd_send, types.SimpleNamespace(message=["test_ping_from_tests"]))
+        self.assertFalse([q for q, _ in s.pg if "claude_queue" in q])
+        cb._post_slack_claude.assert_not_called()
+        self.assertIn("OK", out)
+
     def test_editing_lock_uses_prefix_and_ttl(self):
         with _Sinks() as s:
             _out(cb.cmd_editing, types.SimpleNamespace(filepath="/tmp/x.py"))

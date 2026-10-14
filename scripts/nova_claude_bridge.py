@@ -238,6 +238,12 @@ def cmd_send(args):
         fetchall=False
     )
 
+    if meta.get("test"):
+        # A test send stops at the tagged audit row: no claude_queue item, no #nova-claude post.
+        # (2026-10-13: 36 "message:test_ping_from_tests" rows had leaked into the live queue.)
+        print(f"OK — test message recorded, not queued ({len(message)} chars)")
+        return
+
     # Insert into claude_queue for Nova to pick up
     pg_query(
         "INSERT INTO claude_queue (session_id, status, priority, description, context) "
