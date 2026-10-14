@@ -188,6 +188,10 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(nf._route("info", "email"), "C_EMAIL")
         self.assertEqual(nf._route("info", None), "C_FEED")
         self.assertEqual(nf._route("bogus", "x"), "C_FEED")
+        self.assertEqual(nf._route("critical", "task-sentinel"), "C_DIGEST")   # SLO covers it: ticket
+        self.assertEqual(nf._route("warning", "traffic_watch"), "C_DIGEST")
+        self.assertEqual(nf._route("critical", "traffic_watch"), "C_ALERTS")   # fire/smoke still pages
+        self.assertEqual(nf._route("critical", "slo"), "C_ALERTS")
 
     def test_dedup_window(self):
         self.assertEqual(nf._dedup_window(_ev(level="info")), nf.DEDUP_WINDOW_S)

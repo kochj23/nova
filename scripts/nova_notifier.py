@@ -111,6 +111,20 @@ DIGEST_CATEGORIES = frozenset({
     "news", "garden", "backup",
 })
 
+# Tickets, not pages (2026-10-13, SRE book ch.6 / Workbook ch.5): cause-based alerts that an SLO in
+# nova_slo.py now covers go to #nova-digest at these levels instead of #nova-alerts, and never relay
+# over the mesh. The SLO burn-rate alert (category `slo`) is the page; these explain why. Before this,
+# these categories were ~600 of the ~860 posts a week to #nova-alerts. traffic_watch keeps paging
+# for critical (fire/smoke near home); its warnings (crashes, closures) are digest material.
+TICKET_CATEGORIES = {
+    "task-sentinel":      ("warning", "critical"),   # covered by SLO scheduled_jobs
+    "stale-code":         ("warning", "critical"),   # daemon running old code: fix on the next pass
+    "incident_recurring": ("warning", "critical"),   # nova_sre_postmortem files these with action items
+    "output_drift":       ("warning", "critical"),
+    "directive_conflict": ("warning", "critical"),   # Nova decides these herself (directive_decide)
+    "traffic_watch":      ("warning",),
+}
+
 # Dedup/rate-limit: a repeat of the same dedup_key within this window is folded
 # into the prior sent alert (count bumped) instead of re-posted.
 # Emitters can widen the window per-event via meta {"dedup_window_s": 86400}
@@ -135,7 +149,13 @@ except Exception:
         return False
 
 
+def _is_ticket(level: str, category: str | None) -> bool:
+    return level in TICKET_CATEGORIES.get(category or "", ())
+
+
 def _route(level: str, category: str | None) -> str:
+    if _is_ticket(level, category):
+        return nova_config.SLACK_DIGEST
     if category and category in CATEGORY_OVERRIDE:
         return CATEGORY_OVERRIDE[category]
     if level == "info" and category in DIGEST_CATEGORIES:
@@ -288,6 +308,8 @@ def drain(verbose=False, only_source=None) -> int:
                            f"{summary}\n_correlating further events on this host into this incident{by}_")
                 else:
                     msg = _fmt(ev)
+                if _is_ticket(ev["level"], ev["category"]):
+                    msg = f":ticket: {msg}"
 
                 # 3.5) AI triage — fail-open to paging (see _triage_event above).
                 #      suppress -> don't post; downgrade -> post to #nova-feed w/ note;
@@ -317,7 +339,7 @@ def drain(verbose=False, only_source=None) -> int:
                     # never mark such an event 'sent' (it would vanish unseen).
                     if not nova_config.post_both(msg, slack_channel=channel):
                         raise RuntimeError(f"post_both delivered nowhere (channel={channel})")
-                    if ev["level"] == "critical":
+                    if ev["level"] == "critical" and not _is_ticket(ev["level"], ev["category"]):
                         _mesh_relay(ev["title"], ev.get("body"))
                     cur.execute(
                         "UPDATE telemetry.events SET status='sent', channel=%s, sent_at=now() "
