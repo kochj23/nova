@@ -367,6 +367,12 @@ tasks:
     overlap: queue
 
 
+  studio_state_backup:              # daily 03:30 — Signal keys, Home Assistant, NovaHomeKit, ~/.openclaw -> NAS, encrypted (2026-10-14)
+    script: nova_studio_state_backup.sh
+    schedule: cron 30 3 * * *
+    timeout: 1800
+    overlap: skip
+
   backup_restore_test:
     script: nova_backup_restore_test.py
     schedule: cron 0 4 1 * *
@@ -463,7 +469,7 @@ tasks:
   daily_threat_assessment:                # inbound-email threat scan + rollup of fishbowl/airwaves/security reports -> #nova-info
     script: nova_daily_threat_assessment.py
     schedule: cron 0 10 * * *              # 10am -- trails fishbowl_daily/operations_security/local_airwaves so rollup links resolve
-    timeout: 900
+    timeout: 2025
     overlap: skip
 
 
