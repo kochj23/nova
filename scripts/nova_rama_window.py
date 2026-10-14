@@ -13,9 +13,9 @@ rama_window/retention_hours, overriding the defaults below. Daily, for every ope
 entry it computes when each source's evidence for the case window (Mina's +/-2 h around the
 latest sighting) rotates out, keeps the items expiring within 48 h, ranks them most
 perishable first (RFC 3227 order of volatility), records them in rama_window and files one
-claude_queue line with the export command per item. No automatic snapshots.
+claude_queue line per item a person must act on (Frigate media). DB-row evidence is snapshotted automatically.
 
-Snapshot step (manual, the export command): --snapshot ID writes Mina's Typescript for the
+Snapshot step (automatic since 2026-10-13 for DB-row sources; --snapshot ID by hand still works): it writes Mina's Typescript for the
 case (raw DB rows only, no media, no face data) to the data volumes, and the daily run deletes
 that file once the case is no longer open. Camera media is never copied by this organ; the
 queue line says when person footage is already past the face TTL (service_config
@@ -51,6 +51,13 @@ DEFAULT_RETENTION_H = {
     "adsb": 4320,            # telemetry.overhead_flights: no pruning job found; 180 d assumed
 }
 TYPESCRIPT_SOURCES = ("syslog", "presence", "adsb")   # rows Mina's Typescript preserves
+# Case kinds a source can hold evidence for; a source not named here is relevant to every kind. 2026-10-13
+# (queue #3340/#3347/#3369/#3493): every open entry (network devices, presence silences, detector drift) was
+# listed daily for police-scanner audio, which none of them involve and which has no local copy to save anyway.
+SOURCE_KINDS = {"scanner_audio": {"scanner_code"}}
+# Kinds about Nova's own software, where camera footage cannot hold evidence.
+SOURCE_SKIP_KINDS = {"frigate": {"substrate_change", "substrate_mismatch", "model_behaviour_change",
+                                 "peaslee_chain_break", "oscillation"}}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS rama_window (
@@ -94,6 +101,9 @@ def due(cases: list, ret: dict, now: datetime, horizon_h: float = HORIZON_H) -> 
     for c in cases:
         start, _end = window(c["last_seen"])
         for src, exp in expiries(start, ret).items():
+            if (src in SOURCE_KINDS and c["kind"] not in SOURCE_KINDS[src]) \
+                    or c["kind"] in SOURCE_SKIP_KINDS.get(src, ()):
+                continue
             left = (exp - now).total_seconds() / 3600
             if 0 < left <= horizon_h:
                 # ponytail: value of information = 1 for every item, so rank is pure volatility.
@@ -200,44 +210,67 @@ def run(dry: bool = False, horizon_h: float = HORIZON_H, now: datetime | None = 
         if W.get_config(cur, SERVICE, "retention_hours", None) is None:
             W.set_config(cur, SERVICE, "retention_hours", DEFAULT_RETENTION_H, by="nova_rama_window")
         record(cur, items)
-        if items:
-            file_queue(cur, *queue_text(items, now, ttl))
-        log(f"recorded {len(items)} item(s); {expired} snapshot(s) expired")
+        saved = auto_preserve(cur, items)
+        manual = [i for i in items if i["case_id"] not in saved or i["source"] not in TYPESCRIPT_SOURCES]
+        if manual:
+            file_queue(cur, *queue_text(manual, now, ttl))
+        log(f"recorded {len(items)} item(s); preserved {len(saved)} typescript(s); "
+            f"{len(manual)} item(s) queued for a person; {expired} snapshot(s) expired")
         return items
     finally:
         conn.close()
 
 
+def _snapshot(cur, case_id: int, dry: bool = False) -> str | None:
+    import nova_mina_typescript as M
+    case = M.load_case(cur, case_id)
+    if not case:
+        log(f"no Buick 8 entry #{case_id}")
+        return None
+    text = M.build(cur, case)
+    n = text.count("\n| 20")
+    if dry:
+        out = W.get_config(cur, M.SERVICE, "out_dir", M.DEFAULT_OUT)
+        log(f"DRY RUN: would preserve typescript of #{case_id} ({n} timeline lines) under {out}")
+        return text
+    p = M.write(cur, case, text)
+    ensure_schema(cur)
+    cur.execute("INSERT INTO rama_window (case_id, source, status, path) VALUES (%s,'typescript','snapshot',%s) "
+                "ON CONFLICT DO NOTHING", (case_id, str(p)))
+    log(f"preserved #{case_id} -> {p}")
+    return str(p)
+
+
 def snapshot(case_id: int, dry: bool = False) -> str | None:
     """The preservation step: Mina's Typescript for the case, on the data volumes."""
-    import nova_mina_typescript as M
     conn = W.connect()
     try:
-        cur = conn.cursor()
-        case = M.load_case(cur, case_id)
-        if not case:
-            log(f"no Buick 8 entry #{case_id}")
-            return None
-        text = M.build(cur, case)
-        n = text.count("\n| 20")
-        if dry:
-            out = W.get_config(cur, M.SERVICE, "out_dir", M.DEFAULT_OUT)
-            log(f"DRY RUN: would preserve typescript of #{case_id} ({n} timeline lines) under {out}")
-            return text
-        p = M.write(cur, case, text)
-        ensure_schema(cur)
-        cur.execute("INSERT INTO rama_window (case_id, source, status, path) VALUES (%s,'typescript','snapshot',%s) "
-                    "ON CONFLICT DO NOTHING", (case_id, str(p)))
-        log(f"preserved #{case_id} -> {p}")
-        return str(p)
+        return _snapshot(conn.cursor(), case_id, dry)
     finally:
         conn.close()
+
+
+def auto_preserve(cur, items: list) -> set:
+    """Take the snapshot ourselves for every case whose DB-row evidence (syslog/presence/adsb) is about to
+    rotate out, so it no longer waits on a person running --snapshot. Raw rows only, no media, no face data:
+    the same typescript --snapshot writes. A case already snapshotted since its latest sighting is skipped.
+    Returns the case ids now preserved. One failure never stops the others."""
+    out = set()
+    for cid in sorted({i["case_id"] for i in items if i["source"] in TYPESCRIPT_SOURCES}):
+        have = _q(cur, "SELECT 1 FROM rama_window r JOIN unexplained_events u ON u.id=r.case_id "
+                       "WHERE r.case_id=%s AND r.status='snapshot' AND r.ts >= u.last_seen LIMIT 1", (cid,))
+        try:
+            if have or _snapshot(cur, cid):
+                out.add(cid)
+        except Exception as e:  # noqa: BLE001 — the item stays in the queue line for a person
+            log(f"auto-snapshot of #{cid} failed: {e}")
+    return out
 
 
 def selftest() -> int:
     now = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
     ret = {"scanner_audio": 24, "frigate": 288, "syslog": 2160}
-    cases = [{"id": 1, "kind": "k", "last_seen": now - timedelta(hours=10)},     # audio expires in 12 h
+    cases = [{"id": 1, "kind": "scanner_code", "last_seen": now - timedelta(hours=10)},  # audio expires in 12 h
              {"id": 2, "kind": "k", "last_seen": now - timedelta(hours=250)}]    # frigate in 40 h
     items = due(cases, ret, now)
     assert [(i["case_id"], i["source"]) for i in items] == [(1, "scanner_audio"), (2, "frigate")], items

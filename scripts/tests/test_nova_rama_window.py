@@ -50,7 +50,7 @@ def writes(cur):
 
 
 ROUTES = {
-    "WHERE status='open'": [(33, "sensor_silence", NOW - timedelta(hours=10)),      # audio due in 12 h
+    "WHERE status='open'": [(33, "scanner_code", NOW - timedelta(hours=10)),        # audio due in 12 h
                             (34, "adsb_squawk", NOW - timedelta(hours=250))],        # frigate due in 40 h
     "to_regclass": [(None,)],
 }
@@ -82,7 +82,7 @@ class TestSecurity(unittest.TestCase):
 
 class TestPerformance(unittest.TestCase):
     def test_due_on_10k_cases(self):
-        cases = [{"id": i, "kind": "k", "last_seen": NOW - timedelta(seconds=i)} for i in range(10000)]
+        cases = [{"id": i, "kind": "scanner_code", "last_seen": NOW - timedelta(seconds=i)} for i in range(10000)]
         t = time.monotonic()
         items = R.due(cases, R.DEFAULT_RETENTION_H, NOW)
         self.assertLess(time.monotonic() - t, 3.0)
@@ -123,6 +123,35 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(R.due(gone, ret, NOW), [])
         self.assertEqual(R.due(far, ret, NOW), [])
         self.assertEqual(R.due([], ret, NOW), [])
+
+    def test_scanner_audio_only_for_scanner_cases(self):
+        """2026-10-13: presence/detector/network entries were listed daily for police-scanner audio."""
+        ret = {"scanner_audio": 24}
+        cases = [{"id": 1, "kind": "sensor_silence", "last_seen": NOW - timedelta(hours=10)},
+                 {"id": 2, "kind": "scanner_code", "last_seen": NOW - timedelta(hours=10)}]
+        self.assertEqual([i["case_id"] for i in R.due(cases, ret, NOW)], [2])
+        soft = [{"id": 3, "kind": "substrate_mismatch", "last_seen": NOW - timedelta(hours=250)},
+                {"id": 4, "kind": "network_device", "last_seen": NOW - timedelta(hours=250)}]
+        self.assertEqual([i["case_id"] for i in R.due(soft, {"frigate": 288}, NOW)], [4])
+
+    def test_auto_preserve_snapshots_db_row_evidence(self):
+        items = [{"case_id": 5, "source": "syslog"}, {"case_id": 5, "source": "presence"},
+                 {"case_id": 6, "source": "frigate"}, {"case_id": 8, "source": "adsb"}]
+        cur = FakeCur({"r.status='snapshot' AND r.ts >= u.last_seen": []})
+        with mock.patch.object(R, "_snapshot", side_effect=lambda c, cid, dry=False: None if cid == 8 else "/p") as sn, \
+                mock.patch("builtins.print"):
+            self.assertEqual(R.auto_preserve(cur, items), {5})      # once per case; frigate is never copied
+        self.assertEqual([c.args[1] for c in sn.call_args_list], [5, 8])
+
+    def test_auto_preserve_skips_fresh_snapshot_and_survives_errors(self):
+        items = [{"case_id": 5, "source": "syslog"}, {"case_id": 9, "source": "syslog"}]
+        cur = FakeCur({"r.status='snapshot' AND r.ts >= u.last_seen": [(1,)]})
+        with mock.patch.object(R, "_snapshot", side_effect=RuntimeError("nas")) as sn, mock.patch("builtins.print"):
+            self.assertEqual(R.auto_preserve(cur, items), {5, 9})
+        sn.assert_not_called()
+        cur = FakeCur({})
+        with mock.patch.object(R, "_snapshot", side_effect=RuntimeError("nas")), mock.patch("builtins.print"):
+            self.assertEqual(R.auto_preserve(cur, items), set())
 
     def test_queue_text(self):
         items = R.due([{"id": 5, "kind": "k", "last_seen": NOW}], {"syslog": 10}, NOW)

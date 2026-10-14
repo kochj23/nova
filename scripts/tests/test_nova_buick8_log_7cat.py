@@ -271,7 +271,7 @@ class RouteCur:
 
 def open_routes():
     """One open entry whose scanner audio expires in ~14 h of the REAL now (rama's run reads the clock)."""
-    return {"WHERE status='open'": [(33, "sensor_silence", datetime.now(timezone.utc) - timedelta(hours=10))],
+    return {"WHERE status='open'": [(33, "scanner_code", datetime.now(timezone.utc) - timedelta(hours=10))],
             "to_regclass": [(None,)]}
 
 
