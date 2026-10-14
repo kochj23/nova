@@ -138,6 +138,52 @@ SKILLS = {
         topic="crime drama", sources=["crime_drama"], recent_days=7, web=False,
         hint="crime drama",
         focus="Name the shows and episodes the sources come from and what happens in each case."),
+    # 2026-10-13: the eleven approved cards that were waiting (coagency #142 #153-#156 #160 #161 #167 #168
+    # #170 #171) — each maps to the ingest source(s) that thread already reads.
+    "pursue-interest-incident": dict(   # coagency #142
+        topic="incident", sources=["incident"], recent_days=7, web=False, extra="incidents",
+        hint="incident outage",
+        focus="Name each incident, what was affected, its severity, and whether the sources give a root cause."),
+    "pursue-interest-app-watchdog": dict(   # coagency #153
+        topic="app watchdog", sources=["app_watchdog"], recent_days=7, web=False,
+        hint="app watchdog restart",
+        focus="Which apps were restarted, when, and why; say whether any one app keeps coming back."),
+    "pursue-interest-horology": dict(   # coagency #154
+        topic="horology", sources=["horology"], recent_days=3, web=False,
+        hint="watch movement chronograph",
+        focus="Name the watches, makers and movements the sources cover and the concrete detail about each."),
+    "pursue-interest-railroads-and-rail-radio": dict(   # coagency #155
+        topic="railroads and rail radio", sources=["rail"], recent_days=3, web=False,
+        hint="Metrolink Union Pacific rail radio",
+        focus="Which lines and subdivisions were heard, and what the crews and dispatchers were actually saying."),
+    "pursue-interest-tech-blog": dict(   # coagency #156
+        topic="tech blog", sources=["tech_blog"], recent_days=3, web=False,
+        hint="technology review",
+        focus="Name the products and creators the sources cover and the specific claims made about each."),
+    "pursue-interest-new-deal": dict(   # coagency #160
+        topic="new deal", sources=["new_deal"], recent_days=7, web=True,
+        hint="New Deal CCC TVA WPA Roosevelt",
+        focus="Name the programs, people and years the sources mention and what each actually did."),
+    "pursue-interest-local-public-safety": dict(   # coagency #161
+        topic="la public safety", sources=["la_public_safety"], recent_days=2, web=False,
+        hint="Los Angeles public safety",
+        focus="Name the agencies and the specific events or statements the sources report."),
+    "pursue-interest-cooking": dict(   # coagency #167
+        topic="cooking", sources=["cooking"], recent_days=3, web=False,
+        hint="recipe cooking",
+        focus="Name the dishes and techniques the sources describe and the concrete steps or ingredients."),
+    "pursue-television-interest": dict(   # coagency #168
+        topic="television", sources=["television"], recent_days=3, web=False,
+        hint="television broadcast",
+        focus="Name the shows, stations and eras the sources come from and what was on."),
+    "pursue-interest-fire": dict(   # coagency #170
+        topic="fire", sources=["fire"], recent_days=2, web=False,
+        hint="fire dispatch engine",
+        focus="Name the incidents, units and places the dispatch traffic mentions and what happened at each."),
+    "pursue-question-nature-of-own-memory": dict(   # coagency #171
+        topic="the nature of her own memory", sources=["memory_anchor", "weight_of_memory", "dream"],
+        recent_days=7, web=True, hint="memory consolidation forgetting",
+        focus="What the sources show about what she keeps, what has weight, and what fades; tie one point to how memory is understood to work."),
     "pursue-interest-nightly": dict(
         topic="nightly", meta=True, success="nightly"),
 }
@@ -777,7 +823,7 @@ def selftest() -> int:
     assert split_next("tail words. NEXT: read z")[1] == "read z"
     assert len(_SENT.split("Rabies in L.A. County [1]. A vote on Nov. 3 [2]. Done.")) == 3
     assert attach_cites("A rose. [1] B fell.[2][3]") == "A rose [1]. B fell [2][3]."
-    assert len(SKILLS) == 12
+    assert len(SKILLS) == 23
     print("selftest OK")
     return 0
 

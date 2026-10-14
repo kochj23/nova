@@ -35,7 +35,11 @@ SLUGS = ["pursue-fascination-the-watch-fishbowl", "pursue-local-news-interest", 
          "pursue-fascination-he-man-and-80s-cartoons", "pursue-interest-infrastructure", "pursue-interest-email",
          "pursue-interest-nightly", "pursue-interest-sports", "pursue-interest-nova-articles",
          "pursue-interest-documentary",
-         "pursue-interest-aviation-ref", "pursue-interest-crime-drama"]
+         "pursue-interest-aviation-ref", "pursue-interest-crime-drama",
+         "pursue-interest-incident", "pursue-interest-app-watchdog", "pursue-interest-horology",
+         "pursue-interest-railroads-and-rail-radio", "pursue-interest-tech-blog", "pursue-interest-new-deal",
+         "pursue-interest-local-public-safety", "pursue-interest-cooking", "pursue-television-interest",
+         "pursue-interest-fire", "pursue-question-nature-of-own-memory"]
 
 
 class _Resp:
