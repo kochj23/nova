@@ -144,6 +144,25 @@ class TestUnit(unittest.TestCase):
         self.assertNotIn("household", kinds("the amygdala tags emotion"))
         self.assertNotIn("household", kinds('Bob Dylan\'s "Blowin\' in the Wind"'))
 
+    def test_public_figures_the_scrubber_keeps_are_not_flagged(self):
+        """2026-10-13: Amy Coney Barrett and a Bob Dylan tour quote were filed as household leaks."""
+        kinds = lambda s: [k for _, k, _ in C.scan_text(s)]  # noqa: E731
+        self.assertNotIn("household", kinds("Supreme Court nominee Amy Coney Barrett (2020)"))
+        self.assertNotIn("household", kinds("Dylan has played roughly 100 dates a year since."))
+        self.assertIn("household", kinds("Jordan asked Amy whether the bean was still there"))
+
+    def test_role_mailboxes_allowed_personal_addresses_flagged(self):
+        kinds = lambda s: [k for _, k, _ in C.scan_text(s)]  # noqa: E731
+        self.assertNotIn("email", kinds("write to security" + "@vendor.example.com for advisories"))
+        self.assertNotIn("email", kinds("logo icon" + "@2x.png"))
+        self.assertIn("email", kinds("Email from someone" + "@peer-domain.example re: hi"))
+        self.assertIn("email", kinds("running as user" + "@Some-Mac.local"))
+
+    def test_slug_is_not_high_entropy(self):
+        slug = "CVE-2023-37756-CWE-521-lead-to-malicious-plugin-upload-in-the-i-doit-Pro-25-and-below"
+        self.assertEqual(list(C._high_entropy(f"*{slug} exploit*")), [])
+        self.assertEqual(len(list(C._high_entropy("blob Zq9Xk3LmP7vRt2Wy8NbQ4sJh6Gd"))), 1)
+
     def test_credentials_need_a_word_start(self):
         self.assertEqual(list(C._credentials("desk-satellite-android-tablets-finally-2026")), [])
         self.assertEqual(list(C._credentials("the industry's quietest open secret: everyone")), [])
@@ -177,7 +196,7 @@ class TestUnit(unittest.TestCase):
 
 class TestIntegration(unittest.TestCase):
     def test_reuses_existing_detectors(self):
-        for ref in ("NJ._MAC_RE", "NJ._HOME_PATH_RE", "NJ._SAFE_EMAILS", "OS._HOUSEHOLD_RE", "RL.SECRET_PATTERNS"):
+        for ref in ("NJ._MAC_RE", "NJ._HOME_PATH_RE", "NJ._email_ok", "NJ.scrub_household", "OS._HOUSEHOLD_RE", "RL.SECRET_PATTERNS"):
             self.assertIn(ref, SRC)
         self.assertIs(C._EMAIL_RE, C.NJ._SCRUB_PATTERNS[-1])
         self.assertEqual(C.SURFACES[0][1], C.NJ.HUGO_ROOT / "content")

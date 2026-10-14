@@ -122,6 +122,18 @@ class TestUnit(unittest.TestCase):
         # short paragraphs are kept now (2026-10-06): the narration stage merges them into a neighbour
         self.assertEqual(ch[1][1], ["A linked paragraph with a citation and bold words in it.", "short"])
 
+    def test_narration_is_scrubbed_for_public_youtube(self):
+        """2026-10-13 Card-Rack: uploaded narrations named household members; the script now gets the publish scrub."""
+        peer = "colette" + "@peer.example.co"
+        ch = ns.scrub_chapters([("Dylan's room", [f"Jordan asked Amy, then mailed {peer}.", "Bob Dylan stays."])])
+        flat = " ".join([ch[0][0], *ch[0][1]])
+        for leak in ("Dylan's room", "asked Amy", peer):
+            self.assertNotIn(leak, flat)
+        self.assertIn("Bob Dylan stays.", flat)
+
+    def test_main_scrubs_the_spoken_script(self):
+        self.assertIn("chapters = scrub_chapters(chapters)", Path(SCRIPT).read_text())
+
     def test_sections_filter(self):
         self.assertEqual([h for h, _ in ns.article_to_script(MD, ["chapter"])], ["Chapter One"])
         self.assertEqual(ns.article_to_script("", None), [])

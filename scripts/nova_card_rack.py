@@ -48,7 +48,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import nova_journal as NJ  # noqa: E402  (_MAC_RE, _SCRUB_PATTERNS, _SAFE_EMAILS, _HOME_PATH_RE, HUGO_ROOT)
+import nova_journal as NJ  # noqa: E402  (_MAC_RE, _SCRUB_PATTERNS, _email_ok, scrub_household, _HOME_PATH_RE, HUGO_ROOT)
 import nova_operations_security as OS  # noqa: E402  (_HOUSEHOLD_RE: Amy/Dylan hard redline)
 import nova_relay as RL  # noqa: E402  (SECRET_PATTERNS: token / key / JWT / private-key shapes)
 import nova_watch_common as W  # noqa: E402
@@ -110,11 +110,18 @@ def entropy(s: str) -> float:
     return -sum(c / n * math.log2(c / n) for c in Counter(s).values()) if n else 0.0
 
 
+def _is_slug(t: str) -> bool:
+    """A hyphenated run of short words ("CVE-2023-37756-CWE-521-lead-to-...") is a title slug, not a key:
+    its entropy is high only because it is long. Keys have long random segments (2026-10-13 false positive)."""
+    parts = [x for x in re.split(r"[-_]", t) if x]
+    return len(parts) >= 3 and max(map(len, parts)) <= 12
+
+
 def _high_entropy(line: str):
     for m in _TOKEN.finditer(_URL.sub(" ", line)):
         t = m.group(0)
         if (re.search(r"\d", t) and re.search(r"[a-z]", t) and re.search(r"[A-Z]", t)
-                and entropy(t) >= ENTROPY_MIN):
+                and not _is_slug(t) and entropy(t) >= ENTROPY_MIN):
             yield t
 
 
@@ -129,7 +136,11 @@ def _credentials(line: str):
 
 
 def _household(line: str):
-    """The ops-security Amy/Dylan redline on whole names only ("amygdala" and "Bob Dylan" are not the household)."""
+    """The ops-security Amy/Dylan redline on whole names only ("amygdala" and "Bob Dylan" are not the household).
+    A line the publish scrubber (nova_journal.scrub_household) leaves alone is not flagged: its public-figure
+    exceptions ("Amy Coney Barrett", Bob Dylan's tour) are the same ones the site already publishes."""
+    if NJ.scrub_household(line) == line:
+        return
     for m in OS._HOUSEHOLD_RE.finditer(line):
         end = m.start() + len(m.group(0).rstrip("-_ \t"))
         if not line[end:end + 1].isalpha() and not line[:m.start()].rstrip().lower().endswith("bob"):
@@ -139,7 +150,7 @@ def _household(line: str):
 DETECTORS = (
     ("credential", _credentials),
     ("mac", lambda ln: (m.group(0) for m in NJ._MAC_RE.finditer(ln))),
-    ("email", lambda ln: (m.group(0) for m in _EMAIL_RE.finditer(ln) if m.group(0) not in NJ._SAFE_EMAILS)),
+    ("email", lambda ln: (m.group(0) for m in _EMAIL_RE.finditer(ln) if not NJ._email_ok(m.group(0)))),
     ("home_path", lambda ln: (m.group(0) for m in NJ._HOME_PATH_RE.finditer(ln))),
     ("household", _household),
     ("coordinates", lambda ln: (m.group(0) for m in _COORDS.finditer(ln))),

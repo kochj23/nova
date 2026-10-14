@@ -173,6 +173,31 @@ class TestHouseholdScrub(TestSecurity.__base__):
             self.assertIn(kept, s)
 
 
+class TestEmailScrub(TestSecurity.__base__):
+    """Herd peers' and login addresses never reach the public site; role mailboxes may (Card-Rack, 2026-10-13)."""
+
+    def test_personal_addresses_redacted_role_mailboxes_kept(self):
+        peer, login = "colette" + "@peer.example.co", "someone" + "@Some-Mac.local"
+        role, img = "productsecurity" + "@vendor.example.com", "icon" + "@2x.png"
+        s = nj.scrub_emails(f"from {peer}; ran as {login}; report to {role}; see {img}; nova@digitalnoise.net")
+        for leak in (peer, login):
+            self.assertNotIn(leak, s)
+        for kept in (role, img, "nova@digitalnoise.net"):
+            self.assertIn(kept, s)
+        self.assertNotIn(peer, nj.scrub_pii(f"Email from {peer} re: hello"))
+
+    def test_git_push_chokepoint_scrubs_staged_email(self):
+        (nj.HUGO_ROOT / ".git").mkdir(parents=True, exist_ok=True)
+        art = nj.HUGO_ROOT / "content/essays/mail-leak.md"; art.parent.mkdir(parents=True, exist_ok=True)
+        peer = "gaston" + "@peer.example.com"
+        art.write_text(f"Email from {peer} re: molasses")
+        run, calls = _git_runner(staged="content/essays/mail-leak.md\0")
+        with patch.dict(sys.modules, _lazy_stubs()), patch.object(nj, "_acquire_push_lock", return_value=None), \
+             patch("subprocess.run", side_effect=run), _quiet():
+            nj.git_push("essays", "t")
+        self.assertEqual(art.read_text(), "Email from [redacted] re: molasses")
+
+
 class TestPerformance(unittest.TestCase):
     def test_scrub_and_refusal_scan_fast_on_10k_items(self):
         line = "On 2026-10-05 " + _WORK + " saw aa:bb:cc:dd:ee:ff in " + _HOME + "/logs — fine otherwise."

@@ -142,6 +142,32 @@ def _build_scrub_patterns() -> list:
 
 _SCRUB_PATTERNS = _build_scrub_patterns()
 _SAFE_EMAILS = {"nova@digitalnoise.net"}
+# Published role mailboxes of organisations (a vendor's security@, CISA's report@) are public contact points,
+# not personal data. Everything else that looks like an address is redacted: herd peers' and correspondents'
+# addresses, user@host.local login strings. 2026-10-13 Card-Rack: herd mail excerpts had put two peers' personal
+# addresses in published articles, and the git_push chokepoint did not scrub e-mail at all.
+_ROLE_MAILBOXES = frozenset({"security", "secure", "psirt", "cert", "productcert", "report", "central", "abuse",
+                             "support", "info", "press", "media", "contact", "help", "privacy", "noreply", "no-reply",
+                             "webmaster", "postmaster", "soc", "incident", "vulnerability", "vulndisclosure"})
+# ponytail: "icon@2x.png" is an image name, not an address — the TLD is a file extension.
+_FILE_EXT_TLDS = frozenset({"png", "jpg", "jpeg", "webp", "gif", "svg", "mp4", "md", "html", "css", "js"})
+
+
+def _email_ok(addr: str) -> bool:
+    """True when an address may stay in public text."""
+    local, _, domain = addr.rpartition("@")
+    tld = domain.rsplit(".", 1)[-1].lower()
+    if tld in _FILE_EXT_TLDS:
+        return True
+    if tld == "local":
+        return False
+    local = local.lower()
+    return addr.lower() in _SAFE_EMAILS or local in _ROLE_MAILBOXES or "security" in local or "psirt" in local
+
+
+def scrub_emails(text: str) -> str:
+    """Redact every address except Nova's own and organisations' role mailboxes."""
+    return _SCRUB_PATTERNS[-1].sub(lambda m: m.group(0) if _email_ok(m.group(0)) else "[redacted]", text)
 
 
 # Real MAC addresses (6 colon-separated hex pairs) must never reach the public blog — they
@@ -187,10 +213,7 @@ def scrub_pii(text: str) -> str:
     """Remove personal identifiers from text before publishing."""
     for pat in _SCRUB_PATTERNS[:-1]:
         text = pat.sub("[redacted]", text)
-    # Email pattern — keep Nova's email
-    def _replace_email(m):
-        return m.group(0) if m.group(0) in _SAFE_EMAILS else "[redacted]"
-    text = _SCRUB_PATTERNS[-1].sub(_replace_email, text)
+    text = scrub_emails(text)   # keeps Nova's own address and organisations' role mailboxes
     text = _MAC_RE.sub("[redacted-mac]", text)   # device MACs never go public
     return scrub_household(text)
 
@@ -1750,13 +1773,13 @@ def git_push(section: str, title: str):
                 orig = p.read_text()
             except (OSError, UnicodeDecodeError):
                 continue
-            fixed = scrub_home_paths(scrub_household(_MAC_RE.sub("[redacted-mac]", orig)))  # one leaky article must not wedge the queue
+            fixed = scrub_home_paths(scrub_emails(scrub_household(_MAC_RE.sub("[redacted-mac]", orig))))  # one leaky article must not wedge the queue
             if fixed != orig:
                 p.write_text(fixed)
                 subprocess.run(["git", "add", rel], cwd=HUGO_ROOT, timeout=30)
                 scrubbed.append(rel)
         if scrubbed:
-            log(f"Scrubbed device MAC(s) / household names from {len(scrubbed)} staged article(s): {', '.join(scrubbed)}")
+            log(f"Scrubbed device MAC(s) / household names / e-mail from {len(scrubbed)} staged article(s): {', '.join(scrubbed)}")
         msg = f"{section}: {today_str()} — {title[:50]}"
         result = subprocess.run(
             ["git", "commit", "-m", msg],

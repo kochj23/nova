@@ -36,6 +36,16 @@ def log(m): print(f"[nova-speaks {time.strftime('%H:%M:%S')}] {m}", flush=True)
 
 
 # ── script from markdown ─────────────────────────────────────────────────────────────────
+def scrub_chapters(chapters):
+    """The narration goes to PUBLIC YouTube, so it gets the journal's publish scrub (household names, e-mail, MACs,
+    home paths) after the rewrite. 2026-10-13 Card-Rack: three uploaded narrations named household members because
+    they were rendered from articles before the journal scrubbed them. No fallback: a host that cannot import the
+    scrubber fails the render rather than speaking unscrubbed text."""
+    import nova_journal as nj
+    clean = lambda t: nj.scrub_home_paths(nj.scrub_pii(t))  # noqa: E731
+    return [(clean(h), [clean(p) for p in ps]) for h, ps in chapters]
+
+
 def article_to_script(md: str, sections: list[str] | None):
     body = re.sub(r"^---.*?---\s*", "", md, count=1, flags=re.S)         # frontmatter
     body = re.sub(r"^\*Published .*?\*\s*$", "", body, flags=re.M)         # dateline lines
@@ -231,6 +241,7 @@ def main():
     t_n = time.time()
     chapters, rstats = nn.narrate(chapters, cache=nn.RewriteCache())
     log(f"narration: {rstats} ({time.time()-t_n:.0f}s)")
+    chapters = scrub_chapters(chapters)
     words = sum(len(p.split()) for _, ps in chapters for p in ps)
     log(f"{len(chapters)} chapters, {words} words, ~{words/150:.0f} min of speech")
     work = Path(f"{HOME}/.openclaw/workspace/speaks/{slug}{('-'+a.suffix) if a.suffix else ''}"); work.mkdir(parents=True, exist_ok=True)
