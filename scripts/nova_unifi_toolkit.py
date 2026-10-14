@@ -141,6 +141,12 @@ class UniFiError(RuntimeError):
     pass
 
 
+# Commands that never write to the UDM: they run on the View-Only key (nova-unifi-api-key-readonly)
+# when it exists, else the admin key. Every other command (House Arrest writes, block) uses the admin
+# key even in dry-run. BSRS ch.5 least privilege, 2026-10-13.
+READ_ONLY_CMDS = frozenset({"threats", "stalk", "audit", "track", "report"})
+
+
 def _login():
     if not u._unifi_login():
         raise UniFiError("UniFi login failed (API key missing or UDM unreachable)")
@@ -161,6 +167,9 @@ def _call(method, path, body=None, timeout=20, retries=None):
                 raw = r.read()
                 return r.status, (json.loads(raw) if raw else {})
         except urllib.error.HTTPError as e:
+            if e.code in (401, 403) and u._readonly_refused() and u._unifi_login():
+                headers["X-API-Key"] = u._api_key          # retry once on the admin key
+                continue
             try:
                 detail = e.read()[:300].decode(errors="replace")
             except Exception:  # noqa: BLE001
@@ -1173,6 +1182,7 @@ def build_parser():
 
 def main(argv=None):
     a = build_parser().parse_args(argv)
+    u._READONLY = a.cmd in READ_ONLY_CMDS
     try:
         return a.func(a)
     except UniFiError as e:

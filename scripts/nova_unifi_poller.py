@@ -89,17 +89,52 @@ signal.signal(signal.SIGINT, _handle_signal)
 # ── Keychain ──────────────────────────────────────────────────────────────────
 
 
-def _get_unifi_api_key() -> str:
-    """Get UniFi API key from macOS Keychain."""
-    result = subprocess.run(
-        ["security", "find-generic-password", "-a", "nova", "-s", "nova-unifi-api-key", "-w"],
-        capture_output=True, text=True
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        log.error("Failed to get UniFi API key from Keychain (service=nova-unifi-api-key, account=nova)")
-        log.error("Run: security add-generic-password -a nova -s nova-unifi-api-key -w YOUR_API_KEY")
+UNIFI_KEY_NAME = "nova-unifi-api-key"                # admin key: writes (nova_unifi_ctl, toolkit House Arrest)
+UNIFI_RO_KEY_NAME = "nova-unifi-api-key-readonly"    # OPTIONAL key of a View-Only UDM admin (BSRS ch.5)
+_READONLY = False      # set True by read-only callers (this daemon, toolkit read commands) -> prefer the RO key
+_ro_rejected = False   # the UDM refused the RO key (401/403) -> use the admin key for the rest of this process
+_key_role = None       # "readonly" | "admin" — which key is loaded (never the key itself)
+
+
+def _keychain_get(name: str):
+    """Read a secret via `security` (macOS Keychain; on Linux the shim answers from nova.secrets)."""
+    try:
+        r = subprocess.run(["security", "find-generic-password", "-a", "nova", "-s", name, "-w"],
+                           capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else None
+
+
+def _get_unifi_api_key(readonly=None) -> str:
+    """UniFi API key. Read-only callers get the View-Only admin's key when it exists (2026-10-13,
+    least privilege) and fall back to the admin key, so nothing breaks before that key is created."""
+    global _key_role
+    if (_READONLY if readonly is None else readonly) and not _ro_rejected:
+        key = _keychain_get(UNIFI_RO_KEY_NAME)
+        if key:
+            _key_role = "readonly"
+            return key
+    key = _keychain_get(UNIFI_KEY_NAME)
+    if not key:
+        log.error(f"Failed to get UniFi API key (service={UNIFI_KEY_NAME}, account=nova) from Keychain / fleet store")
+        log.error(f"Run: security add-generic-password -a nova -s {UNIFI_KEY_NAME} -w YOUR_API_KEY")
         sys.exit(1)
-    return result.stdout.strip()
+    _key_role = "admin"
+    return key
+
+
+def _readonly_refused() -> bool:
+    """Called on HTTP 401/403. If the RO key was in use, switch this process to the admin key and
+    return True (caller re-logs in and retries) — a View-Only role missing a read permission must
+    degrade to the old behaviour, loudly in the log, never break the collector."""
+    global _ro_rejected
+    if _key_role == "readonly" and not _ro_rejected:
+        _ro_rejected = True
+        log.warning(f"UDM refused the read-only key ({UNIFI_RO_KEY_NAME}); falling back to the admin key "
+                    "for this process — grant the View-Only role the missing permission")
+        return True
+    return False
 
 
 _api_key = None
@@ -196,7 +231,7 @@ def _unifi_login() -> bool:
     global _api_key
     _api_key = _get_unifi_api_key()
     if _api_key:
-        log.info("Loaded UniFi API key from Keychain")
+        log.info(f"Loaded UniFi API key ({_key_role})")
         return True
     log.error("No UniFi API key available")
     return False
@@ -216,6 +251,8 @@ def _unifi_get(url: str) -> dict | None:
         body = resp.read().decode("utf-8")
         return json.loads(body)
     except urllib.error.HTTPError as e:
+        if e.code in (401, 403) and _readonly_refused():
+            return None                     # caller re-logs in (now with the admin key) and retries
         if e.code == 401:
             log.warning("Session expired, will re-authenticate")
             return None
@@ -453,6 +490,9 @@ def main():
     log.info(f"Controller: {CONTROLLER_BASE}")
     log.info(f"Logging to: {LOG_FILE}")
 
+    # This daemon only ever GETs -> prefer the View-Only key when it exists (BSRS ch.5).
+    global _READONLY
+    _READONLY = True
     # Initial login
     if not _unifi_login():
         log.error("Initial authentication failed — will retry on first poll")
