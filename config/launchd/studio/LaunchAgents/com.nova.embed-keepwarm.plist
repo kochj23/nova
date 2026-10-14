@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nova.embed-keepwarm</string>
+    <!-- Holds nomic-embed-text resident so memory ingest never cold-loads past the
+         service's 30s timeout (which aborts the load and perpetually stalls ingest).
+         keep_alive 1h + ping every 150s = always warm. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/curl</string>
+        <string>-s</string>
+        <string>-m</string>
+        <string>60</string>
+        <string>http://127.0.0.1:11434/api/embed</string>
+        <string>-d</string>
+        <string>{"model":"nomic-embed-text","input":"keepwarm","keep_alive":"1h"}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>150</integer>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.openclaw/logs/nova-embed-keepwarm.log</string>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

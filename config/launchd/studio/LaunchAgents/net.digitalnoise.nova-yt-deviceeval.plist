@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>net.digitalnoise.nova-yt-deviceeval</string>
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>ProgramArguments</key><array>
+    <string>/bin/sh</string><string>-c</string>
+    <string>for v in aZYvyy_R4jU; do /opt/homebrew/bin/python3 __HOME__/.openclaw/scripts/nova_yt_capture.py $v youtube_device; done</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>__HOME__/.openclaw/logs/nova-yt-deviceeval.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.openclaw/logs/nova-yt-deviceeval.log</string>
+</dict></plist>

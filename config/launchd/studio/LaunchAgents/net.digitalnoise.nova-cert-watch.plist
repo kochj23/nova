@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>net.digitalnoise.nova-cert-watch</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/homebrew/bin/python3</string>
+		<string>__HOME__/.openclaw/scripts/nova_cert_watch.py</string>
+		<string>--scan</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>PYTHONPATH</key>
+		<string>__HOME__/.openclaw/scripts</string>
+	</dict>
+	<key>StartCalendarInterval</key>
+	<array>
+		<dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>20</integer></dict>
+	</array>
+	<key>StandardOutPath</key>
+	<string>__HOME__/.openclaw/logs/cert-watch.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/.openclaw/logs/cert-watch.log</string>
+	<key>WorkingDirectory</key>
+	<string>__HOME__/.openclaw/scripts</string>
+</dict>
+</plist>

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>net.digitalnoise.llama-server</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/homebrew/bin/llama-server</string>
+		<string>--model</string>
+		<string>__HOME__/.ollama/models/blobs/sha256-1194192cf2a187eb02722edcc3f77b11d21f537048ce04b67ccf8ba78863006a</string>
+		<string>--host</string>
+		<string>0.0.0.0</string>
+		<string>--port</string>
+		<string>11435</string>
+		<string>--ctx-size</string>
+		<string>8192</string>
+		<string>--n-gpu-layers</string>
+		<string>99</string>
+		<string>--flash-attn</string>
+		<string>on</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ThrottleInterval</key>
+	<integer>60</integer>
+	<key>StandardOutPath</key>
+	<string>__HOME__/.openclaw/logs/llama-server.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/.openclaw/logs/llama-server-error.log</string>
+</dict>
+</plist>

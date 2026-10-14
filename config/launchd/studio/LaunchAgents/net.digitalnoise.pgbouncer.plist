@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>net.digitalnoise.pgbouncer</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/homebrew/bin/pgbouncer</string>
+		<string>/Volumes/Data/pgbouncer/pgbouncer.ini</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>Crashed</key>
+		<true/>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>__HOME__/.openclaw/logs/pgbouncer.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/.openclaw/logs/pgbouncer.err.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/bin:/bin</string>
+	</dict>
+</dict>
+</plist>

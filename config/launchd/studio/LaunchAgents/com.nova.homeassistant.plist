@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>__HOME__/homeassistant/venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+		<key>PYTHONPATH</key>
+		<string></string>
+		<key>VIRTUAL_ENV</key>
+		<string>__HOME__/homeassistant/venv</string>
+	</dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.nova.homeassistant</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__HOME__/homeassistant/venv/bin/python3</string>
+		<string>-m</string>
+		<string>homeassistant</string>
+		<string>--config</string>
+		<string>__HOME__/homeassistant/config</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/tmp/hass-stderr.log</string>
+	<key>StandardOutPath</key>
+	<string>/tmp/hass-stdout.log</string>
+</dict>
+</plist>

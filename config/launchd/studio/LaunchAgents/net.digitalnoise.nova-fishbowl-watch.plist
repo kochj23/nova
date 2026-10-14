@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>net.digitalnoise.nova-fishbowl-watch</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/homebrew/bin/python3</string>
+		<string>__HOME__/.openclaw/scripts/nova_fishbowl_watch.py</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>PYTHONPATH</key>
+		<string>__HOME__/.openclaw/scripts</string>
+	</dict>
+	<key>StartInterval</key>
+	<integer>900</integer>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>WorkingDirectory</key>
+	<string>__HOME__/.openclaw/scripts</string>
+	<key>StandardOutPath</key>
+	<string>__HOME__/.openclaw/logs/fishbowl_watch.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/.openclaw/logs/fishbowl_watch.log</string>
+</dict>
+</plist>

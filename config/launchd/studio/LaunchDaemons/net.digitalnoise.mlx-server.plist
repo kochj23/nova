@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>net.digitalnoise.mlx-server</string>
+  <key>UserName</key><string>kochj</string>
+  <!-- 2026-10-04: system daemon (survives the lock screen) running the FDA-granted brew python so /Volumes/Data is readable.
+       Port 5051: 5050 on this box is the nginx MLX load balancer, which now includes this server as a member.
+       Model id matches the mini's (__HOME__/mlx-models -> /Volumes/Data/mlx-models symlink) so one id works fleet-wide. -->
+  <key>ProgramArguments</key><array>
+    <string>/opt/homebrew/bin/mlx_lm.server</string>
+    <string>--model</string><string>__HOME__/mlx-models/qwen2.5-32b-4bit</string>
+    <string>--host</string><string>0.0.0.0</string>
+    <string>--port</string><string>5051</string>
+  </array>
+  <key>EnvironmentVariables</key><dict><key>HOME</key><string>__HOME__</string><key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin</string><key>HF_HUB_OFFLINE</key><string>1</string></dict>
+  <key>WorkingDirectory</key><string>__HOME__</string>
+  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>__HOME__/.openclaw/logs/mlx-server.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.openclaw/logs/mlx-server-error.log</string>
+</dict></plist>

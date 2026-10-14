@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nova.homekit-server</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__HOME__/migrate/NovaHomeKit.app/NovaHomeKit.app/Contents/MacOS/NovaHomeKit</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>__HOME__/.openclaw/logs/novahomekit.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.openclaw/logs/novahomekit.log</string>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+</dict>
+</plist>
