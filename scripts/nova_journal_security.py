@@ -169,13 +169,16 @@ def recall_memories(query: str, n: int = 30, source: str = None) -> list[dict]:
         return []
 
 
+import nova_dsn  # noqa: E402  (PG moved off .6; the hardcoded IP silently emptied every briefing after 10-02)
+
+
 def get_recent_security_memories(hours: int = 24) -> list[dict]:
     """Fetch recent memories from intelligence, military_history, law, and politics vectors."""
     memories = []
     for source in ["intelligence", "military_history", "law", "politics"]:
         try:
             result = subprocess.run(
-                ["psql", "-h", "192.168.1.6", "-U", "kochj", "-d", "nova_memories", "-tA", "-c",
+                ["psql", "-d", nova_dsn.pg_dsn("nova_memories"), "-tA", "-c",
                  f"SELECT text, source, metadata::text FROM memories "
                  f"WHERE source = '{source}' "
                  f"AND created_at >= now() - interval '{hours} hours' "

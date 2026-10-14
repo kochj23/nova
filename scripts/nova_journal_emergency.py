@@ -70,7 +70,8 @@ SECTION = "local"
 SOURCE_VECTOR = "la_public_safety"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_journal_emergency.log"
 STATE_FILE = Path.home() / ".openclaw/config/journal_emergency_state.json"
-PG_HOST = "192.168.1.6"  # nova_memories lives on .6 (mac-studio)
+import nova_dsn  # noqa: E402
+PG_HOST = nova_dsn.pg_dsn("nova_memories").split()[0].split("=")[1]  # pg-primary (was hardcoded .6)
 MODEL = "anthropic/claude-haiku-4.5"
 
 # Keywords that flag a genuinely notable, postable-now emergency. Used both to
