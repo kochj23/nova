@@ -40,6 +40,7 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | SDR load balancer (2026-10-12) | 6 frequencies × 6 tuners on 4 radios, placed by **priority + benchmarked antenna SNR**; a dead radio's frequency takes the best surviving tuner (`nova_sdr_placement` every 2 min, `nova_sdr_actuator` per host) |
 | Wi-Fi sensing (2026-10-12) | Receive-only monitor radio on nova-core7 surveys every 10 min; `nova_wifi_guard` flags **evil twins** and **deauth floods** against our 16 BSSIDs |
 | Grafana (2026-10-12) | Postgres datasources repaired (dead since the 09-28 primary move) on a read-only role; 5 generated dashboards cover the 70 newest tools |
+| SRE organs (2026-10-13) | SLOs + error budgets + burn-rate paging, tickets-not-pages, blameless postmortems, toil ledger, production readiness gate, gateway overload protection, weekly restore drill — see [SRE Organs](#sre-organs--nova-runs-on-the-google-sre-books-2026-10-13) |
 | Repo layout (2026-10-12) | The git worktree **is** the NAS share — every node, the Studio included, runs the same `scripts/` |
 | Cadence watch | `nova_cadence_watch.py` — learns each stream's rhythm, flags the quiet; **MISSING/ACKED_LOST/SILENT** split enforced by CHECK constraints (SILENT never promoted without a witness) |
 | Three-face rows | `herd_correspondent_faces` — append-only dated triple per correspondent: Nova's hypothesis + their self-testimony + reconciliation |
@@ -4041,3 +4042,47 @@ flowchart LR
     graf --> tv["nova_cluster_render<br/>(Apple TV PNG)"]
 ```
 
+
+## SRE Organs — Nova Runs on the Google SRE Books (2026-10-13)
+
+Little Mister is a Sr. Manager of Global Systems Reliability Engineering. The three free Google SRE
+books (*Site Reliability Engineering*, *The Site Reliability Workbook*, *Building Secure and Reliable
+Systems*) were ingested into Nova's memory (2,397 passages, source `sre_books`,
+`scripts/nova_ingest_sre_books.py`) so she knows his canon, and then their practices were built into her.
+
+| Organ | Book | What it does |
+|-------|------|--------------|
+| `nova_slo.py` (every 5 min) | SRE ch.4, Workbook ch.2 + 5 | 8 SLOs with 28-day error budgets: chat, memory recall, memory embedding, web, database, **Morning BLUF by 07:10**, scheduled jobs, alert delivery. Multiwindow burn-rate pages (14.4× over 1h+5m, 6× over 6h+30m), tickets (1× over 3d+6h), and a warning when an SLI goes silent |
+| Tickets, not pages (`nova_notifier`) | SRE ch.6 | Cause alerts an SLO now covers (task failures, stale code, recurring incidents, drift, directive conflicts, traffic warnings) go to #nova-digest as 🎫 tickets. #nova-alerts was ~100 posts/day; target < 10 |
+| `nova_sre_postmortem.py` (nightly) | SRE ch.15, Workbook ch.10 | Blameless postmortems in the book's template for critical and recurring incidents; every action item is tracked to done in `claude_queue` |
+| `nova_toil.py` (nightly + Monday) | SRE ch.5, Workbook ch.6 | Toil ledger from the queue, restarts, reruns and manual fixes; weekly top-3 causes and toil share (target < 50%); the #1 cause is queued for automation |
+| `nova_prr.py` (Monday + on demand) | SRE ch.27, ch.32 | Production Readiness Review of 384 components on 7 checks; `nova_prr.py --component <name>` is the gate before new work is called done |
+| `nova_gateway/overload.py` | SRE ch.21–22 | Deadline floor, retry budget (4/request, max(20, 10%)/min), per-backend in-flight limits with load shedding; counters in `/health` |
+| `nova_restore_drill.py` (Sunday) | BSRS ch.9, SRE ch.26 | Full restore of the newest nova_ops dump into a throwaway Postgres on .86; RPO 13.1 h, RTO 15.6 min on the first run |
+| Secrets + least privilege | BSRS ch.5–6 | Grafana admin password and renderer token out of plaintext (env files, mode 600, vault); optional read-only UniFi key for read paths |
+
+```mermaid
+flowchart LR
+    probes["nova_prober<br/>(synthetic probes)"] --> pr[("telemetry.probe_results")]
+    sched["schedulers"] --> sr[("scheduler_runs")]
+    notif["nova_notifier"] --> ev[("telemetry.events")]
+    pr & sr & ev --> slo["nova_slo<br/>SLI · budget · burn"]
+    slo --> st[("slo_status")]
+    slo -->|"burn ≥ 14.4× / 6×"| page["#nova-alerts<br/>(page)"]
+    slo -->|"burn ≥ 1× over 3d"| tick["#nova-digest<br/>(ticket)"]
+    ev -->|cause alerts| tick
+    inc[("incidents")] --> pm["nova_sre_postmortem"] --> q[("claude_queue<br/>action items")]
+    q & sr --> toil["nova_toil"] --> q
+    prr["nova_prr --component"] --> done{{"done?"}}
+    st & pm & toil & prr --> graf["Grafana nova-fleet<br/>Reliability section"]
+```
+
+**Day one paid for itself.** The first SLO run showed memory embedding at −98% of its budget
+(89-second embeddings). The cause: the Ollama LaunchDaemon failed at boot because its binary lives
+on a volume that was not mounted yet, and three watchdogs (`nova_app_watchdog`, Big Brother,
+`nova_autofix`) relaunched the retired Ollama.app instead, which served for three days with
+default settings and on localhost only. The watchdogs now kickstart the daemon and the daemon waits
+for its volume; embeddings dropped to 7 ms. The same outage showed the prober exiting non-zero on
+any failed probe, so the scheduler dead-lettered it mid-outage and it went blind. It now exits 0
+when it ran (a failed probe is data, not a failed job), and the SLO organ warns when an SLI goes
+silent. The restore drill also found two missed nightly nova_ops dumps (queued as #3573).
