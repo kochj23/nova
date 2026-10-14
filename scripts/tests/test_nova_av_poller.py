@@ -131,6 +131,54 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(p.get_poll_interval("x"), av.POLL_STANDBY_SEC)
 
 
+class TestResolveIps(unittest.TestCase):
+    def _db(self, rows=None, boom=False):
+        cur = MagicMock()
+        cur.__enter__.return_value = cur
+        if boom:
+            cur.execute.side_effect = RuntimeError("pg down")
+        cur.fetchall.return_value = rows or []
+        db = MagicMock()
+        db.cursor.return_value = cur
+        return db, cur
+
+    def test_follows_dhcp_by_mac_first_row_wins(self):
+        devs = [{"name": "Bose Kitchen", "ip": "192.168.1.197", "macs": ["C8:7B:23:37:41:E8"]},
+                {"name": "Onkyo", "ip": "192.168.1.145", "macs": ["aa:aa", "bb:bb"]}]
+        db, cur = self._db([("c8:7b:23:37:41:e8", "192.168.1.195"), ("bb:bb", "192.168.1.147"),
+                            ("aa:aa", "192.168.1.9")])
+        changes = av.resolve_ips(db, devs)
+        self.assertEqual(changes, [("Bose Kitchen", "192.168.1.197", "192.168.1.195"),
+                                   ("Onkyo", "192.168.1.145", "192.168.1.147")])
+        self.assertEqual(devs[1]["ip"], "192.168.1.147")
+        sql, params = cur.execute.call_args[0]
+        self.assertIn("online", sql)
+        self.assertNotIn("c8:7b", sql)                                # MACs are parameters
+        self.assertIn("c8:7b:23:37:41:e8", params[0])
+
+    def test_failure_keeps_last_known_ip(self):
+        devs = [{"name": "Bose Bedroom", "ip": "192.168.1.25", "macs": ["c8:7b:23:6b:f2:ab"]}]
+        db, _ = self._db(boom=True)
+        self.assertEqual(av.resolve_ips(db, devs), [])
+        self.assertEqual(devs[0]["ip"], "192.168.1.25")
+
+    def test_every_device_has_a_mac(self):
+        for d in av.ONKYO_DEVICES + av.BOSE_DEVICES:
+            self.assertTrue(d.get("macs"), d["name"])
+
+    def test_refresh_reconnects_moved_onkyo(self):
+        p = av.AVPoller.__new__(av.AVPoller)
+        p.db = MagicMock()
+        conn = MagicMock()
+        p.onkyo_connections = {"Onkyo TX-NR5100": conn}
+        with patch.object(av, "resolve_ips", return_value=[("Onkyo TX-NR5100", "1.1.1.1", "192.168.1.147"),
+                                                           ("Bose Kitchen", "a", "b")]):
+            p.refresh_ips()
+        self.assertEqual(conn.ip, "192.168.1.147")
+        conn.connect.assert_called_once()
+        self.assertGreater(p.last_resolve, 0)
+
+
 class TestIntegration(unittest.TestCase):
     def test_query_onkyo_zone2_uses_zone_commands(self):
         conn = MagicMock(); conn.is_connected.return_value = True

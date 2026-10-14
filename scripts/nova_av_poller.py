@@ -57,22 +57,56 @@ ONKYO_DEVICES = [
     {
         "name": "Onkyo TX-NR696",
         "ip": "192.168.1.98",
+        "macs": ["00:09:b0:62:1e:04"],
         "port": 60128,
         "zones": ["main", "zone2"],
     },
     {
         "name": "Onkyo TX-NR5100",
         "ip": "192.168.1.145",
+        "macs": ["00:09:b0:38:85:8f", "cc:a7:c1:5b:75:27"],   # wired, wifi
         "port": 60128,
         "zones": ["main"],
     },
 ]
 
 BOSE_DEVICES = [
-    {"name": "Bose Bedroom", "ip": "192.168.1.25", "port": 8091},
-    {"name": "Bose Guest Bedroom", "ip": "192.168.1.82", "port": 8091},
-    {"name": "Bose Kitchen", "ip": "192.168.1.197", "port": 8091},
+    {"name": "Bose Bedroom", "ip": "192.168.1.25", "port": 8091, "macs": ["c8:7b:23:6b:f2:ab"]},
+    {"name": "Bose Guest Bedroom", "ip": "192.168.1.82", "port": 8091, "macs": ["c8:7b:23:38:15:91"]},
+    {"name": "Bose Kitchen", "ip": "192.168.1.197", "port": 8091, "macs": ["c8:7b:23:37:41:e8"]},
 ]
+
+# The "ip" values above are only a fallback: DHCP moves these devices (2026-10: every Bose
+# had a new lease and the Onkyos were polled at dead addresses, so av_power — the presence
+# method fed by power-on events — went silent after 09-30). Each cycle of RESOLVE_IP_SEC the
+# poller re-reads the current lease by MAC from unifi_client_state (written by unifi_monitor).
+RESOLVE_IP_SEC = 600
+
+
+def resolve_ips(conn, devices) -> list[tuple[str, str, str]]:
+    """Point each device at its current IP by MAC (online clients only). Returns the changes
+    as (name, old_ip, new_ip). Never raises: on any failure the last known IPs stay."""
+    macs = {m.lower(): d for d in devices for m in d.get("macs", [])}
+    if not macs:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT lower(mac), ip FROM unifi_client_state WHERE online AND ip IS NOT NULL "
+                        "AND lower(mac) = ANY(%s) ORDER BY last_seen DESC NULLS LAST", (list(macs),))
+            rows = cur.fetchall()
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"IP resolve by MAC failed (keeping last known IPs): {e}")
+        return []
+    changes, done = [], set()
+    for mac, ip in rows:
+        dev = macs[mac]
+        if dev["name"] in done:
+            continue
+        done.add(dev["name"])
+        if ip != dev["ip"]:
+            changes.append((dev["name"], dev["ip"], ip))
+            dev["ip"] = ip
+    return changes
 
 # ── Poll Intervals ───────────────────────────────────────────────────────────
 
@@ -490,6 +524,7 @@ class AVPoller:
         self.last_poll_times: dict[str, float] = {}
         self.last_write_times: dict[str, float] = {}  # last av_state snapshot write per key (heartbeat)
         self.running = True
+        self.last_resolve = 0.0
 
         # Initialize Onkyo connections
         for dev in ONKYO_DEVICES:
@@ -497,6 +532,16 @@ class AVPoller:
             self.onkyo_connections[key] = OnkyoConnection(
                 dev["ip"], dev["port"], dev["name"]
             )
+
+    def refresh_ips(self):
+        """Follow DHCP: re-resolve every device by MAC; reconnect an Onkyo whose IP moved."""
+        self.last_resolve = time.time()
+        for name, old, new in resolve_ips(self.db, ONKYO_DEVICES + BOSE_DEVICES):
+            log.info(f"{name} moved {old} -> {new}")
+            conn = self.onkyo_connections.get(name)
+            if conn is not None:
+                conn.ip = new
+                conn.connect()
 
     def get_poll_interval(self, device_key: str) -> float:
         """Return poll interval based on last known power state."""
@@ -641,6 +686,8 @@ class AVPoller:
 
         while self.running:
             try:
+                if time.time() - self.last_resolve >= RESOLVE_IP_SEC:
+                    self.refresh_ips()
                 # Poll all Onkyo devices
                 for dev in ONKYO_DEVICES:
                     self.poll_onkyo(dev)
