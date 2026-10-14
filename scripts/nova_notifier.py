@@ -37,11 +37,16 @@ DSN = _nova_dsn.pg_dsn("nova_ops")
 # or junk return — falls open to posting the alert exactly as it would have before
 # triage existed. The brain enforces its own safety (hard-critical always pages).
 _TRIAGE_TIMEOUT_S = 20
+# Reports written for Jordan, not alerts: triage never judges them. It downgraded the Morning BLUF to the
+# muted #nova-feed 7 days running (2026-10-14: "I don't see today's BLUF") because its body quotes alerts.
+NO_TRIAGE_CATEGORIES = frozenset({"morning_brief"})
 
 
 def _triage_event(ev: dict):
     """Run the triage brain with a hard timeout in a daemon thread.
     Returns the decision dict, or None on ANY failure (caller fails open to paging)."""
+    if ev.get("category") in NO_TRIAGE_CATEGORIES:
+        return None
     import threading
     import nova_alert_triage
     box = {}
