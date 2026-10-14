@@ -217,6 +217,39 @@ def blanket_approvals(cur, dry):
     return n
 
 
+def decide_wish(cur, wid, v, note, dry):
+    """Jordan's reply under a wish post -> the line to confirm in the thread. yes approves (or says it already
+    is), no declines it and cancels a not-yet-started build item, anything else is kept as his note."""
+    cur.execute("SELECT status FROM feature_wishes WHERE id=%s", (int(wid),))
+    row = cur.fetchone()
+    if not row:
+        return f"Wish #{wid} not found."
+    status = row[0]
+    cur.execute("SELECT id, status FROM claude_queue WHERE description LIKE %s AND status <> 'cancelled' "
+                "ORDER BY id DESC LIMIT 1", (f"Build Nova's wish #{wid}:%",))
+    q = cur.fetchone()
+    note_js = json.dumps({"jordan_reply": note[:300], "at": datetime.now().isoformat(timespec="seconds")})
+    if dry:
+        return f"(dry) wish #{wid} {status}: {v or 'note'}"
+    cur.execute("UPDATE feature_wishes SET lineage=coalesce(lineage,'{}'::jsonb) || %s::jsonb WHERE id=%s",
+                (note_js, int(wid)))
+    if v == "yes":
+        if status == "wished":
+            import nova_aspirations
+            qid = nova_aspirations.approve_wish(cur, int(wid), by="jordan (Slack reply)")
+            return f"Approved wish #{wid}." + (f" Build queued as #{qid}." if qid else "")
+        return f"Wish #{wid} is already {status}" + (f"; its build is claude_queue #{q[0]} ({q[1]})." if q else ".")
+    if v == "no":
+        if status in ("shipped",):
+            return f"Wish #{wid} already shipped; nothing declined. Noted."
+        cur.execute("UPDATE feature_wishes SET status='declined' WHERE id=%s", (int(wid),))
+        if q and q[1] in ("pending", "queued"):
+            cur.execute("UPDATE claude_queue SET status='cancelled', outcome='declined by Jordan in Slack', "
+                        "updated_at=now() WHERE id=%s", (q[0],))
+        return f"Declined wish #{wid}." + (" Its build item was cancelled." if q and q[1] in ("pending", "queued") else "")
+    return f"Noted on wish #{wid}."
+
+
 def decide_proposal(pid, v, note, dry):
     mode = "approve" if v == "yes" else "reject"
     if dry:
@@ -321,6 +354,9 @@ def main():
                             "decision_note=%s WHERE id=%s AND status IN ('open','decided')", (answer[:600], int(ref)))
             ok = True
             confirm(ch, ts, f"Recorded your decision on directive conflict #{ref}. Thank you.", dry)
+        elif kind == "wish":        # wish announcements (nova_aspirations._post_wish): his reply decides it
+            confirm(ch, ts, decide_wish(cur, ref, v, answer, dry), dry)
+            ok = True
         else:
             continue
         if ok and not dry:

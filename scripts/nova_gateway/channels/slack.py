@@ -66,6 +66,31 @@ async def slack_post_message(ctx: GatewayContext, token: str, channel: str,
         return False
 
 
+async def _thread_root_text(ctx: GatewayContext, token: str, channel: str, root_ts: str) -> str:
+    """Text of the message a thread hangs off, or "" (fail open). Without it the chat agent sees a bare
+    "Approved!" and guesses (2026-10-13, wish #80 thread)."""
+    try:
+        resp = await ctx.http.get(
+            "https://slack.com/api/conversations.replies",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"channel": channel, "ts": root_ts, "limit": 1, "inclusive": "true"},
+            timeout=10,
+        )
+        data = resp.json()
+        msgs = data.get("messages") or []
+        return (msgs[0].get("text") or "").strip() if data.get("ok") and msgs else ""
+    except Exception as e:
+        log.warning(f"thread root fetch failed: {e}")
+        return ""
+
+
+def _with_thread_context(text: str, root_text: str) -> str:
+    if not root_text:
+        return text
+    return (f"(This is a reply in a Slack thread. The thread starts with this message: "
+            f"\"{root_text[:800]}\")\n\n{text}")
+
+
 async def _slack_get_bot_user_id(ctx: GatewayContext, token: str) -> str:
     """Get our bot user ID via auth.test."""
     try:
@@ -352,7 +377,11 @@ async def _slack_handle_event(ctx: GatewayContext, event: dict, bot_user_id: str
                     return
 
                 log.info(f"[{trace_id}] Slack: routing to agent — session={sid}")
-                response = await run_agent(ctx, text, sid, agent_id, trace_id=trace_id,
+                agent_text = text
+                root_ts = event.get("thread_ts")
+                if root_ts and root_ts != event.get("ts"):
+                    agent_text = _with_thread_context(text, await _thread_root_text(ctx, bot_token, channel, root_ts))
+                response = await run_agent(ctx, agent_text, sid, agent_id, trace_id=trace_id,
                                            person=_person_of(event),
                                            meta={"slack_ts": event.get("ts"), "slack_user": event.get("user"),
                                                  "slack_channel": channel})

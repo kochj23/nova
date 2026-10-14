@@ -335,3 +335,33 @@ class TestFrame(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _WishCur:
+    """Minimal cursor: feature_wishes status + latest build item; records writes."""
+    def __init__(self, status, q=None):
+        self.status, self.q, self.sql, self._last = status, q, [], None
+    def execute(self, sql, params=()):
+        self.sql.append(sql)
+        self._last = (self.status,) if "FROM feature_wishes" in sql else (self.q if "FROM claude_queue" in sql else None)
+    def fetchone(self):
+        return self._last
+
+
+class TestDecideWish(unittest.TestCase):
+    def test_yes_on_already_approved_wish_reports_build(self):
+        c = _WishCur("acknowledged", (3525, "queued"))
+        self.assertIn("#3525", sa.decide_wish(c, "80", "yes", "Approved!", dry=False))
+        self.assertFalse(any("status='declined'" in s for s in c.sql))
+
+    def test_no_declines_and_cancels_queued_build(self):
+        c = _WishCur("acknowledged", (3525, "queued"))
+        msg = sa.decide_wish(c, "80", "no", "no thanks", dry=False)
+        self.assertIn("Declined", msg)
+        self.assertTrue(any("status='cancelled'" in s for s in c.sql))
+
+    def test_comment_is_noted_and_shipped_never_declined(self):
+        self.assertIn("Noted", sa.decide_wish(_WishCur("wished"), "81", None, "hmm", dry=False))
+        c = _WishCur("shipped")
+        sa.decide_wish(c, "69", "no", "no", dry=False)
+        self.assertFalse(any("status='declined'" in s for s in c.sql))

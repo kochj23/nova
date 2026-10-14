@@ -22,6 +22,17 @@ sys.path.insert(0, str(SCRIPTS))
 SCRIPT = SCRIPTS / "nova_aspirations.py"
 
 
+def _no_slack_mod():
+    m = types.ModuleType("nova_slack_answers")
+    def slack(*a, **k):
+        raise RuntimeError("no Slack in tests")
+    m.slack = slack
+    return m
+
+
+_NO_SLACK = _no_slack_mod()
+
+
 def _load(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
@@ -180,7 +191,7 @@ class TestRetry(unittest.TestCase):
             raise OSError("slack down")
         buf = io.StringIO()
         with patch.object(asp, "llm", lambda *a, **k: WISH), patch.object(asp, "remember", lambda *a: 7), \
-                patch.dict(sys.modules, {"nova_config": _nova_config(boom)}), redirect_stdout(buf):
+                patch.dict(sys.modules, {"nova_slack_answers": _NO_SLACK, "nova_config": _nova_config(boom)}), redirect_stdout(buf):
             self.assertIsNotNone(asp.pursue(cur, None, {"seeds": ["s1", "s2"]}))
         self.assertEqual(len(cur.executed("INSERT INTO feature_wishes")), 1)
         self.assertEqual(cur.executed("INSERT INTO claude_queue"), [])
@@ -233,7 +244,7 @@ class TestIntegration(unittest.TestCase):
         cfg = _nova_config()
         remembered = []
         with patch.object(asp, "llm", lambda *a, **k: WISH), patch.object(asp, "remember", lambda t, s, m: remembered.append((t, s, m)) or 7), \
-                patch.dict(sys.modules, {"nova_config": cfg}), redirect_stdout(io.StringIO()):
+                patch.dict(sys.modules, {"nova_slack_answers": _NO_SLACK, "nova_config": cfg}), redirect_stdout(io.StringIO()):
             cand = asp.surface_aspiration(cur, None)
             out = asp.pursue(cur, None, cand)
         self.assertTrue(out.startswith("I keep circling horology"))
@@ -250,7 +261,7 @@ class TestIntegration(unittest.TestCase):
         self.assertEqual(cur.executed("UPDATE feature_wishes SET status='acknowledged'"), [])
         self.assertEqual(len(cfg.posts), 1)
         self.assertIn("wishlist #42", cfg.posts[0][0])
-        self.assertIn("--approve 42", cfg.posts[0][0])
+        self.assertIn("reply yes/no here", cfg.posts[0][0])   # wish thread decides it (2026-10-13)
         self.assertEqual(cfg.posts[0][1], {"slack_channel": "C_CHAT"})
 
     def test_schema_owns_feature_wishes(self):
@@ -265,7 +276,7 @@ class TestFunctional(unittest.TestCase):
         buf = io.StringIO()
         cfg = _nova_config()
         with patch.object(asp.psycopg2, "connect", lambda *a, **k: _Conn(cur)), patch.object(asp, "llm", lambda *a, **k: WISH), \
-                patch.object(asp, "remember", lambda *a: 7), patch.dict(sys.modules, {"nova_config": cfg}), \
+                patch.object(asp, "remember", lambda *a: 7), patch.dict(sys.modules, {"nova_slack_answers": _NO_SLACK, "nova_config": cfg}), \
                 patch.object(sys, "argv", ["nova_aspirations.py", *argv]), redirect_stdout(buf):
             rc = asp.main()
         return rc, buf.getvalue(), cfg
@@ -330,7 +341,7 @@ class TestWishLoop(unittest.TestCase):
     def test_duplicate_wish_is_not_filed(self):
         cur = _interior(extra=[("WHERE status <> 'merged'", [(9, "A microphone on the bench", "", "")])])
         with patch.object(asp, "llm", lambda *a, **k: WISH), patch.object(asp, "remember", lambda *a: 7), \
-                patch.dict(sys.modules, {"nova_config": _nova_config()}), redirect_stdout(io.StringIO()) as buf:
+                patch.dict(sys.modules, {"nova_slack_answers": _NO_SLACK, "nova_config": _nova_config()}), redirect_stdout(io.StringIO()) as buf:
             self.assertIsNotNone(asp.pursue(cur, None, {"seeds": ["s1", "s2"]}))
         self.assertEqual(cur.executed("INSERT INTO feature_wishes"), [])
         self.assertIn("near-duplicate of #9", buf.getvalue())
@@ -373,3 +384,25 @@ class TestFrame(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWishThread(unittest.TestCase):
+    """2026-10-13: the wish post registers its thread so his reply is a decision, not chat."""
+    def test_post_wish_registers_thread(self):
+        sent, cur = [], types.SimpleNamespace(calls=[])
+        cur.execute = lambda sql, params=(): cur.calls.append((sql, params))
+        sl = types.ModuleType("nova_slack_answers")
+        sl.slack = lambda method, **k: sent.append(k) or {"ok": True, "ts": "171.5", "channel": "C_CHAT"}
+        cfg = _nova_config()
+        with patch.dict(sys.modules, {"nova_slack_answers": sl, "nova_config": cfg}):
+            asp._post_wish(cur, 80, "wish text")
+        self.assertEqual(sent[0]["text"], "wish text")
+        self.assertEqual(cfg.posts, [])
+        self.assertTrue(any("INSERT INTO slack_prompts" in s and p == ("80", "C_CHAT", "171.5") for s, p in cur.calls))
+
+    def test_post_wish_falls_back_when_slack_fails(self):
+        cur = types.SimpleNamespace(execute=lambda *a: None)
+        cfg = _nova_config()
+        with patch.dict(sys.modules, {"nova_slack_answers": _NO_SLACK, "nova_config": cfg}):
+            asp._post_wish(cur, 81, "wish text")
+        self.assertEqual(cfg.posts[0][0], "wish text")

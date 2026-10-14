@@ -229,3 +229,13 @@ class TestFrame(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestThreadContext(unittest.TestCase):
+    """2026-10-13: a thread reply carries the message the thread hangs off, so "Approved!" isn't bare."""
+    def test_with_thread_context(self):
+        self.assertEqual(sl._with_thread_context("Approved!", ""), "Approved!")
+        out = sl._with_thread_context("Approved!", "Nova wishes she could: the weight of absence")
+        self.assertIn("weight of absence", out)
+        self.assertTrue(out.endswith("Approved!"))
+        self.assertLess(len(sl._with_thread_context("x", "y" * 5000)), 1000)   # root text capped

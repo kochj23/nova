@@ -263,6 +263,24 @@ def is_duplicate_wish(oc, title, desc, why, embed=None):
     return best
 
 
+def _post_wish(oc, wish_id, text):
+    """Post the wish and register its thread in slack_prompts (kind 'wish'), so a reply there is recorded by
+    nova_slack_answers and the chat agent stays out of it. Before 2026-10-13 his "Approved!" under wish #80
+    went to the chat agent, which saw only that word and answered with confusion. Falls back to post_both."""
+    import nova_config
+    chan = getattr(nova_config, "SLACK_CHAN", None)
+    try:
+        import nova_slack_answers
+        r = nova_slack_answers.slack("chat.postMessage", channel=chan, text=text)
+        if not (r or {}).get("ok"):
+            raise RuntimeError(f"chat.postMessage: {(r or {}).get('error')}")
+        oc.execute("INSERT INTO slack_prompts (kind, ref_id, channel, ts) VALUES ('wish', %s, %s, %s) "
+                   "ON CONFLICT (kind, ref_id) DO NOTHING", (str(wish_id), r.get("channel") or chan, r["ts"]))
+    except Exception as e:
+        log(f"wish thread not registered ({e}); posting without it")
+        nova_config.post_both(text, slack_channel=chan)
+
+
 def approve_wish(oc, wish_id, by="Jordan"):
     """The ONLY path that queues a wish build for Claude: Jordan said yes to THIS wish."""
     oc.execute("SELECT title, coalesce(description,''), coalesce(why,''), coalesce(source_seed,''), status "
@@ -427,11 +445,10 @@ def pursue(oc, mc, cand):
                 post = (f":sparkles: *Nova wishes she could:* {title} — _{why or desc[:120]}_")
                 if not _may_post_wish(oc, post):
                     raise RuntimeError("held by the Annie Wilkes rule / turning point (wish still filed)")
-                nova_config.post_both(
+                _post_wish(oc, wish_id,
                     f":sparkles: *Nova wishes she could:* {title} — _{why or desc[:120]}_ "
                     f"(wishlist #{wish_id}; Claude reviews it and approves unless it carries significant "
-                    f"risk, in which case it comes to you)",
-                    slack_channel=getattr(nova_config, "SLACK_CHAN", None))
+                    f"risk, in which case it comes to you — reply yes/no here to decide it yourself)")
             except Exception as e:
                 log(f"wish notify skipped (non-fatal): {e}")
         except Exception as e:

@@ -29,6 +29,17 @@ sys.path.insert(0, str(SCRIPTS))
 SCRIPT = SCRIPTS / "nova_aspirations.py"
 
 
+def _no_slack_mod():
+    m = types.ModuleType("nova_slack_answers")
+    def slack(*a, **k):
+        raise RuntimeError("no Slack in tests")
+    m.slack = slack
+    return m
+
+
+_NO_SLACK = _no_slack_mod()
+
+
 def _load(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
@@ -136,12 +147,12 @@ class TestSecurity(unittest.TestCase):
         cur = _interior()
         cfg = _cfg()
         with patch.object(asp, "llm", lambda *a, **k: WISH), patch.object(asp, "remember", lambda *a, **k: 7), \
-                patch.object(asp, "_embed", lambda t: None), patch.dict(sys.modules, {"nova_config": cfg}), \
+                patch.object(asp, "_embed", lambda t: None), patch.dict(sys.modules, {"nova_slack_answers": _NO_SLACK, "nova_config": cfg}), \
                 _no_gate(), _quiet():
             asp.pursue(cur, None, {"seeds": ["s1", "s2"]})
         self.assertEqual(len(cur.executed("INSERT INTO feature_wishes")), 1)
         self.assertEqual(cur.executed("claude_queue"), [])
-        self.assertIn("--approve 42", cfg.posts[0])          # Jordan is asked; nothing is built
+        self.assertIn("reply yes/no here", cfg.posts[0])     # Jordan is asked in the thread; nothing is built
 
     def test_forbidden_wish_is_dropped_before_dedup_or_filing(self):
         bad = json.loads(WISH); bad["wish_title"] = "Back myself up offsite"
@@ -170,7 +181,7 @@ class TestSecurity(unittest.TestCase):
         cur = _interior()
         with patch.object(asp, "llm", lambda *a, **k: WISH), \
                 patch.object(asp, "remember", lambda t, s, m, **k: got.update(m) or 7), \
-                patch.object(asp, "_embed", lambda t: None), patch.dict(sys.modules, {"nova_config": _cfg()}), \
+                patch.object(asp, "_embed", lambda t: None), patch.dict(sys.modules, {"nova_slack_answers": _NO_SLACK, "nova_config": _cfg()}), \
                 _no_gate(), _quiet():
             asp.pursue(cur, None, {"seeds": ["s1", "s2"]})
         self.assertEqual(got["privacy"], "private")
@@ -273,7 +284,7 @@ class TestRetry(unittest.TestCase):
         cur = _interior()
         with patch.object(asp, "llm", lambda *a, **k: WISH), patch.object(asp, "remember", lambda *a, **k: 7), \
                 patch.object(asp, "is_duplicate_wish", side_effect=RuntimeError("embed pool exploded")), \
-                patch.dict(sys.modules, {"nova_config": _cfg()}), _no_gate(), redirect_stdout(io.StringIO()) as buf:
+                patch.dict(sys.modules, {"nova_slack_answers": _NO_SLACK, "nova_config": _cfg()}), _no_gate(), redirect_stdout(io.StringIO()) as buf:
             asp.pursue(cur, None, {"seeds": ["s1", "s2"]})
         self.assertIn("dedup check failed (non-fatal)", buf.getvalue())
         self.assertEqual(len(cur.executed("INSERT INTO feature_wishes")), 1)
@@ -337,7 +348,7 @@ class TestIntegration(unittest.TestCase):
         cfg = _cfg()
         with patch.object(asp, "llm", lambda *a, **k: WISH), patch.object(asp, "remember", lambda *a, **k: 7), \
                 patch.object(asp, "_embed", lambda t: None), patch.object(asp, "_may_post_wish", lambda oc, t: False), \
-                patch.dict(sys.modules, {"nova_config": cfg}), redirect_stdout(io.StringIO()) as buf:
+                patch.dict(sys.modules, {"nova_slack_answers": _NO_SLACK, "nova_config": cfg}), redirect_stdout(io.StringIO()) as buf:
             asp.pursue(cur, None, {"seeds": ["s1", "s2"]})
         self.assertEqual(len(cur.executed("INSERT INTO feature_wishes")), 1)
         self.assertEqual(cfg.posts, [])
@@ -346,7 +357,7 @@ class TestIntegration(unittest.TestCase):
     def test_filed_wish_lineage_carries_memory_id_and_first_seed(self):
         cur = _interior()
         with patch.object(asp, "llm", lambda *a, **k: WISH), patch.object(asp, "remember", lambda *a, **k: "mem-9"), \
-                patch.object(asp, "_embed", lambda t: None), patch.dict(sys.modules, {"nova_config": _cfg()}), \
+                patch.object(asp, "_embed", lambda t: None), patch.dict(sys.modules, {"nova_slack_answers": _NO_SLACK, "nova_config": _cfg()}), \
                 _no_gate(), _quiet():
             asp.pursue(cur, None, {"seeds": ["seed-one", "seed-two"]})
         params = cur.executed("INSERT INTO feature_wishes")[0][1]
