@@ -49,9 +49,10 @@ MONITORED_APPS = [
 # NOTE: Memory Server (18790), Gateway (18789/18792), PostgreSQL, Redis are
 # handled exclusively by Big Brother which has proper dependency-aware restart
 # logic. Duplicating them here causes double-alerts. Only monitor services
-# that BB does NOT restart (Ollama is managed by the app, not launchd).
+# that BB does NOT restart. Ollama is the LaunchDaemon net.digitalnoise.ollama; Ollama.app is retired
+# (2026-10-13: relaunching the app here kept the default-config app serving after the daemon failed at boot).
 INFRA_SERVICES = [
-    (11434, "Ollama", "open -a Ollama"),
+    (11434, "Ollama", "sudo -n launchctl kickstart -k system/net.digitalnoise.ollama"),
 ]
 
 # Require consecutive down checks before alerting (prevents flapping on brief blips)

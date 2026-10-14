@@ -402,7 +402,7 @@ def seed_patterns():
             "pattern_name": "ollama_gpu_stuck",
             "trigger_condition": {"service_down": "ollama", "port": 11434},
             "fix_action": {"type": "command",
-                          "command": "pkill ollama; sleep 3; open -a Ollama",
+                          "command": "sudo -n launchctl kickstart -k system/net.digitalnoise.ollama",
                           "service": "ollama",
                           "health_check_url": "http://127.0.0.1:11434/api/tags"},
             "confidence": 0.85,

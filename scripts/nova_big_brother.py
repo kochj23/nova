@@ -2856,7 +2856,7 @@ def _check_gpu_contention(issues: list, fixes: list):
             _escalate_to_claude(
                 "Ollama GPU stuck — inference frozen and model unload attempt failed. "
                 "Port 11434 is up but generate requests time out. "
-                "Try: pkill ollama && open -a Ollama. Check Metal driver state.",
+                "Try: sudo launchctl kickstart -k system/net.digitalnoise.ollama. Check Metal driver state.",
                 priority=2
             )
             _gpu_last_kill = now
@@ -4022,11 +4022,13 @@ def _full_sweep():
         # ── Ollama auto-restart if port is down ──────────────────────────────────
         if not _port_open("127.0.0.1", 11434):
             try:
-                subprocess.run(["open", "-a", "Ollama"], capture_output=True, timeout=10)
-                fixes.append("Opened Ollama.app (was not running)")
-                _record_event("critical", "Ollama (:11434) DOWN", "Launched Ollama.app via `open -a`", "Ollama")
+                # The LaunchDaemon, never Ollama.app (retired; it serves with default config).
+                subprocess.run(["launchctl", "kickstart", "-k", "system/net.digitalnoise.ollama"],
+                               capture_output=True, timeout=30)
+                fixes.append("Kickstarted net.digitalnoise.ollama (was not running)")
+                _record_event("critical", "Ollama (:11434) DOWN", "Kickstarted LaunchDaemon net.digitalnoise.ollama", "Ollama")
             except Exception as exc:
-                _record_event("critical", "Ollama (:11434) DOWN", f"Failed to launch Ollama.app: {exc}", "Ollama")
+                _record_event("critical", "Ollama (:11434) DOWN", f"Failed to kickstart net.digitalnoise.ollama: {exc}", "Ollama")
 
         # ── SwarmUI backend error detection ──────────────────────────────────────
         try:
