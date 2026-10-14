@@ -25,20 +25,25 @@ Conventions mirror nova_attention_focus.py / nova_weight_of_memory.py.
 THE JORDAN LENS (merge M6 of the 2026-10-09 organ audit). Empathy core is now the one organ that
 looks at Little Mister's side of her records. Hold (#68), the Quiet Sensor (#69) and Human Insight
 (#35) were merged into it on 2026-10-09; each 6-hour pass reads his messages ONCE (gateway_traces,
-human channels, the widest window any section needs) and writes four sections:
+human channels, the widest window any section needs) and writes five sections:
   empathy — what he returns to, and where she brushed him off   (source='empathy_core')
   hold    — the five facts she holds of him, and any that slipped (source='hold')
   quiet   — what went unsaid, every finding cited by row id      (source='quiet_sensor')
   insight — patterns in human decisions, from her own records    (source='human_insight')
+  presence — his single questions, one at a time, and whether she was there for each
+             (wish #78, added 2026-10-13; logic in nova_weight_of_presence.py) (source='weight_of_presence')
 Every section keeps its own memory source, its own service_config keys (nova_empathy_core/high_water;
-nova_hold/high_water + held; nova_quiet_sensor/high_water + latest; nova_human_insight/high_water),
-its own dedupe and its own guards (cite row ids, never diagnose; the quiet sensor's model line is kept
+nova_hold/high_water + held; nova_quiet_sensor/high_water + latest; nova_human_insight/high_water;
+nova_weight_of_presence/high_water + latest), its own dedupe and its own guards (cite row ids, never diagnose; the quiet sensor's model line is kept
 only if hedged, digit-free and free of he/him/his). The section logic calls the absorbed modules'
 own functions; nova_hold.py, nova_quiet_sensor.py and nova_human_insight.py remain as thin wrappers.
 One section failing never stops the others (exit 1 at the end if any failed).
 
-  nova_empathy_core.py                    # all four sections (scheduler-core, every 6 h)
-  nova_empathy_core.py --section hold     # one section alone (repeatable: empathy|hold|quiet|insight)
+Since 2026-10-13 the shared read also drops rows whose gateway person is 'service' (bench, verify, canary and
+test probes on ad-hoc channel names were counting as him).
+
+  nova_empathy_core.py                    # all five sections (scheduler-core, every 6 h)
+  nova_empathy_core.py --section hold     # one section alone (repeatable: empathy|hold|quiet|insight|presence)
   nova_empathy_core.py --dry-run          # print what each section would write, write nothing
   nova_empathy_core.py --no-llm           # quiet section: skip the model's closing line
   nova_empathy_core.py --selftest         # pure-logic assertions, no DB, no memory
@@ -267,17 +272,20 @@ def read_shared(cur):
     sees exactly the rows its own query used to return). Returns the per-section slices."""
     import nova_hold as hd
     import nova_quiet_sensor as qs
+    import nova_weight_of_presence as wp
     cur.execute("SELECT created_at, created_at::date, trace_id, user_message, response, "
                 "created_at > now() - make_interval(days => %s), "     # empathy window
                 "created_at > now() - make_interval(days => %s), "     # quiet sensor: went-quiet window
                 "created_at > now() - make_interval(days => %s), "     # quiet sensor: elsewhere window
                 "created_at > now() - make_interval(days => %s) "      # hold: presence window
                 "FROM gateway_traces WHERE created_at > now() - make_interval(days => %s) "
-                "AND coalesce(user_message,'') <> '' AND coalesce(channel,'') NOT IN %s ORDER BY 1",
+                "AND coalesce(user_message,'') <> '' AND coalesce(channel,'') NOT IN %s "
+                "AND coalesce(person,'') <> 'service' ORDER BY 1",
                 (WINDOW_DAYS, qs.QUIET_WINDOW, qs.ELSEWHERE_DAYS, hd.PRESENCE_DAYS,
-                 max(WINDOW_DAYS, qs.QUIET_WINDOW, qs.ELSEWHERE_DAYS, hd.PRESENCE_DAYS), MACHINE_CHANNELS))
+                 max(WINDOW_DAYS, qs.QUIET_WINDOW, qs.ELSEWHERE_DAYS, hd.PRESENCE_DAYS, wp.PRESENCE_DAYS),
+                 MACHINE_CHANNELS))
     rows = cur.fetchall()
-    out = {"empathy": [], "topics": [], "his_times": [], "to_me": 0, "presence_dates": set(),
+    out = {"empathy": [], "topics": [], "his_times": [], "to_me": 0, "presence_dates": set(), "moments": [],
            "last_date": rows[-1][1] if rows else None}
     for ts, d, tid, msg, resp, in_emp, in_quiet, in_else, in_pres in rows:
         if in_emp:
@@ -289,6 +297,7 @@ def read_shared(cur):
             out["to_me"] += 1
         if in_pres:
             out["presence_dates"].add(d)
+        out["moments"].append((ts, tid, msg, resp))   # presence section windows these itself (wp.PRESENCE_DAYS)
     return out
 
 
@@ -423,16 +432,46 @@ def section_insight(cur, today, shared, args):
     hi.log(f"surfaced {surfaced} new insight(s)")
 
 
-SECTIONS = {"empathy": section_empathy, "hold": section_hold, "quiet": section_quiet, "insight": section_insight}
-NEEDS_TRACES = {"empathy", "hold", "quiet"}   # insight reads predictions, sessions and reach_log only
+def section_presence(cur, today, shared, args):
+    """The Weight of Presence (wish #78): his single questions, one at a time, and whether she was there."""
+    import nova_weight_of_presence as wp
+    if shared is None:
+        wp.log("no read of his messages — fail-open, presence section skipped"); return
+    ms = wp.moments(shared["moments"], datetime.now(timezone.utc))
+    fs = wp.findings(ms)
+    wp.log(f"{len(ms)} moment(s): " + (", ".join(f"{x['kind']}={len(x['cites'])}" for x in fs[1:]) or "-"))
+    sig = wp.presence_sig(fs)
+    text = wp.presence_text(fs, today)
+    if args.dry_run:
+        print(text); return
+    seen = load_seen(cur, wp.STATE_SERVICE)
+    if not _fresh(seen, sig, today):
+        wp.log(f"no moment newly missed or held (sig {sig})"); return
+    meta = {"organ": wp.STATE_SERVICE, "kind": "presence", "sig": sig, "findings": [x["kind"] for x in fs],
+            "cites": [c for x in fs for c in x["cites"]], **({"lineage": _stamp()} if _stamp() else {})}
+    remember(text, meta, source=wp.SOURCE)
+    seen[sig] = today.isoformat()
+    save_seen(cur, seen, wp.STATE_SERVICE)
+    cur.execute("""INSERT INTO service_config (service, key, value, updated_at, updated_by)
+                   VALUES (%s, %s, %s::jsonb, now(), %s)
+                   ON CONFLICT (service, key)
+                   DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by""",
+                (wp.STATE_SERVICE, wp.LATEST_KEY, json.dumps({"date": today.isoformat(), "findings": fs, "text": text},
+                                                             default=str), wp.STATE_SERVICE))
+    wp.log(f"felt the weight of a moment (sig {sig})")
+
+
+SECTIONS = {"empathy": section_empathy, "hold": section_hold, "quiet": section_quiet, "insight": section_insight,
+            "presence": section_presence}
+NEEDS_TRACES = {"empathy", "hold", "quiet", "presence"}   # insight reads predictions, sessions and reach_log only
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Nova's Jordan lens — empathy core with hold, quiet sensor and "
-                                             "human insight as sections (merged 2026-10-09)")
+    ap = argparse.ArgumentParser(description="Nova's Jordan lens — empathy core with hold, quiet sensor, "
+                                             "human insight (merged 2026-10-09) and presence (2026-10-13) as sections")
     ap.add_argument("--dry-run", action="store_true", help="print what each section would write, write nothing")
     ap.add_argument("--section", action="append", choices=list(SECTIONS),
-                    help="run only this section (repeatable); default: all four")
+                    help="run only this section (repeatable); default: all five")
     ap.add_argument("--no-llm", action="store_true", help="quiet section: skip the model's closing line")
     args = ap.parse_args(argv)
     chosen = [s for s in SECTIONS if s in (args.section or SECTIONS)]

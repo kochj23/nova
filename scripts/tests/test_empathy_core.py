@@ -89,7 +89,7 @@ class TestSecurity(unittest.TestCase):
         self.assertIn("make_interval(days => %s)", body)
 
     def test_section_names_are_an_allowlist(self):
-        self.assertEqual(list(ec.SECTIONS), ["empathy", "hold", "quiet", "insight"])
+        self.assertEqual(list(ec.SECTIONS), ["empathy", "hold", "quiet", "insight", "presence"])
         with self.assertRaises(SystemExit), redirect_stdout(io.StringIO()), patch("sys.stderr", io.StringIO()):
             ec.main(["--section", "x'; SELECT 1; --"])
 
@@ -347,16 +347,18 @@ def _run(argv, world, llm=None, post=None, remember_fails_for=None):
 class TestJordanLens(unittest.TestCase):
     """Integration + Functional for the merged pass (M6)."""
 
-    def test_full_pass_reads_his_messages_once_and_writes_four_sections(self):
+    def test_full_pass_reads_his_messages_once_and_writes_five_sections(self):
         w = _World()
         rc, posted, _ = _run([], w)
         self.assertEqual(rc, 0)
         self.assertEqual(w.reads_of("gateway_traces"), 1)             # ONE read of the shared input
-        self.assertEqual({p[0] for p in posted}, {"empathy_core", "hold", "quiet_sensor", "human_insight"})
+        self.assertEqual({p[0] for p in posted}, {"empathy_core", "hold", "quiet_sensor", "human_insight",
+                                                  "weight_of_presence"})
         self.assertEqual(sum(p[0] == "human_insight" for p in posted), 3)
         self.assertEqual(w.inserts(), {("nova_empathy_core", "high_water"), ("nova_hold", "high_water"),
                                        ("nova_hold", "held"), ("nova_quiet_sensor", "high_water"),
-                                       ("nova_quiet_sensor", "latest"), ("nova_human_insight", "high_water")})
+                                       ("nova_quiet_sensor", "latest"), ("nova_human_insight", "high_water"),
+                                       ("nova_weight_of_presence", "high_water"), ("nova_weight_of_presence", "latest")})
 
     def test_each_section_keeps_its_voice_and_guards(self):
         rc, posted, _ = _run([], _World())
@@ -398,14 +400,14 @@ class TestJordanLens(unittest.TestCase):
         w = _World()
         rc, posted, out = _run(["--dry-run", "--no-llm"], w)
         self.assertEqual((rc, posted, w.inserts()), (0, [], set()))
-        for marker in ("Empathy core,", "Hold,", "Quiet sensor,", "• [Human insight]"):
+        for marker in ("Empathy core,", "Hold,", "Quiet sensor,", "• [Human insight]", "Weight of presence,"):
             self.assertIn(marker, out)
 
     def test_a_failing_section_never_stops_the_others(self):
         rc, posted, out = _run([], _World(), remember_fails_for="hold")
         self.assertEqual(rc, 1)
         self.assertIn("section hold failed", out)
-        self.assertEqual({p[0] for p in posted}, {"empathy_core", "quiet_sensor", "human_insight"})
+        self.assertEqual({p[0] for p in posted}, {"empathy_core", "quiet_sensor", "human_insight", "weight_of_presence"})
 
     def test_shared_read_matches_what_each_section_used_to_read(self):
         sh = ec.read_shared(_World())
@@ -413,6 +415,12 @@ class TestJordanLens(unittest.TestCase):
         self.assertEqual(sh["topics"], [(t[1], t[2], t[3]) for t in TRACES])
         self.assertEqual((sh["to_me"], sh["presence_dates"], sh["last_date"]),
                          (2, {date(2026, 9, 28), date(2026, 10, 3)}, date(2026, 10, 3)))
+        self.assertEqual(sh["moments"], [(t[0], t[2], t[3], t[4]) for t in TRACES])     # presence (#78)
+
+    def test_shared_read_drops_service_probes(self):
+        w = _World()
+        ec.read_shared(w)
+        self.assertIn("coalesce(person,'') <> 'service'", w.sql[0])               # bench/verify/canary are not him
 
 
 class TestUnit(unittest.TestCase):
