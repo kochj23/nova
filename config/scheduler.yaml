@@ -99,6 +99,13 @@ tasks:
     timeout: 5400
     overlap: skip
 
+  journal_stranded_push:             # 2026-10-15: push commits stranded in .6's OWN ~/nova-journal clone. nova_syslog_server is a LaunchDaemon (no login keychain), so its BREAKING articles commit but cannot push (gh creds live in the keychain). This runs in the user session where gh auth works. Distinct id from nova-core's article_watchdog_stranded (scheduler_runs is shared).
+    script: nova_article_watchdog.py
+    args: ["--stranded"]
+    schedule: every 10m
+    timeout: 600
+    overlap: skip
+
   index_integrity:
     script: nova_index_integrity.py
     args: ["--quiet"]
@@ -396,6 +403,11 @@ tasks:
     overlap: skip
     group: llm
 
+  cinc_daily:                      # moved BACK from scheduler-core (.2) 2026-10-15: it SSHes into the
+    script: nova_cinc_daily.py     # Macs (brew/launchctl) and only .6's key is authorized on .6/.7/.77/.252
+    schedule: cron 0 3 * * *       # -> on .2 it reported itunes/nova-core/mac-studio as unreachable/missing nightly
+    timeout: 1800
+    overlap: skip
 
 
   # ── Daily: morning (Jordan wakes up) ───────────────────────────────────

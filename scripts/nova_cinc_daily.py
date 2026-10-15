@@ -39,11 +39,47 @@ def pg_connect():
     return psycopg2.connect(DB_DSN)
 
 
+_LOCAL_IPS = None
+
+
+def is_local_host(host):
+    """True when `host` is the machine CINC is running on. Decided from this host's own
+    addresses, not a hardcoded .6: cinc_daily was offloaded to scheduler-core on nova-core
+    (.2), where the old `host == 192.168.1.6` shortcut ran `launchctl` in a LINUX shell
+    (-> nightly bogus "service_missing com.nova.scheduler" on mac-studio) and SSHed nova-core
+    into itself (-> "node_unreachable nova-core"). 2026-10-15."""
+    global _LOCAL_IPS
+    host = str(host).split("/")[0]
+    if host in ("127.0.0.1", "localhost", "::1"):
+        return True
+    if _LOCAL_IPS is None:
+        ips = set()
+        try:
+            import socket
+            for info in socket.getaddrinfo(socket.gethostname(), None):
+                ips.add(info[4][0])
+        except Exception:
+            pass
+        for cmd in (["hostname", "-I"], ["/sbin/ifconfig"]):
+            try:
+                # Popen, not run(): keeps IP discovery out of the subprocess.run call path
+                with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                      text=True) as pr:
+                    out = pr.communicate(timeout=5)[0] or ""
+                for tok in out.replace("addr:", " ").split():
+                    if tok.count(".") == 3 and tok.replace(".", "").isdigit():
+                        ips.add(tok)
+            except Exception:
+                pass
+        _LOCAL_IPS = ips
+    return host in _LOCAL_IPS
+
+
 def ssh_cmd(host, user, cmd, timeout=60):
     """Run command on remote host via SSH (locally for the host CINC runs on: an ssh session
     into ourselves has no GUI launchd domain, so `launchctl list` reported com.nova.scheduler
     as missing every night — 2026-10-05)."""
-    local = host in ("127.0.0.1", "localhost", "192.168.1.6")
+    local = is_local_host(host)
     try:
         r = subprocess.run(
             ["bash", "-lc", cmd] if local else ["ssh"] + SSH_OPTS + [f"{user}@{host}", cmd],
@@ -84,7 +120,7 @@ def collect_inventory(node):
     if os_family == "macos":
         # Homebrew packages
         # Use local command if this is the local machine
-        if host in ("127.0.0.1", "192.168.1.6"):
+        if is_local_host(host):
             try:
                 r = subprocess.run(["/opt/homebrew/bin/brew", "list", "--versions"], capture_output=True, text=True, timeout=30)
                 rc, out = r.returncode, r.stdout
@@ -277,7 +313,7 @@ def detect_drift(node):
     # Reachability first. Without this, an unreachable host does not report as unreachable — it
     # reports as every individual service being down, which is a fabricated diagnosis dressed up
     # as several. One honest "cannot reach" beats three confident wrong answers.
-    if host in ("127.0.0.1", "192.168.1.6"):
+    if is_local_host(host):
         reachable, err_probe = True, ""   # the host CINC runs on — never SSH to ourselves
     else:
         rc_probe, _, err_probe = ssh_cmd(host, user, "true", timeout=20)

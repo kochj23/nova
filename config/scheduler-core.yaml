@@ -1210,11 +1210,8 @@ tasks:
     timeout: 60
     overlap: skip
 
-  cinc_daily:
-    script: nova_cinc_daily.py
-    schedule: cron 0 3 * * *
-    timeout: 1800
-    overlap: skip
+  # cinc_daily moved back to the .6 scheduler 2026-10-15 — needs SSH keys to the Macs that
+  # only .6 holds (from here it reported 3-4 bogus node_unreachable/service_missing nightly).
 
   fishbowl_channel_discovery:
     script: nova_fishbowl_channel_discovery.py
