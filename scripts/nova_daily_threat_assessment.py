@@ -145,7 +145,14 @@ def fetch_recent_inbox(hours=24):
 
 def score_message(msg):
     user = f"From: {msg['sender']}\nSubject: {msg['subject']}\n\n{msg['body'][:2000]}"
-    raw = call_llm(SCORE_SYSTEM, user, max_tokens=300)
+    # Haiku, not call_llm's default Sonnet: a 4-way JSON classification does not need Sonnet,
+    # and serial `claude -p --model sonnet` ran 30-150s/message — 40-60 messages blew the
+    # timeout every day 10-09..10-15. Falls back to call_llm (Sonnet -> OpenRouter) on error.
+    try:
+        import nova_claude_code
+        raw = nova_claude_code.claude_generate(user, system=SCORE_SYSTEM, model="haiku", timeout=120)
+    except Exception:
+        raw = call_llm(SCORE_SYSTEM, user, max_tokens=300)
     try:
         start, end = raw.index("{"), raw.rindex("}") + 1
         return json.loads(raw[start:end])
@@ -340,12 +347,24 @@ def main():
 
     seen = _load_seen()
     msgs = fetch_recent_inbox(hours=24)
+    # The DB is the durable record: the seen-file is only written at the very end, so a run
+    # that timed out re-scored everything the next day. Skip anything already in the table.
+    if msgs:
+        cur.execute("SELECT msgid FROM email_threat_scan WHERE msgid = ANY(%s)", ([m["msgid"] for m in msgs],))
+        seen |= {r[0] for r in cur.fetchall()}
     new_msgs = [m for m in msgs if m["msgid"] not in seen]
     log(f"{len(msgs)} messages in last 24h, {len(new_msgs)} not yet scored")
 
+    # Score concurrently (each call is an independent `claude -p` subprocess); DB writes stay
+    # on this thread.
+    from concurrent.futures import ThreadPoolExecutor
+    t0 = time.time()
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        verdicts = list(pool.map(score_message, new_msgs))
+    log(f"scored {len(new_msgs)} messages in {time.time() - t0:.0f}s")
+
     notable = []
-    for m in new_msgs:
-        verdict = score_message(m)
+    for m, verdict in zip(new_msgs, verdicts):
         is_notable = (verdict.get("category") in ("phishing", "social_engineering", "impersonation")
                       and verdict.get("confidence", 0) >= 0.5)
         evidence_path = write_evidence(m, verdict) if is_notable else None
@@ -358,7 +377,6 @@ def main():
         seen.add(m["msgid"])
         if is_notable:
             notable.append((m, verdict))
-        time.sleep(0.5)  # be gentle on the local LLM
 
     _save_seen(seen)
 
