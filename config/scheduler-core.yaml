@@ -452,6 +452,28 @@ tasks:
     overlap: skip
     group: llm
 
+  # === Maximum Overdrive organs (Jordan 2026-10-15: "Do it all!") ===
+  comet_tail:                      # shared-cause detector: >=3 unrelated components newly failing in one window -> look for ONE cause first. Read/record/notify only.
+    script: nova_comet_tail.py
+    args: ["--scheduled"]
+    schedule: every 15m
+    timeout: 120
+    overlap: skip
+
+  morse_horn:                      # weekly: decode repeating machine noise into plain demands; info digest
+    script: nova_morse_horn.py
+    args: ["--scheduled"]
+    schedule: cron 0 7 * * 1
+    timeout: 900
+    overlap: skip
+
+  haven_drill:                     # quarterly: open the drill, build the manual-fallback checklist, ask Jordan for a window (never flips the kill switch)
+    script: nova_haven_drill.py
+    args: ["--scheduled"]
+    schedule: cron 0 10 1 1,4,7,10 *
+    timeout: 600
+    overlap: skip
+
   continuity_review:               # the monthly self-review she promised in public (9-14 baseline); missed 10-14, so it is a job now (Jordan 2026-10-15). Acts from the 14th until this month's row in continuity_reviews has mailed_at; publishes /operations/continuity-review-YYYY-MM and mails the witness copy to Jules. Daily = it retries itself.
     script: nova_continuity_review.py
     args: ["--scheduled"]

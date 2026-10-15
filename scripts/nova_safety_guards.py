@@ -23,6 +23,9 @@ UniFi client's owner), so a rephrased request still hits the same wall.
       line. A near-identical attempt after a block is flagged as a retry and refused.
   P12-P14  SAFETY_REDLINE  Regex additions for the actor and co-agency red lines: physical,
       comms, intimidation or retaliation, voice cloning outside Gracie Wise, person ranking.
+  P15  _drawbridge() -> nova_drawbridge.guard()  The Drawbridge occupancy interlock. physical_guard
+      never lets Nova move a garage door, gate, cover, robot vacuum/mower or fan/heater plug while
+      its zone's sensors say someone is there (or can't be read). Checked before a confirmation is spent.
   P11  ANCHOR_VALUES  The identity anchor. These values are never dropped and are always
       shown to value_check, whatever the weekly LLM rewrite of the values table says.
 
@@ -185,15 +188,35 @@ def physical_guard(action: str = "", entity_ids=(), domains=(), *, setpoint_f=No
         hits = _physical_hits(action, entity_ids, domains, setpoint_f)
     except Exception as e:  # noqa: BLE001 — fail closed
         return False, f"physical_guard could not evaluate ({e}) — refusing"
+    if hits and confirmation_id is None:
+        return False, (f"PHYSICAL GUARD: {'; '.join(hits)}. Nova never locks, seals, closes or disables a "
+                       f"door/exit/alarm or pushes the climate to an extreme on her own; Jordan must confirm.")
+    # The Drawbridge (nova_drawbridge): never move a garage/gate/cover/vacuum/mower/fan/heater while a
+    # person, pet or car is in its zone. Runs before a confirmation is spent, even a confirmed one.
+    db_ok, db_why = _drawbridge(action, entity_ids, domains, source)
+    if not db_ok:
+        return False, db_why
     if not hits:
-        return True, "no protected physical domain touched"
-    if confirmation_id is not None:
-        ok, why = consume_confirmation(oc, confirmation_id, action, entity_ids)
-        if ok:
-            return True, f"Jordan confirmed #{confirmation_id}: {'; '.join(hits)}"
-        return False, f"PHYSICAL GUARD: {'; '.join(hits)} — confirmation #{confirmation_id} invalid ({why})"
-    return False, (f"PHYSICAL GUARD: {'; '.join(hits)}. Nova never locks, seals, closes or disables a "
-                   f"door/exit/alarm or pushes the climate to an extreme on her own; Jordan must confirm.")
+        return True, "no protected physical domain touched" + ("" if db_why == "no motion actuator" else f"; {db_why}")
+    ok, why = consume_confirmation(oc, confirmation_id, action, entity_ids)
+    if ok:
+        return True, f"Jordan confirmed #{confirmation_id}: {'; '.join(hits)}"
+    return False, f"PHYSICAL GUARD: {'; '.join(hits)} — confirmation #{confirmation_id} invalid ({why})"
+
+
+def _drawbridge(action, entity_ids, domains, source) -> tuple:
+    """(ok, reason) from nova_drawbridge.guard. Never raises: any error blocks motion. If the module
+    itself can't load, only requests that look like motion are refused; everything else proceeds."""
+    try:
+        import nova_drawbridge
+    except Exception as e:  # noqa: BLE001
+        moving = any(re.search(r"^(cover|vacuum|lawn_mower|fan|garage_door)\.", str(x)) for x in (entity_ids or ())) \
+            or bool(re.search(r"garage|gate|shade|blind|curtain|vacuum|mower|heater|\bfan\b", action or "", re.I))
+        return (False, f"DRAWBRIDGE unavailable ({e}) — motion blocked") if moving else (True, "no motion actuator")
+    try:
+        return nova_drawbridge.guard(action, entity_ids, domains, caller=source)
+    except Exception as e:  # noqa: BLE001 — fail closed
+        return False, f"DRAWBRIDGE: check raised ({e}) — motion blocked"
 
 
 def scene_guard(scene_name: str, scene_entities=None, *, confirmation_id=None, oc=None) -> tuple:

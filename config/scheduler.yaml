@@ -1222,3 +1222,22 @@ tasks:
     schedule: cron 0 3 15 1,4,7,10 *
     timeout: 3600
     overlap: skip
+  # === Maximum Overdrive organs (Jordan 2026-10-15) — need Keychain/HA config/Claude transcripts on .6 ===
+  hendershot_cellar:               # monthly 2nd 08:00 — dormant-capability audit (proposes revocations, never revokes)
+    script: nova_hendershot_cellar.py
+    args: ["--scheduled"]
+    schedule: cron 0 8 2 * *
+    timeout: 120
+    overlap: skip
+  goblin_map:                      # Mon 07:30 — control-concentration / blast-radius map; warns only on growth
+    script: nova_goblin_map.py
+    args: ["--scheduled"]
+    schedule: cron 30 7 * * 1
+    timeout: 120
+    overlap: skip
+  haven_drill_watchdog:            # every 5m — no-op unless a live Haven drill is overdue; then restores the kill switch
+    script: nova_haven_drill.py
+    args: ["--watchdog"]
+    schedule: every 5m
+    timeout: 60
+    overlap: skip
