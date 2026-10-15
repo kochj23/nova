@@ -149,6 +149,7 @@ def main(dry):
         print("[sdr-actuator] SDRplay capture stuck >5 min -> restarting sdrplay.service + Duo units")
         if not dry:
             state["last_heal"] = now
+            sh("systemctl", "kill", "-s", "KILL", "sdrplay.service"); time.sleep(2)   # a wedged service ignores SIGTERM
             sh("systemctl", "restart", "sdrplay.service"); time.sleep(5)
             if os.path.exists("/home/kochj/rsp_usbreset.sh"):
                 sh("/home/kochj/rsp_usbreset.sh"); time.sleep(5)
@@ -180,6 +181,14 @@ def main(dry):
         elif u["requires"] and unit in state.get("sick_since", {}) and now - state["sick_since"][unit] >= HEAL_AFTER_S:
             changed.append(unit)                      # sick slave: restart just the slave
             state["sick_since"][unit] = now
+    # ...and a slave restart is a full API reset: when a slave lets go, sdrplay_apiService stops responding
+    # (ServiceNotResponding) while the master keeps streaming, and nothing reattaches until
+    # sdrplay.service, then the master, then the slave restart (2026-10-15, RSPduo 180603A532).
+    reset_api = any(units[x]["requires"] for x in changed)
+    for unit in [x for x in changed if units[x]["requires"]]:
+        for m in units:
+            if set(units[m]["tuners"]) & units[unit]["requires"] and m not in changed and any(t for _, t, _ in units[m]["rows"]):
+                changed.append(m)
     master_units = {units[x]["tuners"][0] for x in changed}
     for unit in list(units):                          # a slave restarts when its master did
         if units[unit]["requires"] & master_units and unit not in changed and units[unit]["rows"][0][1]:
@@ -187,6 +196,12 @@ def main(dry):
     if not dry:
         if reload:
             sh("systemctl", "daemon-reload")
+        if reset_api:
+            print("[sdr-actuator] slave restart -> resetting sdrplay.service first")
+            for unit in changed:
+                sh("systemctl", "stop", unit)
+            sh("systemctl", "kill", "-s", "KILL", "sdrplay.service"); time.sleep(2)   # a wedged service ignores SIGTERM
+            sh("systemctl", "restart", "sdrplay.service"); time.sleep(5)
         for unit in sorted(changed, key=lambda x: bool(units[x]["requires"])):
             print(f"[sdr-actuator] restarting {unit}")
             sh("systemctl", "restart", unit)
