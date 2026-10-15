@@ -4,8 +4,20 @@
 <dict>
 	<key>EnvironmentVariables</key>
 	<dict>
-		<key>PYTHONPATH</key>
-		<string></string>
+		<key>HOME</key>
+		<string>__HOME__</string>
+		<key>HOST</key>
+		<string>192.168.1.6</string>
+		<key>LLM_MODEL</key>
+		<string>deepseek-r1:8b</string>
+		<key>OPENAI_API_BASE</key>
+		<string>http://192.168.1.6:11434/v1</string>
+		<key>OPENAI_API_KEY</key>
+		<string>ollama</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+		<key>PORT</key>
+		<string>8000</string>
 	</dict>
 	<key>KeepAlive</key>
 	<true/>
@@ -13,8 +25,8 @@
 	<string>net.digitalnoise.tinychat</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/bin/zsh</string>
-		<string>__HOME__/.openclaw/scripts/tinychat_start.sh</string>
+		<string>/Volumes/Data/tinychat/venv/bin/python3</string>
+		<string>run.py</string>
 	</array>
 	<key>RunAtLoad</key>
 	<false/>
@@ -24,5 +36,7 @@
 	<string>__HOME__/.openclaw/logs/tinychat.log</string>
 	<key>ThrottleInterval</key>
 	<integer>30</integer>
+	<key>WorkingDirectory</key>
+	<string>/Volumes/Data/tinychat/chatbot</string>
 </dict>
 </plist>

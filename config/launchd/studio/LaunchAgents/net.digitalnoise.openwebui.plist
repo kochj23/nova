@@ -4,10 +4,18 @@
 <dict>
 	<key>EnvironmentVariables</key>
 	<dict>
+		<key>DATA_DIR</key>
+		<string>/Volumes/Data/openwebui/data</string>
+		<key>FRONTEND_BUILD_DIR</key>
+		<string>/Volumes/Data/openwebui/venv/lib/python3.12/site-packages/open_webui/frontend</string>
 		<key>HOME</key>
 		<string>__HOME__</string>
+		<key>OLLAMA_BASE_URL</key>
+		<string>http://192.168.1.6:11434</string>
 		<key>PATH</key>
 		<string>/Volumes/Data/openwebui/venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+		<key>WEBUI_AUTH</key>
+		<string>false</string>
 	</dict>
 	<key>KeepAlive</key>
 	<true/>
@@ -15,8 +23,16 @@
 	<string>net.digitalnoise.openwebui</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/bin/zsh</string>
-		<string>__HOME__/.openclaw/scripts/openwebui_start.sh</string>
+		<string>/opt/homebrew/bin/python3.12</string>
+		<string>-S</string>
+		<string>-c</string>
+		<string>import sys
+sys.path.insert(0, '/Volumes/Data/openwebui/venv/lib/python3.12/site-packages')
+import site; site.main()
+from open_webui.main import app
+import uvicorn
+uvicorn.run(app, host='192.168.1.6', port=3000, log_level='info')
+</string>
 	</array>
 	<key>RunAtLoad</key>
 	<false/>
