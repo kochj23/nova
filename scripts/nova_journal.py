@@ -1707,10 +1707,32 @@ def _alert_push_failing(msg: str):
         pass
 
 
+def _no_user_keychain() -> bool:
+    """True when this process runs in a macOS context with no login keychain — e.g. spawned by
+    a LaunchDaemon (nova_syslog_server's BREAKING security articles). There `gh auth
+    git-credential` cannot read its token, so every HTTPS push dies with "could not read
+    Username ... Device not configured" (2026-10-12..15). Verified with a test LaunchDaemon:
+    `security list-keychains` shows only System.keychain."""
+    if sys.platform != "darwin":
+        return False
+    try:
+        r = subprocess.run(["/usr/bin/security", "list-keychains"],
+                           capture_output=True, text=True, timeout=10)
+        return "login.keychain" not in (r.stdout or "")
+    except Exception:
+        return False
+
+
 def _network_not_published(reason: str) -> str:
     reason = " ".join((reason or "").split())[:200]
+    if "could not read username" in reason.lower() and _no_user_keychain():
+        # Not an outage: this context simply has no GitHub credentials. The commit is safe
+        # locally; journal_stranded_push (.6 scheduler, user session, every 10m) pushes it.
+        log("push deferred: no login keychain in this context (LaunchDaemon) — committed "
+            "locally; journal_stranded_push will publish it within ~10 min")
+        return PUSH_NOT_PUSHED
     log(f"push failed (network): {reason} — committed locally, NOT published; "
-        f"the hourly stranded watchdog will retry")
+        f"the stranded-commit sweep will retry")
     _alert_push_failing(f"push failed (network): {reason}")
     return PUSH_NOT_PUSHED
 
