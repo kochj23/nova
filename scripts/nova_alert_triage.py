@@ -97,6 +97,26 @@ def _recall(q, n=4, source=None):
         return []
 
 
+SIMILAR_MIN_SCORE = 0.62  # unrelated alerts score ~0.50-0.57 against incidents; real matches >=0.66
+
+
+def _relevant_incidents(text, mems, min_score=SIMILAR_MIN_SCORE):
+    """Keep only past incidents that are actually related: a real similarity score AND, when the
+    incident names affected services/hosts, at least one of them appears in the alert. Without this
+    every alert (traffic, NAS sync, sentinel) got the nearest-neighbour 'plex, searxng, tinychat'."""
+    low = (text or "").lower()
+    out = []
+    for m in mems or []:
+        score = m.get("score")
+        if score is not None and float(score) < min_score:
+            continue
+        affected = [str(a).lower() for a in ((m.get("metadata") or {}).get("affected") or []) if a]
+        if affected and not any(a in low for a in affected):
+            continue
+        out.append(m)
+    return out
+
+
 def _backoff_status(oc, dedup_key):
     """RULE B helper — dedup backoff. Returns (suppress:bool, reason:str).
 
@@ -160,7 +180,7 @@ def triage(title, body="", level="info", category=None, source=None, dedup_key=N
         _log(f"evidence check unavailable ({e})")
     ev_decided = apply_evidence(evidence, hard, level)
 
-    similar = _recall(text, n=4, source="incident")
+    similar = _relevant_incidents(text, _recall(text, n=4, source="incident"))
     baselines = _recall(text, n=3)  # any memory that establishes what's normal here
     changes = _recent_changes(oc)
     sim_ids = [str(m.get("id")) for m in similar]

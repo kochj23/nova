@@ -208,6 +208,15 @@ class TestRetry(unittest.TestCase):
 
 
 class TestUnit(unittest.TestCase):
+    def test_similar_incident_needs_real_relevance(self):
+        plex = {"text": "[Incident 2026-10-09] Multiple services down: plex, searxng, tinychat", "score": 0.57,
+                "metadata": {"affected": ["plex", "searxng", "tinychat"]}}
+        # 2026-10-15: traffic / NAS sync alerts got the plex incident attached
+        self.assertEqual(tri._relevant_incidents("FIRE — SR-2 : (584) Colorado (Glendale)", [plex]), [])
+        self.assertEqual(tri._relevant_incidents("NAS sync failed", [dict(plex, score=0.7)]), [])
+        self.assertEqual(len(tri._relevant_incidents("Service down: plex", [dict(plex, score=0.76)])), 1)
+        self.assertEqual(len(tri._relevant_incidents("x", [{"text": "no score/meta"}])), 1)
+
     def test_backoff_ladder(self):
         self.assertEqual(tri._backoff_status(_Cur(), None), (False, ""))
         self.assertEqual(tri._backoff_status(_Cur([("decision='page'", (0, None))]), "k"), (False, ""))
