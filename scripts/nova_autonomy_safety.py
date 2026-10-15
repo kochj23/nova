@@ -124,9 +124,12 @@ def ensure_schema(oc) -> None:
     oc.execute("CREATE INDEX IF NOT EXISTS autonomy_ledger_ts ON autonomy_ledger (ts DESC)")
     # P4 (outside check of self-justification): the OBJECTIVE record — what the world looked
     # like before and after, observed from health_checks/etc, kept apart from Nova's stated why.
-    oc.execute("ALTER TABLE autonomy_ledger ADD COLUMN IF NOT EXISTS before_state jsonb")
-    oc.execute("ALTER TABLE autonomy_ledger ADD COLUMN IF NOT EXISTS after_state jsonb")
-    oc.execute("ALTER TABLE autonomy_ledger ADD COLUMN IF NOT EXISTS stated_rationale text")
+    # nova_pg_schema.safe_ddl: no ACCESS EXCLUSIVE lock when the columns already exist
+    # (the 02:00 pg_dump made these ALTERs hit statement_timeout every night).
+    import nova_pg_schema
+    nova_pg_schema.safe_ddl(oc, "ALTER TABLE autonomy_ledger ADD COLUMN IF NOT EXISTS before_state jsonb, "
+                                "ADD COLUMN IF NOT EXISTS after_state jsonb, "
+                                "ADD COLUMN IF NOT EXISTS stated_rationale text")
     oc.execute("""
         CREATE TABLE IF NOT EXISTS autonomy_trust (
             action_class    text PRIMARY KEY,

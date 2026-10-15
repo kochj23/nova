@@ -82,8 +82,9 @@ def migrate(conn) -> bool:
         WHERE recurrence_key IS NOT NULL;
     """
     try:
+        import nova_pg_schema  # skips the ALTER (ACCESS EXCLUSIVE) when columns exist — 02:00 pg_dump vs statement_timeout
         with conn.cursor() as cur:
-            cur.execute(ddl)
+            nova_pg_schema.safe_ddl(cur, ddl)
         conn.commit()
         return True
     except Exception as e:

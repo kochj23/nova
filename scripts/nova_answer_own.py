@@ -25,6 +25,7 @@ import psycopg2
 
 from nova_ask_one import ABOUT_HIM_RE, SKIP_SOURCES
 from nova_research_pass import OPS_DSN, is_allowed, llm, remember, searx
+import nova_pg_schema  # noqa: E402 — lock-safe ensure-schema DDL (2026-10-15)
 
 MAX_ATTEMPTS = 2
 SOURCE = "self_answer"
@@ -36,8 +37,8 @@ def log(m): print(f"[answer-own {datetime.now().strftime('%H:%M:%S')}] {m}", flu
 
 
 def ensure_schema(oc):
-    oc.execute("ALTER TABLE reflection_questions ADD COLUMN IF NOT EXISTS self_attempts int NOT NULL DEFAULT 0")
-    oc.execute("ALTER TABLE learning_gaps ADD COLUMN IF NOT EXISTS self_attempts int NOT NULL DEFAULT 0")
+    nova_pg_schema.safe_ddl(oc, "ALTER TABLE reflection_questions ADD COLUMN IF NOT EXISTS self_attempts int NOT NULL DEFAULT 0")
+    nova_pg_schema.safe_ddl(oc, "ALTER TABLE learning_gaps ADD COLUMN IF NOT EXISTS self_attempts int NOT NULL DEFAULT 0")
 
 
 def pick(oc):

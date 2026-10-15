@@ -21,6 +21,7 @@ import nova_voice
 import nova_dsn as _nova_dsn  # noqa: E402
 MEM_DSN = _nova_dsn.pg_dsn("nova_memories")
 import nova_dsn as _nova_dsn  # noqa: E402
+import nova_pg_schema  # noqa: E402 — lock-safe ensure-schema DDL (2026-10-15)
 OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 
 # The cast. They all feud/ally with each other in the same scene — linked in `fishbowl`.
@@ -148,8 +149,8 @@ def ensure_people(cur):
                 "name text PRIMARY KEY, aliases text, channels text, summary text, "
                 "n_mem int, kind text DEFAULT 'cast', signature text, "
                 "updated_at timestamptz DEFAULT now())")
-    cur.execute("ALTER TABLE fishbowl_people ADD COLUMN IF NOT EXISTS kind text DEFAULT 'cast'")
-    cur.execute("ALTER TABLE fishbowl_people ADD COLUMN IF NOT EXISTS signature text")
+    nova_pg_schema.safe_ddl(cur, "ALTER TABLE fishbowl_people ADD COLUMN IF NOT EXISTS kind text DEFAULT 'cast'")
+    nova_pg_schema.safe_ddl(cur, "ALTER TABLE fishbowl_people ADD COLUMN IF NOT EXISTS signature text")
     cur.execute("CREATE TABLE IF NOT EXISTS fishbowl_scanned ("
                 "video_id text PRIMARY KEY, scanned_at timestamptz DEFAULT now())")
     # seed known speech signatures (text-based speaker ID — no voice diarization needed)

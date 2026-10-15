@@ -165,7 +165,9 @@ class TestUnit(unittest.TestCase):
     def test_migrate(self):
         conn = _Conn(_Cur())
         self.assertTrue(lc.migrate(conn))
-        self.assertIn("ALTER TABLE telemetry.incidents", conn.cur.sql[0])
+        # nova_pg_schema.safe_ddl reads the catalog first; the fake answers "missing", so the ALTER runs
+        self.assertTrue(conn.cur.executed("ALTER TABLE telemetry.incidents"))
+        self.assertTrue(conn.cur.executed("SET LOCAL lock_timeout"))
         self.assertEqual(conn.commits, 1)
 
     def test_acknowledge_is_idempotent_on_first_ack(self):
@@ -265,7 +267,9 @@ class TestFunctional(unittest.TestCase):
         buf = io.StringIO(); calls = []
         connect = (lambda *a, **k: conn) if conn is not None else (lambda *a, **k: (_ for _ in ()).throw(OSError("pg down")))
         try:
-            with patch.object(psycopg2, "connect", connect), _notify(calls), redirect_stdout(buf), _quiet():
+            import nova_pg_schema  # safe_ddl's catalog reads would eat the fake cursor's answer queue; run the DDL verbatim
+            with patch.object(psycopg2, "connect", connect), _notify(calls), redirect_stdout(buf), _quiet(), \
+                    patch.object(nova_pg_schema, "safe_ddl", lambda cur, sql, **k: cur.execute(sql)):
                 with self.assertRaises(SystemExit) as cm:
                     lc.main()
         finally:

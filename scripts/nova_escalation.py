@@ -57,6 +57,7 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import nova_spinnaker as SP  # noqa: E402
+import nova_pg_schema  # noqa: E402 — lock-safe ensure-schema DDL (2026-10-15)
 
 TZ = ZoneInfo("America/Los_Angeles")
 CLASSES = {"note": 0, "ask": 1, "alert": 2, "outward": 2, "irreversible": 2}
@@ -95,7 +96,7 @@ def log(m: str) -> None:
 
 
 def ensure_schema(oc) -> None:
-    oc.execute(SCHEMA)
+    nova_pg_schema.safe_ddl(oc, SCHEMA)
 
 
 def settings(oc) -> dict:

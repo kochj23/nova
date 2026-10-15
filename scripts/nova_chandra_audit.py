@@ -61,6 +61,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import nova_llm_ping as P  # noqa: E402  (CHAT_MODEL + retrying _post)
 import nova_voice  # noqa: E402  (persona constants only)
 import nova_watch_common as W  # noqa: E402
+import nova_pg_schema  # noqa: E402 — lock-safe ensure-schema DDL (2026-10-15)
 
 LOCAL_OLLAMA = "http://localhost:11434"
 GATEWAY = "http://127.0.0.1:18792/api/chat"
@@ -102,7 +103,7 @@ def log(m: str) -> None:
 
 
 def ensure_schema(cur) -> None:
-    cur.execute(SCHEMA)
+    nova_pg_schema.safe_ddl(cur, SCHEMA)
 
 
 def _q(cur, sql, args=()):

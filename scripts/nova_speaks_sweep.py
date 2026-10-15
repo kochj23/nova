@@ -312,7 +312,7 @@ def podcast_index(cur):
 
 def main():
     c = psycopg2.connect(DSN); c.autocommit = True; cur = c.cursor()
-    cur.execute(DDL)
+    import nova_pg_schema; nova_pg_schema.safe_ddl(cur, DDL)  # no ACCESS EXCLUSIVE when columns exist (02:00 pg_dump)
     cur.execute("""INSERT INTO nova_speaks_hosts (host, ssh, python, scripts_dir, tts_home, journal_dir, out_dir, out_is_nas, env, speed, note)
                    VALUES (%s, NULL, %s, %s, '/Volumes/Data/AI/tts', %s, %s, true, 'PATH=/opt/homebrew/bin:$PATH', 1.5, 'Mac Studio M4 Max, MPS')
                    ON CONFLICT (host) DO NOTHING""", (LOCAL, sys.executable, str(SCRIPTS), str(JOURNAL), REVIEW))

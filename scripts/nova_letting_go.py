@@ -69,6 +69,7 @@ except Exception:  # pragma: no cover - lineage is optional
 import nova_dsn as _nova_dsn  # noqa: E402
 OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 import nova_dsn as _nova_dsn  # noqa: E402
+import nova_pg_schema  # noqa: E402 — lock-safe ensure-schema DDL (2026-10-15)
 MEM_DSN = _nova_dsn.pg_dsn("nova_memories")
 MEMSRV = "http://memory-server.digitalnoise.net:18790"
 # Native ollama failover — first non-empty wins. The router shim returns empty for
@@ -150,7 +151,7 @@ def ensure_schema(oc):
             lineage     jsonb                   -- provenance + prior_status for reversal
         )""")
     # taste has no active/status column; add a nullable retired marker (NULL = live).
-    oc.execute("ALTER TABLE taste ADD COLUMN IF NOT EXISTS retired_at timestamptz")
+    nova_pg_schema.safe_ddl(oc, "ALTER TABLE taste ADD COLUMN IF NOT EXISTS retired_at timestamptz")
 
 
 # ── Nomination (heuristics only nominate; the LLM gate decides) ─────────────────────

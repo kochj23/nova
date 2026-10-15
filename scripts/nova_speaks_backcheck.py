@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import nova_speaks as ns
 import nova_speaks_narration as nn
+import nova_pg_schema  # noqa: E402 — lock-safe ensure-schema DDL (2026-10-15)
 
 DSN = os.environ.get("NOVA_OPS_DSN", "dbname=nova_ops user=kochj host=localhost")
 TAG = "rerender-quality-20261006"
@@ -91,7 +92,7 @@ def main():
     a = ap.parse_args()
     import psycopg2
     c = psycopg2.connect(DSN); c.autocommit = True; cur = c.cursor()
-    cur.execute("ALTER TABLE nova_speaks_renders ADD COLUMN IF NOT EXISTS quality jsonb, ADD COLUMN IF NOT EXISTS old_youtube_id text, "
+    nova_pg_schema.safe_ddl(cur, "ALTER TABLE nova_speaks_renders ADD COLUMN IF NOT EXISTS quality jsonb, ADD COLUMN IF NOT EXISTS old_youtube_id text, "
                 "ADD COLUMN IF NOT EXISTS old_youtube_retired boolean")
     book = nn.load_phrasebook()
     q = ("SELECT slug, article_path, mp4_path FROM nova_speaks_renders WHERE status='done' AND youtube_id ~ '^[A-Za-z0-9_-]{11}$' "

@@ -19,6 +19,7 @@ import argparse, http.cookiejar, os, re, sys
 from datetime import date
 from pathlib import Path
 import psycopg2
+import nova_pg_schema  # noqa: E402 — lock-safe ensure-schema DDL (2026-10-15)
 
 DSN = "host=localhost dbname=nova_ops user=kochj"
 COOKIES = Path.home() / ".openclaw/cache/yt_cookies_youtube.txt"   # youtube/google cookies only, from Safari
@@ -139,7 +140,7 @@ def main():
         if not re.fullmatch(r"[\w-]{11}", a.retire): log("not a video id"); return 2
         return 0 if retire(session(), a.retire) else 1
     conn = psycopg2.connect(DSN); conn.autocommit = True; cur = conn.cursor()
-    cur.execute("ALTER TABLE nova_speaks_renders ADD COLUMN IF NOT EXISTS youtube_id text, ADD COLUMN IF NOT EXISTS youtube_uploaded_at timestamptz, "
+    nova_pg_schema.safe_ddl(cur, "ALTER TABLE nova_speaks_renders ADD COLUMN IF NOT EXISTS youtube_id text, ADD COLUMN IF NOT EXISTS youtube_uploaded_at timestamptz, "
                 "ADD COLUMN IF NOT EXISTS old_youtube_id text, ADD COLUMN IF NOT EXISTS old_youtube_retired boolean")
     cur.execute("SELECT article_path, url, mp4_path, youtube_id, old_youtube_id FROM nova_speaks_renders WHERE slug=%s AND status='done'", (a.slug,))
     row = cur.fetchone()

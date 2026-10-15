@@ -51,6 +51,7 @@ import psycopg2
 import nova_dsn as _nova_dsn  # noqa: E402
 OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 import nova_dsn as _nova_dsn  # noqa: E402
+import nova_pg_schema  # noqa: E402 — lock-safe ensure-schema DDL (2026-10-15)
 MEM_DSN = _nova_dsn.pg_dsn("nova_memories")
 MEMSRV = "http://memory-server.digitalnoise.net:18790"
 LLM_MODEL = "qwen3:8b"
@@ -169,8 +170,8 @@ def ensure_tables(oc):
     # P11 (values drift): a new version that drops a value, moves a priority by >2, or touches
     # a red-line-adjacent value is stored 'pending' and the old set stays in force until Jordan
     # signs off. Only status='active' rows are her values.
-    oc.execute("ALTER TABLE values ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'")
-    oc.execute("ALTER TABLE values ADD COLUMN IF NOT EXISTS drift jsonb")
+    nova_pg_schema.safe_ddl(oc, "ALTER TABLE values ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'")
+    nova_pg_schema.safe_ddl(oc, "ALTER TABLE values ADD COLUMN IF NOT EXISTS drift jsonb")
 
 
 # ── Real evidence: the grounded seed. Each value cites a REAL source. ──────────

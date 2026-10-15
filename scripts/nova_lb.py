@@ -31,6 +31,7 @@ import time
 import urllib.request
 from collections import deque
 from dataclasses import dataclass, field
+import nova_pg_schema  # noqa: E402 — lock-safe ensure-schema DDL (2026-10-15)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -397,9 +398,9 @@ def _report_to_pg():
                 updated_at TIMESTAMPTZ DEFAULT now()
             )
         """)
-        cur.execute("ALTER TABLE lb_pool_status ADD COLUMN IF NOT EXISTS active_connections INT DEFAULT 0")
-        cur.execute("ALTER TABLE lb_pool_status ADD COLUMN IF NOT EXISTS max_connections INT DEFAULT 0")
-        cur.execute("ALTER TABLE lb_pool_status ADD COLUMN IF NOT EXISTS total_connections INT DEFAULT 0")
+        nova_pg_schema.safe_ddl(cur, "ALTER TABLE lb_pool_status ADD COLUMN IF NOT EXISTS active_connections INT DEFAULT 0")
+        nova_pg_schema.safe_ddl(cur, "ALTER TABLE lb_pool_status ADD COLUMN IF NOT EXISTS max_connections INT DEFAULT 0")
+        nova_pg_schema.safe_ddl(cur, "ALTER TABLE lb_pool_status ADD COLUMN IF NOT EXISTS total_connections INT DEFAULT 0")
 
         for node in _pool:
             cur.execute("""

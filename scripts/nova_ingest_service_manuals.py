@@ -27,6 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_ingest as ni  # noqa: E402
 import nova_ingest_army_manuals as army  # noqa: E402  (get / ocr_text / _connect with retry)
+import nova_pg_schema  # noqa: E402 — lock-safe ensure-schema DDL (2026-10-15)
 
 MAX_PAGES = 40    # 500 rows/page; stops a runaway loop
 LOW_VALUE = re.compile(r"dictionar|glossar|\bindex\b|catalog|bibliograph|abbreviation|list of .*films|"
@@ -153,7 +154,7 @@ def main(argv=None) -> int:
     if not a.dry_run:
         cur.execute("""CREATE TABLE IF NOT EXISTS ia_ingest_seen (identifier text PRIMARY KEY, title text,
                        chunks int, at timestamptz DEFAULT now())""")
-        cur.execute("ALTER TABLE ia_ingest_seen ADD COLUMN IF NOT EXISTS service text DEFAULT 'army'")
+        nova_pg_schema.safe_ddl(cur, "ALTER TABLE ia_ingest_seen ADD COLUMN IF NOT EXISTS service text DEFAULT 'army'")
     cur.execute("SELECT 1 FROM information_schema.columns WHERE table_name = 'ia_ingest_seen' AND column_name = 'service'")
     svc_col = "coalesce(service, 'army')" if cur.fetchone() else "'army'"   # before the first real run: all rows are Army
     cur.execute(f"SELECT identifier, title, coalesce(chunks, 0), {svc_col} FROM ia_ingest_seen")  # constant SQL, no values
