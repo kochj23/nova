@@ -81,15 +81,43 @@ def log(msg):
 
 # ── 2. GitHub Digest ──────────────────────────────────────────────────────────
 
+def _github_token():
+    """Best-effort GitHub token: env -> nova.secrets 'github-token' -> `gh auth token`.
+    None is fine — the REST calls below work unauthenticated (public activity only)."""
+    import os, shutil
+    tok = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if tok:
+        return tok
+    try:
+        import nova_secrets
+        tok = nova_secrets.get_secret("github-token")
+        if tok:
+            return tok
+    except BaseException:  # get_secret may sys.exit when the store is unreachable
+        pass
+    gh = shutil.which("gh") or ("/opt/homebrew/bin/gh" if Path("/opt/homebrew/bin/gh").exists() else None)
+    if gh:
+        r = subprocess.run([gh, "auth", "token"], capture_output=True, text=True, timeout=15)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    return None
+
+
+def _github_api(path, token):
+    req = urllib.request.Request("https://api.github.com" + path, headers={
+        "Accept": "application/vnd.github+json", "User-Agent": "nova-nightly-report",
+        **({"Authorization": f"Bearer {token}"} if token else {})})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read())
+
+
 def github_digest():
     log("GitHub digest...")
     try:
-        # Get events from last 24h across all repos
-        result = subprocess.run(
-            ["gh", "api", "/users/kochj23/events?per_page=100"],
-            capture_output=True, text=True, timeout=30
-        )
-        events = json.loads(result.stdout)
+        # Direct REST, not the `gh` CLI: this task runs on nova-core (Linux), which has no gh
+        # — every digest since the 2026-07-14 move was "[Errno 2] ... 'gh'".
+        token = _github_token()
+        events = _github_api("/users/kochj23/events?per_page=100", token)
         cutoff = NOW - timedelta(hours=24)
 
         pushes, issues, prs, stars, comments = [], [], [], [], []
@@ -127,14 +155,16 @@ def github_digest():
                 continue
 
         # Also check for open PRs needing review
-        pr_result = subprocess.run(
-            ["gh", "search", "prs", "--author=kochj23", "--state=open", "--json", "title,repository,createdAt,url"],
-            capture_output=True, text=True, timeout=30
-        )
         open_prs = []
-        if pr_result.returncode == 0:
-            for pr in json.loads(pr_result.stdout or "[]")[:5]:
-                repo = pr.get("repository", {}).get("name", "?")
+        try:
+            found = _github_api("/search/issues?q=" + urllib.parse.quote("is:pr author:kochj23 state:open")
+                                + "&per_page=5", token).get("items", [])
+        except Exception as e:
+            log(f"GitHub open-PR search failed: {e}")
+            found = []
+        if found:
+            for pr in found[:5]:
+                repo = (pr.get("repository_url") or "?").rsplit("/", 1)[-1]
                 if repo.startswith("awesome-"):
                     continue  # skip curated list repos
                 title = pr.get("title", "")[:50]
