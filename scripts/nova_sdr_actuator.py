@@ -85,6 +85,10 @@ def unit_health(unit, pipeline, assigned):
     since = props.get("ActiveEnterTimestamp", "").split(" ", 1)[-1].rsplit(" ", 1)[0]
     log = sh("journalctl", "-u", unit, "--since", since, "--no-pager", "-o", "cat")
     up = bool(re.search(OPENED[pipeline], log))
+    if not up and "Started " not in log:
+        # The journal rotated past this start, so the "opened" line is gone too: no evidence either way.
+        # 2026-10-15 on core7 (ollama log spam) this read as sick after ~12 h and healed a working capture.
+        return True, "capture assumed open (start log rotated)"
     return up, "capture opened" if up else f"no capture since start ({since})"
 
 
@@ -124,8 +128,10 @@ def main(dry):
         ok, detail = unit_health(unit, u["pipeline"], assigned)
         if not ok and u["pipeline"] in SDRPLAY:
             first = state.setdefault("sick_since", {}).setdefault(unit, now)
-            # only a stuck MASTER/DT capture means a wedged API; a sick slave just needs its own restart
-            sick_sdrplay |= now - first >= HEAL_AFTER_S and not u["requires"]
+            # A stuck MASTER/DT capture means a wedged API. A sick slave gets its own restarts first, but
+            # if those fail for 3x as long the API is wedged for it too: 2026-10-15 the slave retried
+            # sdrplay_api_Open for 3 h after a master restart, and only an sdrplay.service restart fixed it.
+            sick_sdrplay |= now - first >= HEAL_AFTER_S * (3 if u["requires"] else 1)
         else:
             state.setdefault("sick_since", {}).pop(unit, None)
         print(f"[sdr-actuator] {unit:22s} {'OK  ' if ok else 'SICK'} {detail}")
