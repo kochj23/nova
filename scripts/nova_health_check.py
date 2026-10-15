@@ -42,7 +42,11 @@ FAST_RUN_EXEMPT         = {       # jobs that legitimately run fast
     "subagent_health",
 }
 
-# Key deliveries that should appear in Slack within the last 20 hours
+# Daily deliveries: one run per ~24h, so the freshness window must exceed 24h plus scheduler
+# jitter. 20h false-alarmed every morning (06:45 check vs 07:00 morning_brief, 2026-10-15).
+DELIVERY_MAX_AGE_H = 26
+
+# Key deliveries that should appear in Slack within the last DELIVERY_MAX_AGE_H hours
 # (label, search_text_fragment)
 EXPECTED_SLACK_DELIVERIES = [
     ("Morning Brief",      "Morning Brief"),
@@ -84,7 +88,7 @@ def fetch_recent_slack_messages(hours: int = 20) -> list[dict]:
 
 
 def audit_slack_deliveries() -> list[dict]:
-    """Check that expected deliveries happened in the last 20 hours.
+    """Check that expected deliveries happened in the last DELIVERY_MAX_AGE_H hours.
 
     Primary: check scheduler task state for last_run timestamps.
     Fallback: search Slack message history.
@@ -112,11 +116,11 @@ def audit_slack_deliveries() -> list[dict]:
             hours_ago = (now - last_run) / 3600 if last_run else 999
             exit_code = task.get("last_exit_code", -1)
 
-            if hours_ago > 20:
+            if hours_ago > DELIVERY_MAX_AGE_H:
                 issues.append({
                     "severity": "warning",
                     "name": f"Slack delivery: {label}",
-                    "reason": f"Task '{task_id}' last ran {hours_ago:.0f}h ago (expected within 20h)",
+                    "reason": f"Task '{task_id}' last ran {hours_ago:.0f}h ago (expected within {DELIVERY_MAX_AGE_H}h)",
                 })
             elif exit_code != 0:
                 issues.append({
@@ -129,7 +133,7 @@ def audit_slack_deliveries() -> list[dict]:
         pass
 
     # Fallback: Slack message search
-    messages = fetch_recent_slack_messages(hours=20)
+    messages = fetch_recent_slack_messages(hours=DELIVERY_MAX_AGE_H)
     all_text = " ".join(m.get("text", "") for m in messages).lower()
 
     for label, fragment in EXPECTED_SLACK_DELIVERIES:
@@ -137,7 +141,7 @@ def audit_slack_deliveries() -> list[dict]:
             issues.append({
                 "severity": "warning",
                 "name": f"Slack delivery: {label}",
-                "reason": f"No '{fragment}' message found in #nova-notifications in last 20h",
+                "reason": f"No '{fragment}' message found in #nova-notifications in last {DELIVERY_MAX_AGE_H}h",
             })
 
     return issues

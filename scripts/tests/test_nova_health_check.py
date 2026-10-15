@@ -144,12 +144,14 @@ class TestIntegration(unittest.TestCase):
 
     def test_delivery_audit_from_scheduler(self):
         now = time.time()
-        tasks = {"morning_brief": {"last_run": now, "last_exit_code": 0},
-                 "mail_deliver_midday": {"last_run": now, "last_exit_code": 2}}
+        # a daily task 24h after its last run (06:45 check, 07:00 job) is NOT late
+        tasks = {"morning_brief": {"last_run": now - 24 * 3600, "last_exit_code": 0},
+                 "mail_deliver_midday": {"last_run": now, "last_exit_code": 2},
+                 "nightly_report": {"last_run": now - 30 * 3600, "last_exit_code": 0}}
         with _sched(tasks):
             issues = {i["name"]: i["reason"] for i in hc.audit_slack_deliveries()}
         self.assertIn("failed (exit 2)", issues["Slack delivery: Mail Summary"])
-        self.assertIn("expected within 20h", issues["Slack delivery: Nightly Report"])
+        self.assertIn("expected within 26h", issues["Slack delivery: Nightly Report"])
         self.assertNotIn("Slack delivery: Morning Brief", issues)
 
 

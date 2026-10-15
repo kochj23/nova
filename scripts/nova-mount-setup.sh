@@ -2,7 +2,7 @@
 # nova-mount-setup.sh — configure the /nova shared-artifacts SMB mount on this node.
 #
 # /nova is the fleet's shared ARTIFACTS filesystem (models/media/trans/artifacts),
-# exported by the Synology (192.168.1.11) over SMB. See docs/nova-shared-mount.md.
+# exported by the UNAS Pro (192.168.1.69, share nas/nova-fs) over SMB; moved off the Synology .11. See docs/nova-shared-mount.md.
 #
 # Idempotent. Linux -> CIFS via /etc/fstab. macOS -> autofs via /etc/auto_nova.
 # NO secret is hardcoded here: the SMB password is read from the secret backend
@@ -14,8 +14,8 @@
 # Do NOT run on the flaky .7 node.
 set -euo pipefail
 
-HOST="192.168.1.11"
-SHARE="nova"
+HOST="${NOVA_SMB_HOST:-192.168.1.69}"   # live /nova source on .2: //192.168.1.69/nas/nova-fs (2026-10)
+SHARE="${NOVA_SMB_SHARE:-nas/nova-fs}"
 SMB_USER="${NOVA_SMB_USER:-kochj}"
 
 # --- resolve the SMB password from the secret backend (never hardcode) ---
@@ -45,7 +45,7 @@ if [ "$os" = "Linux" ]; then
 elif [ "$os" = "Darwin" ]; then
   # autofs direct map — survives reboot, mounts on demand, manages mountpoint.
   sudo tee /etc/auto_nova >/dev/null <<EOF
-# Nova shared-artifacts autofs map (Synology ${HOST} over SMB). chmod 600.
+# Nova shared-artifacts autofs map (${HOST} over SMB). chmod 600.
 /nova -fstype=smbfs,soft ://${SMB_USER}:${SMB_PASS}@${HOST}/${SHARE}
 EOF
   sudo chmod 600 /etc/auto_nova; sudo chown root:wheel /etc/auto_nova
