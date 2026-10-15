@@ -37,7 +37,7 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Honest interiority | **Right to be boring** (`type='quiet'`/`'fizzled'` wakes, silence publishes nothing) + **trigger provenance** (why each wake fired) — a wake no longer has to produce to count |
 | Gravel re-reading | Raw grit stays immutable; each resurfacing writes a **separate dated re-reading** linked via `reinterprets` — meaning metabolizes, the record never gets smoothed |
 | Restraint ledger | `restraint_ledger` — every held-back thought paired with what she'd have said and *why*; 58 real restraints harvested from curated-out candidates |
-| SDR load balancer (2026-10-12) | 6 frequencies × 6 tuners on 4 radios, placed by **priority + benchmarked antenna SNR**; a dead radio's frequency takes the best surviving tuner (`nova_sdr_placement` every 2 min, `nova_sdr_actuator` per host) |
+| SDR load balancer (2026-10-12, 8 tuners 2026-10-14) | 8 frequencies × 8 tuners on 5 radios across 3 hosts, placed by **priority + benchmarked antenna SNR**; a dead radio's frequency takes the best surviving tuner (`nova_sdr_placement` every 2 min, `nova_sdr_actuator` per host) |
 | Wi-Fi sensing (2026-10-12) | Receive-only monitor radio on nova-core7 surveys every 10 min; `nova_wifi_guard` flags **evil twins** and **deauth floods** against our 16 BSSIDs |
 | Grafana (2026-10-12) | Postgres datasources repaired (dead since the 09-28 primary move) on a read-only role; 5 generated dashboards cover the 70 newest tools |
 | SRE organs (2026-10-13) | SLOs + error budgets + burn-rate paging, tickets-not-pages, blameless postmortems, toil ledger, production readiness gate, gateway overload protection, weekly restore drill — see [SRE Organs](#sre-organs--nova-runs-on-the-google-sre-books-2026-10-13) |
@@ -4107,3 +4107,61 @@ for its volume; embeddings dropped to 7 ms. The same outage showed the prober ex
 any failed probe, so the scheduler dead-lettered it mid-outage and it went blind. It now exits 0
 when it ran (a failed probe is data, not a failed job), and the SLO organ warns when an SLI goes
 silent. The restore drill also found two missed nightly nova_ops dumps (queued as #3573).
+
+## Antenna Bake-Off & a Fifth Radio (2026-10-14)
+
+A third RSPduo (serial 24051E8734) went into **nova-core7**, the Omarchy box, bringing the SDR load
+balancer to 8 tuners on 5 radios. Before placing anything, every antenna port in the fleet was
+benchmarked the same way: FFT peak against median noise floor, the median of 3 captures, at nine
+reference carriers. The bench added BUR ATIS 134.5 MHz, so airband targets are finally scored on
+airband. The nRSP-ST was measured over SDRconnect's Full-IQ stream with the same FFT.
+
+```mermaid
+flowchart LR
+    subgraph core2[".86 nova-core2"]
+      RTL["RTL stick<br/>LAPD NoHo P25"]
+      D1M["RSPduo #1 Master · Tuner 1<br/>KBUR Ground 123.9"]
+      D1S["RSPduo #1 Slave · Tuner 2<br/>LAPD NE P25"]
+      NR["nRSP-ST Antenna A<br/>NOAA WX 162.55"]
+    end
+    subgraph core3[".5 nova-core3"]
+      D2A["RSPduo #2 Tuner 1<br/>Burbank PD Air 118.575"]
+      D2B["RSPduo #2 Tuner 2<br/>SoCal Approach 120.4"]
+    end
+    subgraph core7[".125 nova-core7 (new)"]
+      D3A["RSPduo #3 Tuner 1<br/>Burbank Interop 155.76"]
+      D3B["RSPduo #3 Tuner 2<br/>BUR Tower 118.7"]
+    end
+    P["nova_sdr_placement<br/>bench SNR × priority"] --> core2 & core3 & core7
+    core2 & core3 & core7 -->|"WAV → faster-whisper"| M["Nova memory<br/>rf_discovery"]
+```
+
+| Antenna | Airband 134.5 | NOAA 162.55 | P25 506.94 |
+|---|---|---|---|
+| RSPduo #3 (core7) Tuner 2 | **40** | 42 | 62 |
+| RSPduo #3 (core7) Tuner 1 | 24 | 33 | 42 |
+| nRSP-ST Antenna A | 34 | **64** | **66** |
+| nRSP-ST Antenna B | 25 | 40 | 63 |
+| RSPduo #1 (core2) Tuner 2 | 20 | 46 | 57 |
+| RSPduo #1 (core2) Tuner 1 | 31 | 31 | 27 |
+| RSPduo #2 (core3) Tuner 2 | 34 | 37 | 36 |
+| RSPduo #2 (core3) Tuner 1 | 31 | 27 | 44 |
+| RTL stick | 36 | 26 | 50 |
+
+What the bench changed:
+
+- **LAPD P25 had been on the worst UHF antenna.** When the NOAA master took RSPduo #1 Tuner 2 on
+  10-12, the P25 slave was left with Tuner 1, which measures 27 dB at UHF. The master now runs on
+  Tuner 1 and the slave on Tuner 2, at 57 dB.
+- **The garage nRSP-ST moved from Antenna B to Antenna A.** A is better on every band Nova
+  listens to.
+- **Two new frequencies:** SoCal Approach/Departure 120.4 and KBUR Ground 123.9. They are the
+  next conventional channels on `scanner.frequencies`; the rest of that list is P25 ICIS
+  trunked.
+- **Placement fixes.** The newest bench now wins when band labels collide. Targets outside
+  88–108 MHz no longer borrow the KROQ reading, since every capture runs with the FM notch on.
+- **core7 runs the same stack as core3:** `nova-fm-duo3` (capture), `nova-fm-whisper`
+  (transcription), and `nova-sdr-actuator.timer`. faster-whisper needs PyAV 18 or older; av 19
+  failed every file.
+
+Full runbook, results and gotchas: `agent_docs` doc_type `sdr-fleet`.
