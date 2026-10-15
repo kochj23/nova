@@ -30,6 +30,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 from nova_notify import notify
+try:  # The Skipping Needle: collapse Whisper stuck-loops before chunking (never fatal)
+    from nova_skipping_needle import ingest_clean as _needle_clean
+except Exception:  # noqa: BLE001
+    def _needle_clean(text, origin=""): return text
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -351,6 +355,7 @@ def remember(text: str, source: str, metadata: dict) -> bool:
 
 
 def chunk_text(text: str) -> list[str]:
+    text = _needle_clean(text, "tv_retry_failed")
     words = text.split()
     chunks = []
     for i in range(0, len(words), CHUNK_WORDS):

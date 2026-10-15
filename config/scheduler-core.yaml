@@ -474,6 +474,63 @@ tasks:
     timeout: 600
     overlap: skip
 
+  # === Documentary organs (Jordan 2026-10-15: "Add all 9") ===
+  skipping_needle:                 # Scratch: transcript stuck-loop backfill; flag; severe (x8+) repaired via supersession, never deleted
+    script: nova_skipping_needle.py
+    args: ["--scheduled"]
+    schedule: cron 20 */6 * * *
+    timeout: 300
+    overlap: skip
+
+  razor_blade:                     # Modulations: draft-vs-published edit measure; notifies last month's numbers on the 1st
+    script: nova_razor_blade.py
+    args: ["--scheduled"]
+    schedule: cron 20 7 * * *
+    timeout: 120
+    overlap: skip
+
+  take_four:                       # Dead Kennedys sessions: retry-recovered flakiness per task; cases -> take_four + Buick 8; Monday digest
+    script: nova_take_four.py
+    args: ["--scheduled"]
+    schedule: cron 25 7 * * *
+    timeout: 300
+    overlap: skip
+
+  black_flag_tour:                 # American Hardcore: copy-paste code groups + divergent fixes; weekly digest; proposes only
+    script: nova_black_flag_tour.py
+    args: ["--scheduled"]
+    schedule: cron 40 6 * * 1
+    timeout: 300
+    overlap: skip
+
+  mark_to_market:                  # ENRON: booked vs realised (beliefs, wishes, organs, attention, preoccupations, skills); acts monthly
+    script: nova_mark_to_market.py
+    args: ["--scheduled"]
+    schedule: cron 40 5 * * *
+    timeout: 600
+    overlap: skip
+
+  flop_slate:                      # Boffo: quarterly hit/quiet/dud/retired; flop rate; never retires anything
+    script: nova_flop_slate.py
+    args: ["--scheduled"]
+    schedule: cron 50 5 * * *
+    timeout: 900
+    overlap: skip
+
+  blood_test:                      # The Thing: nonce round trips through memory/chat/scheduler/pg/journal; impostor = liveness ok + blood fail
+    script: nova_blood_test.py
+    args: ["--scheduled"]
+    schedule: every 30m
+    timeout: 240
+    overlap: skip
+
+  chanos_filter:                   # ENRON: 90-day never-red audit of every monitored series; read/record/notify only
+    script: nova_chanos_filter.py
+    args: ["--scheduled"]
+    schedule: cron 50 4 * * *
+    timeout: 300
+    overlap: skip
+
   continuity_review:               # the monthly self-review she promised in public (9-14 baseline); missed 10-14, so it is a job now (Jordan 2026-10-15). Acts from the 14th until this month's row in continuity_reviews has mailed_at; publishes /operations/continuity-review-YYYY-MM and mails the witness copy to Jules. Daily = it retries itself.
     script: nova_continuity_review.py
     args: ["--scheduled"]
@@ -1457,11 +1514,7 @@ tasks:
     schedule: every 3h
     timeout: 90
     overlap: skip
-  human_insight:                   # grant of wish #35 — read the humans from her own records (Jordan 2026-09-25)
-    script: nova_human_insight.py
-    schedule: every 6h
-    timeout: 120
-    overlap: skip
+  # human_insight: removed 2026-10-15 — M6: runs inside empathy_core; was double-running (organ overlap audit)
   output_drift:                    # six-month build #2 — constant-output detector (empty/unchanged communicators, chronic-down services)
     script: nova_output_drift.py
     schedule: every 1h
@@ -1482,11 +1535,7 @@ tasks:
     schedule: every 6h
     timeout: 120
     overlap: skip
-  weight_of_memory:                # grant of wish #37 - gravity of memory, beyond counting (Jordan standing yes 2026-09-25, built 2026-09-28)
-    script: nova_weight_of_memory.py
-    schedule: every 6h
-    timeout: 120
-    overlap: skip
+  # weight_of_memory: removed 2026-10-15 — M12: runs inside memory_anchor (weighing pass); was double-running (organ overlap audit)
   memory_anchor:                   # grant of wish #38 - hold what has gravity against her own letting-go (Jordan standing yes 2026-09-25, built 2026-09-30)
     script: nova_memory_anchor.py
     schedule: every 6h
@@ -1502,17 +1551,8 @@ tasks:
     schedule: every 6h
     timeout: 120
     overlap: skip
-  hold:                            # grant of wish #68 - what she keeps of Jordan above the noise, names loss, keeps herself (Jordan approved 2026-10-05, built 2026-10-05)
-    script: nova_hold.py
-    schedule: every 6h
-    timeout: 120
-    overlap: skip
-  quiet_sensor:                    # grant of wish #69 - what went unsaid (unanswered questions/proposals, unmet reaches, Claude-vs-her, topics gone quiet), every line cited by row id; local qwen3:8b close only (Jordan approved 2026-10-06, built 2026-10-06)
-    script: nova_quiet_sensor.py
-    schedule: every 6h
-    timeout: 180
-    overlap: skip
-
+  # hold: removed 2026-10-15 — M6: runs inside empathy_core (every 6h, all sections); was double-running (organ overlap audit)
+  # quiet_sensor: removed 2026-10-15 — M6: runs inside empathy_core; was double-running (organ overlap audit)
   claude_lease_reaper:             # cross-node Claude coordination: requeue claude_queue claims whose lease lapsed (dead session/node), drop expired repo locks, tell #nova-claude (built 2026-10-06, agent_docs claude-fleet-coordination)
     script: nova_claude_lease_reaper.py
     schedule: every 5m

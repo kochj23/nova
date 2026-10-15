@@ -56,6 +56,10 @@ sys.path.insert(0, SCRIPTS)
 import nova_config
 import nova_media_registry as registry
 from nova_notify import notify as bus_notify
+try:  # The Skipping Needle: collapse Whisper stuck-loops before chunking (never fatal)
+    from nova_skipping_needle import ingest_clean as _needle_clean
+except Exception:  # noqa: BLE001
+    def _needle_clean(text, origin=""): return text
 
 # Import CHANNELS dict directly — do not duplicate
 from nova_yt_new_episodes import (
@@ -491,6 +495,7 @@ def transcribe(wav: Path, out_dir: Path, stem: str) -> str | None:
 
 
 def chunk_text(text: str) -> list[str]:
+    text = _needle_clean(text, "nightly_media")
     words = text.split()
     chunks = []
     for i in range(0, len(words), CHUNK_WORDS):

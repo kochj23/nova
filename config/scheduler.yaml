@@ -1241,3 +1241,22 @@ tasks:
     schedule: every 5m
     timeout: 60
     overlap: skip
+  # === Documentary organs (Jordan 2026-10-15) — need the journal on disk / Studio scheduler beat ===
+  tahiti_check:                    # Endless Summer: absence claims -> searched? window vs cycle? direct checks; monthly digest
+    script: nova_tahiti_check.py
+    args: ["--scheduled"]
+    schedule: cron 20 5 1 * *
+    timeout: 600
+    overlap: skip
+  scanners_catch:                  # Better Living Through Circuitry: radio bystander-data ledger + published leaks; proposes retention, never deletes
+    script: nova_scanners_catch.py
+    args: ["--scheduled"]
+    schedule: cron 40 5 1 * *
+    timeout: 900
+    overlap: skip
+  blood_beat:                      # signed scheduler beat verified by blood_test on core
+    script: nova_blood_test.py
+    args: ["--beat"]
+    schedule: every 30m
+    timeout: 30
+    overlap: skip

@@ -26,6 +26,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 from nova_notify import notify as nova_notify
+try:  # The Skipping Needle: collapse Whisper stuck-loops before chunking (never fatal)
+    from nova_skipping_needle import ingest_clean as _needle_clean
+except Exception:  # noqa: BLE001
+    def _needle_clean(text, origin=""): return text
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -292,6 +296,7 @@ def classify_content(title: str, show_name: str, genres: list, text: str) -> str
 # ── Chunking & Ingestion ──────────────────────────────────────────────────────
 
 def chunk_text(text: str) -> list[str]:
+    text = _needle_clean(text, "plex_auto_ingest")
     sentences = text.replace("\n", " ").split(". ")
     chunks = []
     current = ""

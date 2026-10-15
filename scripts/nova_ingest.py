@@ -44,6 +44,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 from nova_notify import notify as _bus_notify
+try:  # The Skipping Needle: collapse Whisper stuck-loops before chunking (never fatal)
+    from nova_skipping_needle import ingest_clean as _needle_clean
+except Exception:  # noqa: BLE001
+    def _needle_clean(text, origin=""): return text
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -1373,11 +1377,11 @@ def _transcribe_dispatch(wav_path, stem, work, vid_url=None, local_only=False):
     if use_cloud:
         transcript = _transcribe_cloud(str(wav_path), openai_key)
         if transcript:
-            return transcript
+            return _needle_clean(transcript, "nova_ingest")
         log("  Cloud transcription failed -- falling back to local whisper", "WARN")
 
     # Local MLX whisper path (original behavior)
-    return _transcribe(wav_path, stem, work)
+    return _needle_clean(_transcribe(wav_path, stem, work), "nova_ingest")
 
 # ---------------------------------------------------------------------------
 # Video mode
