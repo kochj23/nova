@@ -26,13 +26,17 @@ DEFAULT_SNR = 15.0     # tuner/band never benchmarked
 # band label in antenna_baseline_snapshots -> centre frequency (Hz)
 BAND_HZ = {"AM broadcast (KFI 640 kHz)": 640e3, "HF (WWV 10 MHz)": 10e6, "HF (WWV 15 MHz)": 15e6,
            "CB ch19 27.185 MHz": 27.185e6, "VHF/FM broadcast (KROQ 106.7)": 106.7e6,
-           "FM broadcast (KROQ 106.7)": 106.7e6, "2m ham (146.520 calling freq)": 146.52e6,
+           "FM broadcast (KROQ 106.7)": 106.7e6, "Airband (BUR ATIS 134.5)": 134.5e6, "2m ham (146.520 calling freq)": 146.52e6,
            "VHF NOAA WX 162.55": 162.55e6, "UHF/police-fire (P25 506.9375)": 506.9375e6,
            "UHF P25 LAPD 506.9375": 506.9375e6}
 
 
 def score(bench: dict, freq_hz: float) -> float:
     """SNR at the nearest benchmarked band, -6 dB per octave of distance. bench = {band_hz: snr}."""
+    # The captures run with the 88-108 MHz broadcast notch on, so a KROQ reading says nothing about
+    # an airband target next door (2026-10-14: 118.7 scored off KROQ, not BUR ATIS).
+    if not 88e6 <= freq_hz <= 108e6:
+        bench = {b: v for b, v in bench.items() if not 88e6 <= b <= 108e6} or bench
     if not bench:
         return DEFAULT_SNR
     hz = min(bench, key=lambda b: abs(math.log(freq_hz / b)))
@@ -157,11 +161,14 @@ def load(cur, now):
     targets = [dict(zip(("id", "priority", "freq_hz", "demod"), r)) for r in cur.fetchall()]
     # Latest bench SNR per (device, antenna, band). SDRconnect's snr property is meaningless on a
     # digital P25 carrier, so its UHF rows are ignored (2026-10-12 bench notes).
-    cur.execute("""SELECT DISTINCT ON (device, metadata->>'antenna', metadata->>'band')
-                          device, metadata->>'antenna', metadata->>'band', value
-                   FROM antenna_baseline_snapshots WHERE metric='snr_db'
-                     AND NOT (metadata->>'band' LIKE 'UHF%%' AND (metadata->>'method'='sdrconnect' OR label LIKE '%%nrsp-bench'))
-                   ORDER BY device, metadata->>'antenna', metadata->>'band', ts DESC""")
+    # Oldest first, so when two band labels map to one frequency the newer bench wins (2026-10-14:
+    # the 10-12 SDRconnect rows spell KROQ/P25 differently from the soapy-fft bake-off).
+    cur.execute("""SELECT device, ant, band, value FROM (
+                     SELECT DISTINCT ON (device, metadata->>'antenna', metadata->>'band')
+                            device, metadata->>'antenna' AS ant, metadata->>'band' AS band, value, ts
+                     FROM antenna_baseline_snapshots WHERE metric='snr_db'
+                       AND NOT (metadata->>'band' LIKE 'UHF%%' AND (metadata->>'method'='sdrconnect' OR label LIKE '%%nrsp-bench'))
+                     ORDER BY device, metadata->>'antenna', metadata->>'band', ts DESC) x ORDER BY ts""")
     bench = {}
     for dev, ant, band, v in cur.fetchall():
         if band in BAND_HZ:
@@ -249,6 +256,7 @@ def selftest():
     tg = [T("p", 85, 484.9e6, "P25"), T("n", 80, 162.55e6, "NFM"), T("c", 40, 27.185e6, "AM")]
     out, unplaced = place(tg, tuners, {"p": ("s", old), "n": ("x", old), "c": ("y", old)}, {}, now)
     assert out["p"] == "s" and "m" in out.values() and not unplaced, (out, unplaced)
+    assert score({106.7e6: 57, 134.5e6: 25}, 118.7e6) < score({106.7e6: 30, 134.5e6: 34}, 118.7e6)  # notch-aware
     print("selftest ok")
 
 

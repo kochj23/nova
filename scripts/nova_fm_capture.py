@@ -22,7 +22,8 @@ from SoapySDR import SOAPY_SDR_RX, SOAPY_SDR_CF32
 
 SERIAL = sys.argv[1]
 OUT_DIR = sys.argv[2]
-TARGETS = [t.split(":") for t in sys.argv[3:]]   # [(label, freq_hz, antenna), ...]
+TARGETS = [t.split(":") for t in sys.argv[3:]]   # [(label, freq_hz, antenna[, demod]), ...]
+# 2026-10-12: optional 4th field "AM" -> envelope demod (airband/CB); default stays FM/NFM.
 os.makedirs(OUT_DIR, exist_ok=True)
 
 IQ_RATE_REQUEST = 96000  # what we ask for -- the RSPduo driver actually snaps this to its own
@@ -56,9 +57,22 @@ def fm_demod_chunk(iq: np.ndarray, prev: np.complex64, decim_stages) -> tuple[np
     return np.clip(audio * 12000.0, -32767, 32767).astype("<i2"), iq[-1]
 
 
+def am_demod_chunk(iq: np.ndarray, prev: np.complex64, decim_stages) -> tuple[np.ndarray, np.complex64]:
+    # 2026-10-13: channel-filter the IQ BEFORE the envelope. Taking abs() of the full 2 MHz first
+    # mixed every signal in the passband into the audio -- 118.575 transcribed as KROQ and ads.
+    ch = iq
+    for stage in decim_stages:
+        ch = sps.decimate(ch, stage, ftype="fir")
+    env = np.abs(ch).astype(np.float32)
+    audio = env / (env.mean() + 1e-9) - 1.0          # normalised envelope, DC removed
+    return np.clip(audio * 8000.0, -32767, 32767).astype("<i2"), iq[-1]
+
+
 class ChannelState:
-    def __init__(self, label, freq_hz, chan_idx, audio_rate):
+    def __init__(self, label, freq_hz, chan_idx, audio_rate, demod="NFM"):
         self.label, self.freq_hz, self.chan_idx = label, float(freq_hz), chan_idx
+        self.demod = demod.upper()
+        self.demod_fn = am_demod_chunk if self.demod == "AM" else fm_demod_chunk
         self.audio_rate = audio_rate
         self.prev = np.complex64(0)
         self.buf = []
@@ -77,7 +91,7 @@ class ChannelState:
             pcm = np.concatenate(self.buf)
             rms = float(np.sqrt(np.mean(pcm.astype(np.float32) ** 2)))
             if rms >= MIN_RMS_TO_KEEP:
-                fname = f"nrsp_{int(time.time()*1000)}__{self.freq_hz/1e6:.4f}__NFM__{self.label.replace(' ', '_')}.wav"
+                fname = f"nrsp_{int(time.time()*1000)}__{self.freq_hz/1e6:.4f}__{self.demod}__{self.label.replace(' ', '_')}.wav"
                 with wave.open(os.path.join(OUT_DIR, fname), "wb") as w:
                     w.setnchannels(1); w.setsampwidth(2); w.setframerate(int(round(self.audio_rate)))
                     w.writeframes(pcm.tobytes())
@@ -95,6 +109,12 @@ def main():
     # The RSPduo driver ignores the requested rate and snaps to its own supported
     # rate (measured 2,000,000 Hz) -- query what it actually gave us and derive
     # the real decimation/audio rate from that, rather than trust the request.
+    # 2026-10-13: broadcast-FM notch (88-108 MHz) on -- no target lives there, and strong FM stations
+    # overloaded the front end into the airband channels.
+    try:
+        sdr.writeSetting("rfnotch_ctrl", "true")
+    except Exception as e:
+        print(f"[fm-capture] FM notch not set: {e}", flush=True)
     actual_iq_rate = sdr.getSampleRate(SOAPY_SDR_RX, 0)
     total_decim = 1
     for s in DECIM_STAGES:
@@ -104,12 +124,12 @@ def main():
           f"-> decimating by {total_decim} -> {audio_rate:.0f} Hz audio", flush=True)
 
     channels = []
-    for i, (label, freq_hz, ant) in enumerate(TARGETS):
+    for i, (label, freq_hz, ant, *rest) in enumerate(TARGETS):
         chan = i if dual else 0
         if not dual:
             sdr.setAntenna(SOAPY_SDR_RX, 0, ant)
         sdr.setFrequency(SOAPY_SDR_RX, chan, float(freq_hz))
-        channels.append(ChannelState(label, freq_hz, chan, audio_rate))
+        channels.append(ChannelState(label, freq_hz, chan, audio_rate, rest[0] if rest else "NFM"))
 
     n_chans = 2 if dual else 1
     # ponytail: this driver rejects a single combined multi-channel setupStream([0,1]) call
@@ -118,7 +138,7 @@ def main():
     for s in streams:
         sdr.activateStream(s)
     print(f"[fm-capture] {SERIAL} {'DT' if dual else 'MA'} mode: "
-          f"{', '.join(f'{c.label}@{c.freq_hz/1e6:.4f}MHz' for c in channels)}", flush=True)
+          f"{', '.join(f'{c.label}@{c.freq_hz/1e6:.4f}MHz/{c.demod}' for c in channels)}", flush=True)
 
     bufs = [np.empty(19200, np.complex64) for _ in range(n_chans)]
     try:
@@ -128,7 +148,7 @@ def main():
                                     timeoutUs=int(2e6))
                 if sr.ret <= 0:
                     continue
-                audio, c.prev = fm_demod_chunk(bufs[c.chan_idx][:sr.ret], c.prev, DECIM_STAGES)
+                audio, c.prev = c.demod_fn(bufs[c.chan_idx][:sr.ret], c.prev, DECIM_STAGES)
                 c.feed(audio)
     finally:
         for c in channels:

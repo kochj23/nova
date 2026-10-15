@@ -31,6 +31,7 @@ BANDS = [
     ("HF (WWV 15 MHz)", 15_000_000, 2_000_000),
     ("CB ch19 27.185 MHz", 27_185_000, 2_000_000),
     ("VHF/FM broadcast (KROQ 106.7)", 106_700_000, 2_000_000),
+    ("Airband (BUR ATIS 134.5)", 134_500_000, 2_000_000),   # 2026-10-14: continuous AM carrier for the airband targets
     ("2m ham (146.520 calling freq)", 146_520_000, 2_000_000),
     ("VHF NOAA WX 162.55", 162_550_000, 2_000_000),
     ("UHF/police-fire (P25 506.9375)", 506_937_500, 2_000_000),
