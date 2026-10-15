@@ -481,7 +481,7 @@ tasks:
   daily_threat_assessment:                # inbound-email threat scan + rollup of fishbowl/airwaves/security reports -> #nova-info
     script: nova_daily_threat_assessment.py
     schedule: cron 0 10 * * *              # 10am -- trails fishbowl_daily/operations_security/local_airwaves so rollup links resolve
-    timeout: 2025
+    timeout: 1200                          # 2026-10-15: had been stretched 900->1350->2025 chasing serial Sonnet scoring; Haiku x4 concurrent ran 510s (21 msgs). Budget: 300s Mail scrape + ~60 msgs*38s/4 + article.
     overlap: skip
 
 
