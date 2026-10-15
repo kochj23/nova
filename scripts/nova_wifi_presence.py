@@ -23,6 +23,7 @@ import ssl
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -60,10 +61,22 @@ def api_key():
         return ""
 
 
-def fetch(url, key):
-    req = urllib.request.Request(url, headers={"X-API-KEY": key})
-    with urllib.request.urlopen(req, timeout=20, context=_SSL) as r:
-        return json.loads(r.read()).get("data", [])
+def fetch(url, key, attempts=3):
+    """GET a UniFi stat endpoint. The Network app (Tomcat behind the UniFi OS nginx) answers
+    ~1-2% of stat/sta calls with a bare 'HTTP Status 500 - Internal Server Error' that is gone
+    on the next request (measured 2026-10-15), so 5xx and transport errors retry with backoff."""
+    for i in range(attempts):
+        req = urllib.request.Request(url, headers={"X-API-KEY": key})
+        try:
+            with urllib.request.urlopen(req, timeout=20, context=_SSL) as r:
+                return json.loads(r.read()).get("data", [])
+        except urllib.error.HTTPError as e:
+            if e.code < 500 or i == attempts - 1:
+                raise
+        except urllib.error.URLError:
+            if i == attempts - 1:
+                raise
+        time.sleep(1.5 * (i + 1))
 
 
 def confidence_from_signal(dbm):

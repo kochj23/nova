@@ -379,6 +379,10 @@ class NovaScheduler:
             if proc.returncode != 0:
                 _run_status = "failure"
                 task.state.last_error = (stderr.decode(errors="replace"))[-500:]
+                if not task.state.last_error.strip() and stdout:
+                    # many scripts log their failure reason to stdout and exit 1 — without this the
+                    # run row / Slack alert had an empty error (cluster_render, wifi_scan, unifi_stalker)
+                    task.state.last_error = stdout.decode(errors="replace")[-500:]
                 _error_tail = task.state.last_error
                 if not task.state._retry_pending and task.state.consecutive_failures == 0:
                     # First failure — schedule a retry in 60s instead of counting it

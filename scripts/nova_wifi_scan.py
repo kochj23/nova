@@ -16,6 +16,7 @@ Written 2026-07-23.
 import json
 import ssl
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -52,20 +53,29 @@ def get_unifi_key():
     return nova_config._keychain("nova-unifi-api-key", required=True)
 
 
+def _get(path, key, attempts=4):
+    """GET a UniFi stat endpoint. The Network app answers 503 for ~10-15 s around its 00:00 housekeeping
+    (failed the 00:00 run two nights running, 2026-10-14/15) and a stray Tomcat 500 ~1-2% of the time;
+    both clear on retry, so 5xx retries with backoff (4+8+12 s fits the 60 s task timeout)."""
+    for i in range(attempts):
+        req = urllib.request.Request(f"{CONTROLLER}/proxy/network/api/s/default/{path}",
+                                     headers={"X-API-Key": key, "Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=20, context=_ctx) as resp:
+                return json.loads(resp.read()).get("data", [])
+        except urllib.error.HTTPError as e:
+            if e.code < 500 or i == attempts - 1:
+                raise
+            time.sleep(4 * (i + 1))
+
+
 def fetch_neighbors():
-    key = get_unifi_key()
-    req = urllib.request.Request(f"{CONTROLLER}/proxy/network/api/s/default/stat/rogueap",
-                                 headers={"X-API-Key": key, "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=20, context=_ctx) as resp:
-        return json.loads(resp.read()).get("data", [])
+    return _get("stat/rogueap", get_unifi_key())
 
 
 def fetch_our_bssids():
     key = get_unifi_key()
-    req = urllib.request.Request(f"{CONTROLLER}/proxy/network/api/s/default/stat/device",
-                                 headers={"X-API-Key": key, "Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=20, context=_ctx) as resp:
-        devices = json.loads(resp.read()).get("data", [])
+    devices = _get("stat/device", key)
     ours = set()
     for d in devices:
         for vap in d.get("vap_table", []) or []:

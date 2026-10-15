@@ -92,6 +92,10 @@ class TestRetry(unittest.TestCase):
         out = Path(tempfile.mkdtemp()) / "dash"; out.mkdir()
         (out / "nova-cluster.png").write_bytes(b"good")
         rc, _, _ = _main(out, size=10)
+        self.assertEqual(rc, 0)                     # fresh last frame: one missed refresh is not a failure
+        self.assertEqual((out / "nova-cluster.png").read_bytes(), b"good")
+        os.utime(out / "nova-cluster.png", (0, 0))  # stale last frame: the failed render IS a failure
+        rc, _, _ = _main(out, size=10)
         self.assertEqual(rc, 1)
         self.assertEqual((out / "nova-cluster.png").read_bytes(), b"good")
 

@@ -170,6 +170,11 @@ def _call(method, path, body=None, timeout=20, retries=None):
             if e.code in (401, 403) and u._readonly_refused() and u._unifi_login():
                 headers["X-API-Key"] = u._api_key          # retry once on the admin key
                 continue
+            if e.code >= 500 and method == "GET" and i < tries - 1:
+                # the Network app's Tomcat answers ~1-2% of stat calls with a bare 'HTTP Status 500' (and 503
+                # around its 00:00 housekeeping) that is gone on the next request — unifi_stalker failed on it
+                time.sleep(1.5 * (2 ** i))
+                continue
             try:
                 detail = e.read()[:300].decode(errors="replace")
             except Exception:  # noqa: BLE001

@@ -19,6 +19,7 @@ OUT = pathlib.Path(os.environ.get("NOVA_DASH_DIR", "/Volumes/nas/nova-fs/dash"))
 KEEP_HOURLY = 48
 TV_HOST = "kochj@192.168.1.7"
 TV_CACHE = "Library/Caches/nova-dash"       # local on .7; its importer reads from here (see nova_tv_dash_import.sh)
+STALE_S = 20 * 60          # last good frame older than this => a failed render is a real failure
 MIN_BYTES = 30_000           # a blank or error page renders under this; Grafana's dashboard is a few hundred KB
 
 def log(m): print(f"[cluster-render] {m}", flush=True)
@@ -48,7 +49,15 @@ def main():
     (out / "hourly").mkdir(parents=True, exist_ok=True)
     tmp = out / ".nova-cluster.tmp.png"
     if not render(tmp):
-        log(f"render failed or too small ({tmp.stat().st_size if tmp.exists() else 0} B) — keeping last good frame"); return 1
+        log(f"render failed or too small ({tmp.stat().st_size if tmp.exists() else 0} B) — keeping last good frame")
+        # One missed refresh is harmless while the last frame is still fresh. The 02:00 pg_backup slows the
+        # dashboard's PG panels past the renderer's timeout (Grafana 500 rendering.serverTimeout) for one run
+        # a night; only a STALE frame is a failure worth paging on.
+        last = out / "nova-cluster.png"
+        age = time.time() - last.stat().st_mtime if last.exists() else None
+        if age is not None and age < STALE_S:
+            log(f"last good frame is {int(age // 60)} min old — not a failure"); return 0
+        return 1
     os.replace(tmp, out / "nova-cluster.png")
     h = out / "hourly" / hourly_name(time.time())
     if not h.exists():
