@@ -660,8 +660,9 @@ def cmd_send(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
                 folder=DEFAULT_IMAP_FOLDER,
                 config=build_waggle_config(cfg)
             )
-            in_reply_to = original.get("message_id")
-            references = original.get("reply_references")
+            # unfold: long threads arrive with folded (CRLF + space) headers, which email.message rejects on set
+            in_reply_to = " ".join(str(original.get("message_id") or "").split()) or None
+            references = " ".join(str(original.get("reply_references") or "").split()) or None
             subject = sanitize_for_display(original.get('subject', 'Unknown'))
             logger.info(f"  Found: {subject}")
         except (ConnectionError, TimeoutError, OSError) as e:
