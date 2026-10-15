@@ -184,6 +184,25 @@ SKILLS = {
         topic="the nature of her own memory", sources=["memory_anchor", "weight_of_memory", "dream"],
         recent_days=7, web=True, hint="memory consolidation forgetting",
         focus="What the sources show about what she keeps, what has weight, and what fades; tie one point to how memory is understood to work."),
+    # 2026-10-15: coagency #173-#176, Jordan-approved via Claude Code ("Go for it").
+    "pursue-interest-calendar": dict(   # coagency #173; read-only: the card's reminder steps are not implemented
+        topic="calendar", sources=["calendar"], recent_days=7, web=False,
+        hint="calendar meetings this week",
+        focus="Lay out what the calendar digests show for the coming days: how full each day is, which kinds of meetings "
+              "dominate, and anything new or unusual (a packed day, a first-time meeting)."),
+    "pursue-interest-intelligence": dict(   # coagency #174
+        topic="intelligence", sources=["intelligence", "signals_intelligence"], recent_days=3, web=False,
+        hint="security intelligence CVE threat",
+        focus="Name the threats, vulnerabilities, actors and agencies the sources report and the concrete facts about each."),
+    "pursue-interest-n-in-science": dict(   # coagency #175: the card's "N" is the year of her thread, 1969 in science
+        topic="1969 in science", sources=["1969_in_science"], recent_days=30, web=True,
+        hint="1969 in science Apollo 11",
+        must=r"1969|apollo|arpanet|lunar|moon landing|concorde|boeing 747|nobel",
+        focus="Name the discoveries, missions, people and dates from 1969 the sources describe and what each achieved."),
+    "pursue-interest-education": dict(   # coagency #176
+        topic="education", sources=["education"], recent_days=14, web=False,
+        hint="lecture explained",
+        focus="Name the lectures or videos the sources come from and the specific ideas each one actually teaches."),
     "pursue-interest-nightly": dict(
         topic="nightly", meta=True, success="nightly"),
 }
@@ -823,7 +842,7 @@ def selftest() -> int:
     assert split_next("tail words. NEXT: read z")[1] == "read z"
     assert len(_SENT.split("Rabies in L.A. County [1]. A vote on Nov. 3 [2]. Done.")) == 3
     assert attach_cites("A rose. [1] B fell.[2][3]") == "A rose [1]. B fell [2][3]."
-    assert len(SKILLS) == 23
+    assert len(SKILLS) == 27
     print("selftest OK")
     return 0
 

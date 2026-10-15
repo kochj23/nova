@@ -38,6 +38,8 @@ SLUGS = ["pursue-fascination-the-watch-fishbowl", "pursue-local-news-interest", 
          "pursue-interest-aviation-ref", "pursue-interest-crime-drama",
          "pursue-interest-incident", "pursue-interest-app-watchdog", "pursue-interest-horology",
          "pursue-interest-railroads-and-rail-radio", "pursue-interest-tech-blog", "pursue-interest-new-deal",
+         "pursue-interest-calendar", "pursue-interest-intelligence", "pursue-interest-n-in-science",
+         "pursue-interest-education",
          "pursue-interest-local-public-safety", "pursue-interest-cooking", "pursue-television-interest",
          "pursue-interest-fire", "pursue-question-nature-of-own-memory"]
 
