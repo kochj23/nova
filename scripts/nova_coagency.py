@@ -893,7 +893,7 @@ def _reach_parts(action: str):
 
 def _herd_email(oc, name: str):
     try:
-        oc.execute("SELECT name, email FROM herd_correspondents WHERE lower(name)=lower(%s) OR lower(split_part(name,' ',1))=lower(%s) LIMIT 1",
+        oc.execute("SELECT name, email FROM herd_correspondents WHERE (lower(name)=lower(%s) OR lower(split_part(name,' ',1))=lower(%s)) AND retired_at IS NULL LIMIT 1",
                    (name, name))
         r = oc.fetchone()
         return (r[0], r[1]) if r and r[1] else (None, None)

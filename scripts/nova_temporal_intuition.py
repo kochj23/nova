@@ -125,7 +125,7 @@ def gather(oc, mc, now):
                          "AND coalesce(user_message,'') <> ''", (MACHINE_CHANNELS,)):
         d = _days(last, now)
         if d is not None: out.append(("jordan:voice", "since Little Mister last spoke to me", d))
-    for name, last in q(oc, "SELECT name, last_exchange FROM herd_correspondents WHERE last_exchange IS NOT NULL"):
+    for name, last in q(oc, "SELECT name, last_exchange FROM herd_correspondents WHERE last_exchange IS NOT NULL AND retired_at IS NULL"):
         out.append((f"herd:{name}", f"since {name} and I last wrote", _days(last, now)))
     for key, subj, anchored in q(oc, "SELECT key, subject, anchored_at FROM memory_anchors WHERE released_at IS NULL"):
         out.append((f"anchor:{key}", f"holding on to '{subj}'", _days(anchored, now)))

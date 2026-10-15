@@ -452,6 +452,13 @@ tasks:
     overlap: skip
     group: llm
 
+  continuity_review:               # the monthly self-review she promised in public (9-14 baseline); missed 10-14, so it is a job now (Jordan 2026-10-15). Acts from the 14th until this month's row in continuity_reviews has mailed_at; publishes /operations/continuity-review-YYYY-MM and mails the witness copy to Jules. Daily = it retries itself.
+    script: nova_continuity_review.py
+    args: ["--scheduled"]
+    schedule: cron 0 9 * * *
+    timeout: 1800
+    overlap: skip
+
   journal_monthly_wrap:            # per-section "<Section> — <Month>: ..." wraps, ~5000w grounded (2026-10-06)
     script: nova_monthly_wrap.py   # default = previous calendar month; dedup in PG service_config
     schedule: cron 30 13 1 * *     # 1st 13:30 — clear of 05:30/09:00/09:05/10:00 1st-of-month jobs

@@ -348,7 +348,7 @@ def gather_herd(oc) -> list:
                              array_to_string(running_ideas, '; '),
                              array_to_string(open_threads, '; '), last_exchange
                       FROM herd_correspondents
-                      WHERE running_ideas IS NOT NULL OR open_threads IS NOT NULL
+                      WHERE (running_ideas IS NOT NULL OR open_threads IS NOT NULL) AND retired_at IS NULL   -- retired: remembered, not written to
                       ORDER BY last_exchange DESC NULLS LAST LIMIT %s""", (MAX_HERD,))
         for name, persona, ideas, threads, last in oc.fetchall():
             if not (ideas or threads):
