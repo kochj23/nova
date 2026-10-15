@@ -224,9 +224,14 @@ def _page(conn, task_id: str, health: dict):
     state = health["state"]
     level = "critical" if state == "critical" else "warning"
     title = f"Scheduled task '{task_id}' is {state.upper()}"
+    def _age(s):
+        return f"{s / 86400:.1f}d ago" if s >= 86400 else f"{s / 3600:.1f}h ago" if s >= 3600 else f"{s:.0f}s ago"
+    lr, lok = health.get("last_run_age_s"), health.get("last_ok_age_s")
+    # A success older than WINDOW_DAYS falls out of the query, which printed "last success
+    # Nones ago" (daily_threat_assessment, 2026-10-15) — say what it actually means.
     body = (f"{health['reason']}. "
-            f"last run {health.get('last_run_age_s', '?')}s ago, "
-            f"last success {health.get('last_ok_age_s')}s ago.")
+            f"last run {_age(lr) if lr is not None else '?'}, "
+            f"last success {_age(lok) if lok is not None else f'none in the last {WINDOW_DAYS}d'}.")
     # Re-notify window 6h (not the default 1h): a task that's been failing all day doesn't need
     # 23 hourly pings — the first tells you, ~4/day is a reminder, more is just noise burying the
     # NEW failures. (2026-08-11 S/N pass: task-sentinel sent 77 alerts/night for 9 conditions.)
