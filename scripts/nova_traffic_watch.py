@@ -101,6 +101,28 @@ def parse_hazard(caption):
     return text, hazard
 
 
+_FIRE_WORDS = re.compile(r"\b(smoke|smoky|fire|flames?|blaze|burning|wildfire)\b", re.I)
+_NEGATION = re.compile(r"\b(none|no|not|without|absent|n't)\b|n't\b", re.I)
+
+
+def reconcile_hazard(text, hazard):
+    """The 3B vision model on the brush-cam FIRE_PROMPT often tags 'HAZARD: fire' while its own
+    description says 'Smoke: None. Fire: None' (it's primed by the prompt). Require affirmative
+    smoke/fire evidence in the description for fire/smoke; otherwise downgrade to the traffic
+    hazard the text actually describes (crash/closure) or nothing."""
+    if hazard not in ("fire", "smoke"):
+        return hazard
+    clauses = re.split(r"[.;\n]+", text or "")
+    if any(_FIRE_WORDS.search(c) and not _NEGATION.search(c) for c in clauses):
+        return hazard
+    low = (text or "").lower()
+    if any(k in low for k in ("crash", "accident", "collision")):
+        return "crash"
+    if "closed" in low or "closure" in low:
+        return "closure"
+    return None
+
+
 def watch(role=None, limit=None):
     cams = list(TRAFFIC_CAMERAS.items())
     if role:
@@ -128,6 +150,7 @@ def watch(role=None, limit=None):
             continue
         prompt = FIRE_PROMPT if cam["role"] == "fire" else COMMUTE_PROMPT
         text, hazard = parse_hazard(describe_image(path, prompt, model=VISION_MODEL))
+        hazard = reconcile_hazard(text, hazard)
         Path(path).unlink(missing_ok=True)
         # Caltrans serves "Temporarily Unavailable" as a real ~16KB JPEG; the model tags it for us.
         if hazard == "unavailable" or any(k in text.lower() for k in ("temporarily unavailable", "no signal")):
@@ -170,6 +193,14 @@ def selftest():
     assert parse_hazard("The image is unavailable.\nHAZARD: unavailable")[1] == "unavailable"
     # real positives pass through
     assert parse_hazard("Thick smoke over the ridge.\nHAZARD: smoke")[1] == "smoke"
+    # fire/smoke tag contradicted by the description is downgraded (2026-10-15 false FIRE posts)
+    neg = "Traffic flow: Heavy congestion with multiple lanes closed due to an accident. Smoke: None. Fire: None. Glow: None."
+    assert reconcile_hazard(neg, "fire") == "crash"
+    assert reconcile_hazard("Light traffic. Smoke: None detected. Fire: None detected.", "fire") is None
+    assert reconcile_hazard("Free-flowing, no smoke or flames visible.", "smoke") is None
+    assert reconcile_hazard("Moderate traffic. There is smoke rising from the hillsides.", "smoke") == "smoke"
+    assert reconcile_hazard("Flames visible on the ridge.", "fire") == "fire"
+    assert reconcile_hazard(neg, "crash") == "crash"
     # junk token ignored, empty safe
     assert parse_hazard("Clear.\nHAZARD: banana")[1] is None
     assert parse_hazard(None) == ("", None)
