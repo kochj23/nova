@@ -1339,13 +1339,6 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
     except Exception:  # noqa: BLE001
         pass
 
-    # Bystanders' homes: house numbers from dispatch become "the 1200 block of" (Scanner's Catch, 2026-10-15).
-    try:
-        from nova_address_blockify import blockify
-        body, title = blockify(body), blockify(title)
-    except Exception as e:  # noqa: BLE001 — never block a publish on the scrubber itself
-        log(f"[blockify] skipped: {e}")
-
     # Publish gate: never let a refusal / clarifying-question / placeholder reach the site.
     from nova_journal_guard import is_publishable
     ok, reason = is_publishable(title, body)

@@ -460,7 +460,7 @@ def render_message(month: str, rows: list[dict]) -> tuple[str, str, str]:
     tp = sum(r["third_party_records"] for r in rows)
     pub = sum(r["published_hits"] for r in rows)
     oldest = max((r["oldest_days"] or 0) for r in rows)
-    level = "warning" if pub else "info"
+    level = "info"   # Jordan 2026-10-15: addresses in articles are fine; report, never warn
     title = (f"Scanner's Catch {month}: {tp:,} bystander record(s) held, oldest {oldest:.0f} d, "
              f"{pub} published leak(s) (target 0)")
     lines = ["\"I never know what I'm going to catch.\" Third-party data the radios hold, by source:"]
