@@ -624,7 +624,7 @@ tasks:
   nova_speaks_sweep:
     script: nova_speaks_sweep.py
     schedule: every 10m
-    timeout: 300
+    timeout: 1800                    # 2026-10-15: was 300 — a sweep that reaps a render scp's + uploads it to YouTube (2-16 min); 14 timeouts/4d killed uploads mid-way (done rows left without youtube_id). Matches the in-script upload timeout; overlap: skip keeps it single.
     overlap: skip
 
   op_sync:

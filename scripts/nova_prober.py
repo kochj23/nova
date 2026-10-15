@@ -89,7 +89,13 @@ def _http_get(url, timeout=HTTP_TIMEOUT):
 
 
 def _ops_conn():
-    return psycopg2.connect(OPS_DSN, connect_timeout=PG_CONNECT_TIMEOUT)
+    """Bookkeeping connection (results land here; the PG probe itself is separate). One retry: a single
+    lost SYN to pg-primary ('Operation timed out', 2026-10-14 23:15, every other job fine) failed the run."""
+    try:
+        return psycopg2.connect(OPS_DSN, connect_timeout=PG_CONNECT_TIMEOUT)
+    except psycopg2.OperationalError:
+        time.sleep(2)
+        return psycopg2.connect(OPS_DSN, connect_timeout=PG_CONNECT_TIMEOUT)
 
 
 def _mem_conn():
