@@ -275,7 +275,7 @@ class Functional(unittest.TestCase):
     def test_message_and_level(self):
         by = self._rows((1, 0))
         level, title, body = sc.render_message("2026-10", list(by.values()))
-        self.assertEqual(level, "warning")
+        self.assertEqual(level, "info")   # leaks are reported, never warned (Jordan 2026-10-15)
         self.assertIn("published leak(s) (target 0)", title)
         for s in ("p25_police", "purge NONE", "Cameras:", "proposal only"):
             self.assertIn(s, body)
