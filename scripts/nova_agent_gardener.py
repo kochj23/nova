@@ -17,6 +17,7 @@ Written by Jordan Koch.
 import json
 import random
 import sys
+import re
 import time
 import urllib.request
 from datetime import datetime, timezone
@@ -36,6 +37,39 @@ SOURCES_TO_SCAN = [
 ]
 SAMPLES_PER_SOURCE = 30
 MAX_FINDINGS_PER_RUN = 20
+
+
+_MONTHS = "january|february|march|april|may|june|july|august|september|october|november|december"
+_DATE_RE = re.compile(rf"\b(?:({_MONTHS})\.?\s+(\d{{1,2}}),?\s+(\d{{4}})|(\d{{4}})-(\d{{2}})-(\d{{2}}))\b", re.I)
+
+
+def _dates_in(text):
+    out = []
+    for m in _DATE_RE.finditer(text or ""):
+        try:
+            if m.group(1):
+                out.append(datetime.strptime(f"{m.group(1)[:3]} {m.group(2)} {m.group(3)}", "%b %d %Y").date())
+            else:
+                out.append(datetime(int(m.group(4)), int(m.group(5)), int(m.group(6))).date())
+        except ValueError:
+            pass
+    return out
+
+
+def drop_bogus_future(findings, today=None):
+    """The LLM keeps calling today's/past emails 'stale — references a future date' (2026-10-15:
+    Oct 15 2026 mails flagged 'future ... which is the current date', rec delete_one). A 'future'
+    staleness claim survives only if a date it cites is actually after today."""
+    from datetime import date
+    today = today or date.today()
+    keep = []
+    for f in findings or []:
+        desc = f.get("description", "") or ""
+        if f.get("type") == "stale" and "future" in desc.lower():
+            if not any(d > today for d in _dates_in(desc)):
+                continue
+        keep.append(f)
+    return keep
 
 
 class MemoryGardener(SubAgent):
@@ -256,7 +290,6 @@ class MemoryGardener(SubAgent):
         )
 
         from datetime import date
-        current_year = date.today().year
 
         prompt = (
             f"Analyze these {len(memories)} memories from source '{source}' for quality issues.\n"
@@ -267,8 +300,8 @@ class MemoryGardener(SubAgent):
         today_str = date.today().strftime("%B %d, %Y")
         system = (
             f"You are a memory curator. The current date is {today_str}. "
-            f"ALL dates from 2000 to {current_year} are VALID PAST dates. "
-            f"Dates in {current_year + 1}, {current_year + 2}, {current_year + 3} are FUTURE dates.\n\n"
+            f"Any date on or before {today_str} (including today) is a PAST or CURRENT date, never a "
+            f"future date. Only dates strictly after {today_str} are future.\n\n"
             "STALENESS RULES — READ CAREFULLY:\n"
             "A memory is ONLY 'stale' if its CONTENT describes a time-sensitive action that is "
             "clearly no longer relevant (e.g., 'meeting tomorrow' from 3 years ago, an expired coupon, "
@@ -309,7 +342,8 @@ class MemoryGardener(SubAgent):
         except json.JSONDecodeError:
             result = {"findings": []}
 
-        for f in result.get("findings", []):
+        result["findings"] = drop_bogus_future(result.get("findings", []))
+        for f in result["findings"]:
             f["source"] = source
 
         return result
@@ -327,8 +361,21 @@ def run_nightly():
         agent._deregister()
 
 
+def _selftest():
+    from datetime import date
+    t = date(2026, 10, 15)
+    bogus = {"type": "stale", "description": "references a future date (October 15, 2026) which is the current date"}
+    past = {"type": "stale", "description": "email dated 2026-10-14 mentions a future meeting"}
+    real = {"type": "stale", "description": "says the event is on a future date, 2026-11-02"}
+    other = {"type": "contradiction", "description": "future plans conflict"}
+    assert drop_bogus_future([bogus, past, real, other], t) == [real, other]
+    print("selftest OK")
+
+
 if __name__ == "__main__":
-    if "--cron" in sys.argv:
+    if "--selftest" in sys.argv:
+        _selftest()
+    elif "--cron" in sys.argv:
         run_nightly()
     else:
         MemoryGardener().run()
