@@ -66,6 +66,11 @@ WATCH_CHANNELS = {
 }
 ALERT_CHANNEL = nova_config.SLACK_BB          # where digests go (#nova-critical)
 WATCH_MARKER  = "\U0001F52D Hourly Watch"      # 🔭 — tags our own posts
+# Slack hands the emoji back as the ":telescope:" shortcode, so the unicode marker never matched
+# on read — every digest was re-fed to the next hour's LLM and items like "NAS unreachable at
+# 192.168.1.11" (from one 23:20 report) were re-raised as fresh criticals all night (2026-10-15).
+OWN_POST_MARKERS = (WATCH_MARKER, ":telescope: Hourly Watch")
+MAX_LOOKBACK_S = 3 * 3600                      # never sweep a backlog older than this (downtime)
 
 LOOKBACK_FIRST_RUN_S = 70 * 60                 # first ever scan: look back ~70 min
 
@@ -95,6 +100,10 @@ def _slack_get(method: str, params: dict) -> dict:
         return json.loads(r.read())
 
 
+def is_own_post(text: str) -> bool:
+    return any(mk in text for mk in OWN_POST_MARKERS)
+
+
 def fetch_new(channel_id: str, oldest_ts: float) -> list[dict]:
     """Return text messages STRICTLY newer than oldest_ts, oldest-first.
 
@@ -120,7 +129,7 @@ def fetch_new(channel_id: str, oldest_ts: float) -> list[dict]:
                 continue
             text = (m.get("text") or "").strip()
             # ignore our own watch digests (feedback-loop guard) + empty posts
-            if not text or WATCH_MARKER in text:
+            if not text or is_own_post(text):
                 continue
             out.append({"ts": ts, "text": text})
         cursor = (data.get("response_metadata") or {}).get("next_cursor")
@@ -164,7 +173,7 @@ def get_watermark(conn, channel: str) -> float:
         cur.execute("SELECT last_ts FROM slack_watch_state WHERE channel=%s", (channel,))
         row = cur.fetchone()
     if row:
-        return float(row[0])
+        return max(float(row[0]), time.time() - MAX_LOOKBACK_S)
     return time.time() - LOOKBACK_FIRST_RUN_S
 
 
@@ -353,5 +362,14 @@ def run(dry: bool = False) -> int:
     return 0
 
 
+def _selftest() -> None:
+    assert is_own_post(":telescope: Hourly Watch :rotating_light: *NAS unreachable*")  # as Slack returns it
+    assert is_own_post(build_digest({"items": []}))                                     # as we post it
+    assert not is_own_post("*:nas: Nightly NAS Report* Could not reach NAS")
+    print("selftest OK")
+
+
 if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        sys.exit(_selftest())
     sys.exit(run(dry="--dry-run" in sys.argv))
