@@ -386,7 +386,7 @@ class TestFunctional(unittest.TestCase):
         self.assertIn(("work_lessons", "backfill_enabled_A", "true"), sets)
 
     def test_tier_c_fails_over_from_the_8b_to_the_30b(self):
-        oc = _Cur([("tier, count(*) FROM work_lessons WHERE run_tag='pilot'", [("C", 60)]),
+        oc = _Cur([("tier, count(*) FROM work_lessons WHERE run_tag='pilot'", [("C", wl.PILOT_QUOTA["C"])]),
                    ("SELECT work_key, source, lessons_json", []), ("count(*) FILTER (WHERE tier='A')", (0, 0, 4, 0))])
         wl.C_ROUTE["val"] = "fleet"
         try:
@@ -470,7 +470,7 @@ class TestSets(unittest.TestCase):
         marker = "UPDATE work_lessons " + "SET status=%s"
         ups = [p for s, p in zip(oc.sql, oc.params) if s.strip().startswith(marker)]
         self.assertEqual([u[0] for u in ups], ["done", "thin", "thin"])
-        self.assertTrue(all(u[-2] == rows[0]["work_key"] for u in ups))   # set_id
+        self.assertTrue(all(u[13] == rows[0]["work_key"] for u in ups))   # set_id (14th parameter)
 
 
 class TestFrame(unittest.TestCase):
