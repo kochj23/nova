@@ -7,11 +7,18 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		137049240E1C9B681B1674C2 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B4BD0DAA62B4C3A466BFFDF3 /* Assets.xcassets */; };
+		4473D359F4AE155B1B5535F5 /* MacSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = E375132ED1071BF455185B73 /* MacSettings.swift */; };
 		4BAE46D3CCDADC93BCA4D663 /* Starfield.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5646A9FFBB0AA94196201EE /* Starfield.swift */; };
 		5C3C6B88C5ED2ECDC3A97CFE /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 41C147BBBC4503F09F496747 /* Assets.xcassets */; };
+		5F5523599D56E18F39E9746B /* MinionConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DD42CC5FCC72614CA9E6F3D /* MinionConfig.swift */; };
 		6ADE421CADE13D61B8F0CD4A /* MinionConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DD42CC5FCC72614CA9E6F3D /* MinionConfig.swift */; };
+		898F61005EA8E3F5E4781610 /* Starfield.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5646A9FFBB0AA94196201EE /* Starfield.swift */; };
+		AAFA2EC4AB42EFD52C3999D9 /* NovaMinionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DF4515BFECF733E1A2C5594 /* NovaMinionApp.swift */; };
 		D681067169A184A57A6CD00F /* Fleet.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF09D7F69F8FCD23A496AA1A /* Fleet.swift */; };
+		E2218B63371E0E5D2A016525 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21D62E039CF2C46F218BD717 /* Views.swift */; };
 		EF963EE1B9E5485F9F1E609A /* NovaMinionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DF4515BFECF733E1A2C5594 /* NovaMinionApp.swift */; };
+		F1663CBE1DD04708B9789893 /* Fleet.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF09D7F69F8FCD23A496AA1A /* Fleet.swift */; };
 		FC5FDFFF8BA61A1B8DC18ACE /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21D62E039CF2C46F218BD717 /* Views.swift */; };
 /* End PBXBuildFile section */
 
@@ -22,14 +29,27 @@
 		4DF4515BFECF733E1A2C5594 /* NovaMinionApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaMinionApp.swift; sourceTree = "<group>"; };
 		6DD42CC5FCC72614CA9E6F3D /* MinionConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinionConfig.swift; sourceTree = "<group>"; };
 		86AFC834AE828FC38372403F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		B4BD0DAA62B4C3A466BFFDF3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		BF09D7F69F8FCD23A496AA1A /* Fleet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fleet.swift; sourceTree = "<group>"; };
 		D5646A9FFBB0AA94196201EE /* Starfield.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Starfield.swift; sourceTree = "<group>"; };
+		E375132ED1071BF455185B73 /* MacSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSettings.swift; sourceTree = "<group>"; };
+		FC4DBEC6752D26F4AE895202 /* NovaMinionMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NovaMinionMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
+		237A388C61515E802ED6DF5B /* NovaMinionMac */ = {
+			isa = PBXGroup;
+			children = (
+				B4BD0DAA62B4C3A466BFFDF3 /* Assets.xcassets */,
+				E375132ED1071BF455185B73 /* MacSettings.swift */,
+			);
+			path = NovaMinionMac;
+			sourceTree = "<group>";
+		};
 		5B21823075E64F31BF2342BD /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				FC4DBEC6752D26F4AE895202 /* NovaMinionMac.app */,
 				4CA05EE5F256AEAFDBD34D31 /* NovaMinionPad.app */,
 			);
 			name = Products;
@@ -52,6 +72,7 @@
 		E54FF1F3C7DD3333B5FE5A4E = {
 			isa = PBXGroup;
 			children = (
+				237A388C61515E802ED6DF5B /* NovaMinionMac */,
 				9AF39BF63D288E817FB24A38 /* NovaMinionPad */,
 				5B21823075E64F31BF2342BD /* Products */,
 			);
@@ -78,6 +99,24 @@
 			productReference = 4CA05EE5F256AEAFDBD34D31 /* NovaMinionPad.app */;
 			productType = "com.apple.product-type.application";
 		};
+		C5490EC05DD457AEC69E69DD /* NovaMinionMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3568A40267118CC488D75268 /* Build configuration list for PBXNativeTarget "NovaMinionMac" */;
+			buildPhases = (
+				31802E7B04F24826F296F2C2 /* Sources */,
+				9626BD4953CF229EEC9B9EB2 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NovaMinionMac;
+			packageProductDependencies = (
+			);
+			productName = NovaMinionMac;
+			productReference = FC4DBEC6752D26F4AE895202 /* NovaMinionMac.app */;
+			productType = "com.apple.product-type.application";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -88,6 +127,10 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					1DE3F54BE470F2208908911D = {
+						DevelopmentTeam = QRRCB8HB3W;
+						ProvisioningStyle = Automatic;
+					};
+					C5490EC05DD457AEC69E69DD = {
 						DevelopmentTeam = QRRCB8HB3W;
 						ProvisioningStyle = Automatic;
 					};
@@ -108,11 +151,20 @@
 			projectRoot = "";
 			targets = (
 				1DE3F54BE470F2208908911D /* NovaMinionPad */,
+				C5490EC05DD457AEC69E69DD /* NovaMinionMac */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		9626BD4953CF229EEC9B9EB2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				137049240E1C9B681B1674C2 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		ED2CA25467EBDF44AFEF0C88 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -124,6 +176,19 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		31802E7B04F24826F296F2C2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F1663CBE1DD04708B9789893 /* Fleet.swift in Sources */,
+				4473D359F4AE155B1B5535F5 /* MacSettings.swift in Sources */,
+				5F5523599D56E18F39E9746B /* MinionConfig.swift in Sources */,
+				AAFA2EC4AB42EFD52C3999D9 /* NovaMinionApp.swift in Sources */,
+				898F61005EA8E3F5E4781610 /* Starfield.swift in Sources */,
+				E2218B63371E0E5D2A016525 /* Views.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		E378D3066881C3184F060956 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -160,6 +225,28 @@
 			};
 			name = Release;
 		};
+		13CCBCBFB4D3A8FB4C2EB8EA /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = QRRCB8HB3W;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = NovaMinionMac/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.digitalnoise.NovaMinionMac;
+				PRODUCT_NAME = "Nova Minion";
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
 		204EE98327EC8E5BD60A2551 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -180,6 +267,28 @@
 				TARGETED_DEVICE_FAMILY = 2;
 			};
 			name = Debug;
+		};
+		62CCE57F2C1A611BBBA67E57 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = QRRCB8HB3W;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = NovaMinionMac/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.digitalnoise.NovaMinionMac;
+				PRODUCT_NAME = "Nova Minion";
+				SDKROOT = macosx;
+			};
+			name = Release;
 		};
 		8C3FF684EA1A2823615B7139 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -234,12 +343,12 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -293,11 +402,11 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
@@ -307,6 +416,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		3568A40267118CC488D75268 /* Build configuration list for PBXNativeTarget "NovaMinionMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				13CCBCBFB4D3A8FB4C2EB8EA /* Debug */,
+				62CCE57F2C1A611BBBA67E57 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		685496893F9B520B66F542C9 /* Build configuration list for PBXNativeTarget "NovaMinionPad" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

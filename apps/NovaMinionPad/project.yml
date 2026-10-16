@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: net.digitalnoise
   deploymentTarget:
     iOS: "17.0"
+    macOS: "14.0"
   groupSortPosition: top
 
 settings:
@@ -51,5 +52,42 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "Apple Development"
         DEVELOPMENT_TEAM: QRRCB8HB3W
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        DEAD_CODE_STRIPPING: YES
+
+  # Native macOS window onto the same fleet view — shares every source in NovaMinionPad/.
+  NovaMinionMac:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: NovaMinionPad
+        excludes:
+          - "**/.DS_Store"
+          - "Info.plist"
+          - "Assets.xcassets"
+      - path: NovaMinionMac
+        excludes:
+          - "**/.DS_Store"
+          - "Info.plist"
+    info:
+      path: NovaMinionMac/Info.plist
+      properties:
+        CFBundleDisplayName: Nova Minion
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSApplicationCategoryType: public.app-category.utilities
+        LSMinimumSystemVersion: "$(MACOSX_DEPLOYMENT_TARGET)"
+        NSLocalNetworkUsageDescription: "Nova Minion shows what Nova's machines are learning, from Nova's hub on your network."
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_NAME: "Nova Minion"
+        PRODUCT_BUNDLE_IDENTIFIER: net.digitalnoise.NovaMinionMac
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "Apple Development"
+        DEVELOPMENT_TEAM: QRRCB8HB3W
+        ENABLE_HARDENED_RUNTIME: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         DEAD_CODE_STRIPPING: YES

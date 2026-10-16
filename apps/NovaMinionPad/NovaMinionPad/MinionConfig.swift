@@ -1,9 +1,10 @@
 //
 //  MinionConfig.swift
-//  Nova Minion (iPad)
+//  Nova Minion (iPad + Mac)
 //
 //  Hub URL + node name live in UserDefaults; the minion token lives in the
-//  iOS Keychain. Nothing network-specific is baked into the binary — the hub
+//  Keychain (iOS: this-device-only; macOS: the login keychain, service =
+//  the app's bundle id). Nothing network-specific is baked into the binary — the hub
 //  is supplied at setup (settings sheet, novaminion://setup deep link, or
 //  NOVA_MINION_HUB / NOVA_MINION_NODE / NOVA_MINION_TOKEN on first launch).
 //
@@ -16,7 +17,11 @@ struct MinionConfig: Equatable {
     var node: String
     var token: String
 
+    #if os(macOS)
+    static let defaultNode = "mac-view"
+    #else
     static let defaultNode = "ipad-air"
+    #endif
     private static let hubKey = "hub.url"
     private static let nodeKey = "hub.node"
 
@@ -81,7 +86,8 @@ struct MinionConfig: Equatable {
 }
 
 enum Keychain {
-    private static let service = "net.digitalnoise.NovaMinion"
+    /// iOS: net.digitalnoise.NovaMinion · macOS: net.digitalnoise.NovaMinionMac
+    private static let service = Bundle.main.bundleIdentifier ?? "net.digitalnoise.NovaMinion"
     private static let account = "minion-token"
 
     private static var query: [String: Any] {
@@ -105,7 +111,9 @@ enum Keychain {
         guard !value.isEmpty else { return }
         var q = query
         q[kSecValueData as String] = Data(value.utf8)
+        #if os(iOS)
         q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        #endif
         SecItemAdd(q as CFDictionary, nil)
     }
 }

@@ -1,6 +1,6 @@
 //
 //  Views.swift
-//  Nova Minion (iPad)
+//  Nova Minion (iPad + Mac)
 //
 //  Full-screen display: drifting constellation, minion cards across the top,
 //  the current lesson crossfading in serif, fleet totals along the bottom.
@@ -27,25 +27,59 @@ enum Fmt {
     }
     static func int(_ n: Int) -> String { n.formatted(.number.grouping(.automatic)) }
     static func plural(_ n: Int, _ one: String, _ many: String) -> String { "\(int(n)) \(n == 1 ? one : many)" }
+    static func hours(_ h: Double) -> String { h.formatted(.number.precision(.fractionLength(1))) }
+
+    /// Card line: lessons, transcription, or both (minions that only re-transcribe TV
+    /// episodes with Whisper do no lessons). Returned as parts so a narrow card can
+    /// break between them; joined with " · " they read e.g. "81 works · 106 lessons · 4 episodes".
+    static func tonightParts(_ t: FleetSnapshot.Tonight?) -> [String] {
+        let works = t?.works ?? 0, lessons = t?.lessons ?? 0, eps = t?.transcribed ?? 0
+        let learning = "\(plural(works, "work", "works")) · \(plural(lessons, "lesson", "lessons"))"
+        guard eps > 0 else { return [plural(works, "work", "works"), plural(lessons, "lesson", "lessons")] }
+        if works == 0 {
+            return ["\(plural(eps, "episode", "episodes")) transcribed", "\(hours(t?.audio_h ?? 0)) h audio"]
+        }
+        return [learning, plural(eps, "episode", "episodes")]
+    }
+    static func tonight(_ t: FleetSnapshot.Tonight?) -> String {
+        "tonight: " + tonightParts(t).joined(separator: " · ")
+    }
 }
 
 // MARK: - Root
 
 struct ContentView: View {
-    @State private var fleet = FleetModel()
+    let fleet: FleetModel
     @State private var stars = StarModel()
     @State private var starVersion = 0
     @State private var currentKey: String?
     @State private var showSettings = false
     @State private var config = MinionConfig.current
     @Environment(\.scenePhase) private var phase
+    #if os(macOS)
+    @Environment(\.openSettings) private var openSettings
+    #endif
 
     private var snap: FleetSnapshot? { fleet.snapshot }
     private var colors: NodeColors { NodeColors(snapshot: snap) }
 
+    /// macOS keeps drawing and polling whenever the window is up; iOS only while active.
+    private var isLive: Bool {
+        #if os(macOS)
+        return true
+        #else
+        return phase == .active
+        #endif
+    }
+
     var body: some View {
         GeometryReader { geo in
+            #if os(macOS)
+            // Desktop window: scale by whichever axis is tighter so 1440×900 ≈ 1.0.
+            let u = max(0.8, min(geo.size.width / 1480, geo.size.height / 900))
+            #else
             let u = max(0.8, min(geo.size.width, geo.size.height) / 820)
+            #endif
             let landscape = geo.size.width > geo.size.height
             ZStack {
                 Palette.space.ignoresSafeArea()
@@ -54,14 +88,26 @@ struct ContentView: View {
                     .ignoresSafeArea()
                 DustLayer().ignoresSafeArea()
                 StarfieldView(model: stars, version: starVersion, highlightKey: currentKey,
-                              paused: phase != .active)
+                              paused: !isLive)
                     .ignoresSafeArea()
 
                 VStack(spacing: 0) {
-                    let strip = MinionStrip(minions: snap?.fleet ?? [], colors: colors, u: u, landscape: landscape)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     let mark = Wordmark(u: u)
-                        .onLongPressGesture(minimumDuration: 0.8) { showSettings = true }
+                        .onLongPressGesture(minimumDuration: 0.8) { presentSettings() }
+                    #if os(macOS)
+                    // Wide window: wordmark sits in the (hidden) title-bar band, cards take the full width.
+                    VStack(alignment: .trailing, spacing: 12 * u) {
+                        mark.onTapGesture(count: 2) { presentSettings() }
+                        MinionStrip(minions: snap?.fleet ?? [], colors: colors, u: u,
+                                    columns: MinionStrip.columns(for: geo.size.width - 52 * u, u: u))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.horizontal, 26 * u)
+                    .padding(.top, 14 * u)
+                    #else
+                    let strip = MinionStrip(minions: snap?.fleet ?? [], colors: colors, u: u,
+                                            columns: landscape ? 3 : 2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     Group {
                         if landscape {
                             HStack(alignment: .top, spacing: 20 * u) { strip; mark }
@@ -71,6 +117,7 @@ struct ContentView: View {
                     }
                     .padding(.horizontal, 26 * u)
                     .padding(.top, 22 * u)
+                    #endif
 
                     Spacer(minLength: 10 * u)
 
@@ -87,17 +134,21 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(.dark)
+        #if os(iOS)
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
         .sheet(isPresented: $showSettings) {
             SettingsSheet(config: $config, fleet: fleet) { showSettings = false }
         }
+        #endif
         .onAppear { rebuildStars(); fleet.start() }
         .onChange(of: snap) { _, _ in rebuildStars() }
+        #if os(iOS)
         .onChange(of: phase) { _, p in
             UIApplication.shared.isIdleTimerDisabled = (p == .active)
             if p == .active { fleet.start() } else { fleet.stop() }
         }
+        #endif
         .onOpenURL { url in
             if MinionConfig.apply(url: url) {
                 config = .current
@@ -107,8 +158,20 @@ struct ContentView: View {
         .task { await rotateLessons() }
     }
 
+    private func presentSettings() {
+        #if os(macOS)
+        openSettings()
+        #else
+        showSettings = true
+        #endif
+    }
+
     private var placeholder: String {
+        #if os(macOS)
+        if !MinionConfig.current.isConfigured { return "Open Settings (⌘,) to connect to Nova's hub." }
+        #else
         if !MinionConfig.current.isConfigured { return "Long-press NOVA to connect to Nova's hub." }
+        #endif
         return fleet.isOffline && snap == nil ? "Waiting to hear from Nova…" : "Listening for Nova…"
     }
 
@@ -135,7 +198,7 @@ struct ContentView: View {
     private func rotateLessons() async {
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(2))
-            guard phase == .active, Date().timeIntervalSince(lastSwitch) >= 22,
+            guard isLive, Date().timeIntervalSince(lastSwitch) >= 22,
                   let lessons = snap?.lessons, lessons.count > 1 else { continue }
             let pool = Array(lessons.prefix(24))
             let idx = (pool.firstIndex { $0.key == currentKey } ?? -1) + 1
@@ -178,7 +241,13 @@ struct MinionStrip: View {
     let minions: [FleetSnapshot.Minion]
     let colors: NodeColors
     let u: CGFloat
-    let landscape: Bool
+    /// Most cards per row (iPad: 3 landscape / 2 portrait; Mac: as many as fit).
+    let columns: Int
+
+    /// Mac: fit as many ~250 pt cards across as the window allows (5 at 1440 wide).
+    static func columns(for width: CGFloat, u: CGFloat) -> Int {
+        max(1, Int((width + 14 * u) / (250 * u + 14 * u)))
+    }
 
     var body: some View {
         if minions.isEmpty {
@@ -190,7 +259,7 @@ struct MinionStrip: View {
             }
         } else {
             let shown = Array(minions.prefix(6))
-            let n = min(shown.count, landscape ? 3 : 2)
+            let n = min(shown.count, columns)
             if n == 1 {
                 HStack(spacing: 0) {
                     MinionCard(minion: shown[0], hue: colors.hue(for: shown[0].node), u: u)
@@ -198,12 +267,21 @@ struct MinionStrip: View {
                     Spacer(minLength: 0)
                 }
             } else {
-                let cols = Array(repeating: GridItem(.flexible(), spacing: 14 * u, alignment: .top), count: n)
-                LazyVGrid(columns: cols, alignment: .leading, spacing: 14 * u) {
-                    ForEach(shown) { m in
-                        MinionCard(minion: m, hue: colors.hue(for: m.node), u: u)
+                // Grid (not LazyVGrid) so every card in a row stretches to the row's tallest.
+                let rows = stride(from: 0, to: shown.count, by: n).map { Array(shown[$0..<min($0 + n, shown.count)]) }
+                Grid(alignment: .topLeading, horizontalSpacing: 14 * u, verticalSpacing: 14 * u) {
+                    ForEach(rows.indices, id: \.self) { r in
+                        GridRow {
+                            ForEach(rows[r]) { m in
+                                MinionCard(minion: m, hue: colors.hue(for: m.node), u: u)
+                            }
+                            ForEach(0..<(n - rows[r].count), id: \.self) { _ in
+                                Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
+                            }
+                        }
                     }
                 }
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -225,7 +303,13 @@ struct MinionCard: View {
     }
 
     var body: some View {
+        #if os(macOS)
+        let mono = Font.system(size: 13 * u, weight: .regular, design: .monospaced)  // 5 across
+        let padH: CGFloat = 13
+        #else
         let mono = Font.system(size: 14 * u, weight: .regular, design: .monospaced)
+        let padH: CGFloat = 16
+        #endif
         VStack(alignment: .leading, spacing: 5 * u) {
             HStack(alignment: .firstTextBaseline) {
                 Circle().fill(stateColor).frame(width: 9 * u, height: 9 * u)
@@ -254,9 +338,25 @@ struct MinionCard: View {
                     .foregroundStyle(.white.opacity(0.45))
                     .lineLimit(1)
             }
-            Text("tonight: \(Fmt.plural(minion.tonight?.works ?? 0, "work", "works")) · \(Fmt.plural(minion.tonight?.lessons ?? 0, "lesson", "lessons"))")
+            #if os(macOS)
+            // Narrow 5-across cards: one line if it fits, else break after the first part,
+            // the rest indented under it (monospaced, so it lines up).
+            let parts = Fmt.tonightParts(minion.tonight)
+            ViewThatFits(in: .horizontal) {
+                Text(Fmt.tonight(minion.tonight)).lineLimit(1).fixedSize()
+                VStack(alignment: .leading, spacing: 2 * u) {
+                    Text("tonight: " + parts[0])
+                    Text("         " + parts.dropFirst().joined(separator: " · "))
+                }
+                .lineLimit(1)
+            }
+            .font(mono).foregroundStyle(Palette.text.opacity(0.78))
+            #else
+            Text(Fmt.tonight(minion.tonight))
                 .font(mono).foregroundStyle(Palette.text.opacity(0.78))
                 .lineLimit(1)
+                .minimumScaleFactor(0.72)
+            #endif
 
             let reading = minion.now_reading ?? []
             VStack(alignment: .leading, spacing: 3 * u) {
@@ -276,9 +376,9 @@ struct MinionCard: View {
             .frame(minHeight: 3 * 19 * u, alignment: .topLeading)
             .padding(.top, 3 * u)
         }
-        .padding(.horizontal, 16 * u)
+        .padding(.horizontal, padH * u)
         .padding(.vertical, 13 * u)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: 14 * u, style: .continuous)
                 .fill(Color.black.opacity(0.62))
@@ -319,7 +419,11 @@ struct TypedLine: View {
     @State private var shown = 0
 
     var body: some View {
+        #if os(macOS)
+        let mono = Font.system(size: 13 * u, weight: .regular, design: .monospaced)
+        #else
         let mono = Font.system(size: 14 * u, weight: .regular, design: .monospaced)
+        #endif
         HStack(spacing: 0) {
             Text(first ? "› " : "  ").foregroundStyle(Palette.terminal.opacity(0.9))
             Text(String(text.prefix(shown)))
@@ -479,6 +583,9 @@ struct BottomBar: View {
             line = line + Text("fleet: \(Fmt.plural(m, "minion", "minions"))").foregroundStyle(Palette.warm.opacity(0.9))
                 + sep + Text("\(Fmt.plural(ft?.works ?? 0, "work", "works"))")
                 + sep + Text("\(Fmt.plural(ft?.lessons ?? 0, "lesson", "lessons")) tonight")
+            if let eps = ft?.transcribed, eps > 0 {
+                line = line + sep + Text("\(Fmt.plural(eps, "episode", "episodes")) (\(Fmt.hours(ft?.audio_h ?? 0)) h) transcribed")
+            }
             if let a = s.queue?["A"] {
                 var still = "\(Fmt.int(a)) still to read"
                 if let e = s.eta_days { still += " (~\(Int(e.rounded())) days)" }
@@ -495,6 +602,7 @@ struct BottomBar: View {
 
 // MARK: - Settings
 
+#if os(iOS)
 struct SettingsSheet: View {
     @Binding var config: MinionConfig
     let fleet: FleetModel
@@ -537,3 +645,4 @@ struct SettingsSheet: View {
         .preferredColorScheme(.dark)
     }
 }
+#endif

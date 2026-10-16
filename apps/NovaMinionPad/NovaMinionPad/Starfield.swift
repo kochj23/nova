@@ -1,6 +1,6 @@
 //
 //  Starfield.swift
-//  Nova Minion (iPad)
+//  Nova Minion (iPad + Mac)
 //
 //  Nova's constellation: every lesson is a star, colored by the minion that
 //  learned it. Stars from the same work cluster and are joined by faint lines.

@@ -1,6 +1,6 @@
 //
 //  Fleet.swift
-//  Nova Minion (iPad)
+//  Nova Minion (iPad + Mac)
 //
 //  /fleet payload from Nova's minion hub, and the poller that keeps it fresh.
 //  Display-only: the iPad never computes anything, it just shows the fleet.
@@ -10,7 +10,14 @@ import Foundation
 import Observation
 
 struct FleetSnapshot: Codable, Equatable {
-    struct Tonight: Codable, Equatable { var works: Int?; var lessons: Int?; var minions: Int? }
+    struct Tonight: Codable, Equatable {
+        var works: Int?
+        var lessons: Int?
+        var minions: Int?
+        /// TV episodes re-transcribed with Whisper tonight, and their audio length in hours.
+        var transcribed: Int?
+        var audio_h: Double?
+    }
     struct Lesson: Codable, Equatable, Hashable {
         var title: String
         var kind: String?
