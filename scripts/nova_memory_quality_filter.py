@@ -48,7 +48,10 @@ def passes_quality(text: str, source: str = "") -> tuple:
         return False, "wiki_markup_fragment"
     
     # Rule 4: Repetitive loops (same phrase repeated 3+ times)
-    if re.search(r'(.{10,}?)\1{2,}', stripped):
+    # 2026-10-15: a loop must DOMINATE the memory, not merely appear in it. Dialogue repeats ("no, no, no",
+    # a sung chorus); the old any-match rule discarded 3,567 memories in 90 days, most of them real speech.
+    loop_chars = sum(len(m.group(0)) for m in re.finditer(r'(.{10,}?)\1{2,}', stripped))
+    if loop_chars / len(stripped) >= 0.35:
         return False, "repetitive_loop"
     
     # Rule 5: Just a list of bracketed terms with no explanatory text

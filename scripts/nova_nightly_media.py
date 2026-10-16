@@ -438,6 +438,12 @@ _MUSIC_PHRASES = ["♪", "♫", "la la la", "da da da", "na na na", "hmm hmm", "
 
 
 def is_trash_chunk(text: str) -> bool:
+    # 2026-10-15: one shared verdict (nova_tv_ingest: junk must cover a real share of the chunk, not appear once)
+    try:
+        import nova_tv_ingest as _tv
+        return _tv.is_trash_chunk(text)
+    except Exception:  # noqa: BLE001 — fall back to the local rule below
+        pass
     stripped = text.strip()
     if len(stripped.split()) < MIN_CHUNK_WORDS:
         return True

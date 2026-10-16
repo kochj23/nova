@@ -694,3 +694,29 @@ class TestFrame(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestJunkShare(unittest.TestCase):
+    """2026-10-15: dialogue that repeats ("no, no, no") must not cost the whole 400-word chunk."""
+
+    def setUp(self):
+        import nova_tv_ingest as tvm
+        self.tv = tvm
+        words = ("anchorman newsroom story waited week producers listened carefully broadcast began evening "
+                 "weather sports desk camera lights studio audience laughed quietly before commercial break city "
+                 "council mayor reporter interview harbor traffic downtown bridge morning forecast rain").split()
+        self.prose = " ".join(f"{words[i % len(words)]}{i}" if i % 7 == 0 else words[(i * 5) % len(words)]
+                              for i in range(180)) + "."
+
+    def test_dialogue_repetition_is_kept(self):
+        for interjection in ("no, no, no, no.", "wait, wait, wait,", "Ho ho ho ho!", "Hey-oh! Hey-oh! Hey-oh!"):
+            self.assertFalse(self.tv.is_trash_chunk(self.prose + " " + interjection + " " + self.prose))
+
+    def test_mostly_loop_is_trash(self):
+        self.assertTrue(self.tv.is_trash_chunk("that was right here " * 120))
+        self.assertTrue(self.tv.is_trash_chunk("숨 " * 300))
+
+    def test_junk_share_bounds(self):
+        self.assertLess(self.tv.junk_share(self.prose), 0.05)
+        self.assertGreater(self.tv.junk_share("la la la " * 50), 0.9)
+        self.assertEqual(self.tv.junk_share(""), 1.0)

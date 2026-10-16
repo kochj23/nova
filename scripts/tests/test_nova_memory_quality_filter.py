@@ -129,3 +129,14 @@ class TestFrame(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_dialogue_repetition_is_not_a_loop_2026_10_15():
+    import nova_memory_quality_filter as q
+    words = ("anchor desk weather sports studio camera producer story evening harbor bridge council "
+             "mayor reporter traffic downtown forecast morning audience laughter").split()
+    prose = " ".join(f"{w}{i}" if i % 5 == 0 else w for i, w in enumerate(words * 10))
+    ok, reason = q.passes_quality(prose + " No, no, no, no, no, no! " + prose)
+    assert ok, reason
+    ok, reason = q.passes_quality("that was right here " * 60)
+    assert not ok and reason == "repetitive_loop"

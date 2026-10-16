@@ -79,36 +79,55 @@ TODAY           = NOW.strftime("%Y-%m-%d")
 
 # ── Garbage detection patterns ────────────────────────────────────────────────
 
-_TRASH_PATTERNS = [
-    re.compile(r"[♪♫♬♩]"),
-    re.compile(r"\b(\w+)(?:\s+\1){3,}", re.IGNORECASE),
+# Whole-chunk junk: the ENTIRE chunk is caps noise / consonant runs / symbols / a bare [music] tag.
+_WHOLE_TRASH = [
     re.compile(r"^[A-Z\s\W]{20,}$"),
     re.compile(r"^[^aeiouAEIOU\s]{8,}$"),
     re.compile(r"^[\W\d\s]+$"),
-    re.compile(r"subtitles?\s+by|transcribed\s+by|closed\s+caption", re.IGNORECASE),
     re.compile(r"^\[?\s*(silence|music|applause|laughter|cheering|crowd|♪)\s*\]?$", re.IGNORECASE),
+]
+# Junk SPANS: repetition and music marks. A span is evidence, not a verdict: real dialogue says "no, no, no",
+# "wait, wait, wait", "ho ho ho" and sings choruses. Until 2026-10-15 any single match threw the whole 400-word
+# chunk away (Anchorman lost 15 of 28 chunks); now a chunk is junk only when such spans cover JUNK_SHARE of it.
+_SPAN_PATTERNS = [
+    re.compile(r"[♪♫♬♩]"),
+    re.compile(r"\b(\w+)(?:\s+\1){3,}", re.IGNORECASE),
     re.compile(r"(.{3,}?)(\s+\1){2,}"),
     re.compile(r"(.{15,}?)\1{2,}"),
+    re.compile(r"subtitles?\s+by|transcribed\s+by|closed\s+caption", re.IGNORECASE),
 ]
-
+_TRASH_PATTERNS = _WHOLE_TRASH + _SPAN_PATTERNS     # kept for callers that import the list
 _MUSIC_PHRASES = ["♪", "♫", "la la la", "da da da", "na na na", "hmm hmm", "mmm mmm", "woo woo"]
+JUNK_SHARE = 0.35
+
+
+def junk_share(text: str) -> float:
+    """Fraction of characters covered by repetition / music / caption-credit spans. Pure."""
+    if not text:
+        return 1.0
+    covered = bytearray(len(text))
+    for pat in _SPAN_PATTERNS:
+        for m in pat.finditer(text):
+            covered[m.start():m.end()] = b"\x01" * (m.end() - m.start())
+    lower = text.lower()
+    for phrase in _MUSIC_PHRASES:
+        i = lower.find(phrase)
+        while i != -1:
+            covered[i:i + len(phrase)] = b"\x01" * len(phrase)
+            i = lower.find(phrase, i + 1)
+    return sum(covered) / len(text)
 
 
 def is_trash_chunk(text: str) -> bool:
     stripped = text.strip()
     if len(stripped.split()) < MIN_CHUNK_WORDS:
         return True
-    for pat in _TRASH_PATTERNS:
-        if pat.search(stripped):
-            return True
-    lower = stripped.lower()
-    for phrase in _MUSIC_PHRASES:
-        if lower.count(phrase) >= 3:
-            return True
+    if any(p.search(stripped) for p in _WHOLE_TRASH):
+        return True
     alpha = sum(c.isalpha() for c in stripped)
     if alpha / max(len(stripped), 1) < 0.5:
         return True
-    return False
+    return junk_share(stripped) >= JUNK_SHARE
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────
