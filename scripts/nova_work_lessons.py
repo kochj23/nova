@@ -2188,7 +2188,9 @@ def _row(r) -> dict:
 
 def claim(oc, tiers: tuple[str, ...], run_tag: str, kind: str | None = None, source: str | None = None,
           only_new: bool = False) -> list[dict]:
-    """Claim the top queued unit among `tiers`: one work (A) or its related group (B/C). SKIP LOCKED."""
+    """Claim the top queued unit among `tiers`: one work (A) or its related group (B/C). SKIP LOCKED.
+    `tiers` is a PREFERENCE order (2026-10-16): a stream with ("A", "B") takes any queued A before any B — new
+    B ingests at priority -1 had been outranking the films and cut A from ~57 to 17 works/hour."""
     extra, params = (" AND priority < 0" if only_new else ""), [list(tiers)]
     if kind:
         extra += " AND kind = %s"; params.append(kind)
@@ -2196,8 +2198,8 @@ def claim(oc, tiers: tuple[str, ...], run_tag: str, kind: str | None = None, sou
         extra += " AND source = %s"; params.append(source)
     oc.execute("UPDATE work_lessons SET status='running', started_at=now(), attempts=attempts+1, run_tag=%s "
                "WHERE work_key = (SELECT work_key FROM work_lessons WHERE status='queued' AND tier = ANY(%s)" + extra +
-               " ORDER BY priority, recall DESC, last_seen DESC NULLS LAST LIMIT 1 FOR UPDATE SKIP LOCKED) "
-               "RETURNING " + COLS, [run_tag] + params)
+               " ORDER BY array_position(%s::text[], tier), priority, recall DESC, last_seen DESC NULLS LAST "
+               "LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING " + COLS, [run_tag] + params + [list(tiers)])
     r = oc.fetchone()
     if not r:
         return []
@@ -2262,7 +2264,10 @@ def run_queue(minutes: float, streams: int = 2, run_tag: str = "backfill", quota
                 done[t] += len(unit); calls[t] += 1
 
     strong_t = ("A", "B") if C_ROUTE["val"] == "fleet" else ("A", "B", "C")
-    threads = [threading.Thread(target=worker, args=(strong_t,), daemon=True) for _ in range(streams)]
+    # A first on every stream but one; with 3+ streams one stream prefers B so the sets still move
+    b_first = ("B", "A") + strong_t[2:]
+    threads = [threading.Thread(target=worker, args=(b_first if (i == streams - 1 and streams >= 3) else strong_t,),
+                                daemon=True) for i in range(streams)]
     if C_ROUTE["val"] == "fleet" and "C" in tiers:
         threads.append(threading.Thread(target=worker, args=(("C",),), daemon=True))
     t0 = time.monotonic()
