@@ -973,6 +973,14 @@ CREATE TABLE IF NOT EXISTS work_lessons (
     model text, n_sources int, lessons_raw int, lessons_kept int, elapsed_s real, detail text);
 ALTER TABLE work_lessons ADD COLUMN IF NOT EXISTS quality jsonb;
 ALTER TABLE work_lessons ADD COLUMN IF NOT EXISTS credibility text;
+ALTER TABLE work_lessons ADD COLUMN IF NOT EXISTS host text;
+CREATE TABLE IF NOT EXISTS minion_nodes (
+    node text PRIMARY KEY, ollama_url text, state text NOT NULL DEFAULT 'offline', since timestamptz,
+    models jsonb NOT NULL DEFAULT '[]', dedicated boolean NOT NULL DEFAULT false, token_hash text,
+    last_seen timestamptz, info jsonb NOT NULL DEFAULT '{}');
+CREATE TABLE IF NOT EXISTS minion_activity (
+    node text NOT NULL, work_key text NOT NULL, title text, kind text, phase text,
+    started_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (node, work_key));
 ALTER TABLE work_lessons ADD COLUMN IF NOT EXISTS set_id text;
 CREATE INDEX IF NOT EXISTS work_lessons_queue_idx ON work_lessons (status, tier, priority, recall DESC, last_seen DESC);
 CREATE INDEX IF NOT EXISTS work_lessons_group_idx ON work_lessons (group_key) WHERE status = 'queued';
@@ -1111,6 +1119,7 @@ def ollama_chat(base: str, model: str, prompt: str, max_tokens: int, temperature
     req = urllib.request.Request(base + "/api/chat", data=json.dumps(body).encode(), method="POST",
                                  headers={"Content-Type": "application/json"})
     out = ps._http_json(req, timeout=900, attempts=2, backoff=3)
+    _TL.last_eval = (out.get("eval_count"), out.get("eval_duration"))
     return ps.clean_model((out.get("message") or {}).get("content") or "")
 
 
@@ -1252,6 +1261,89 @@ def main_embed_ok(sleep=time.sleep) -> bool:
     return False
 
 
+# ── minions (2026-10-16): Macs that lend their GPU to Nova while idle (nova_minion_agent.py heartbeats into
+# minion_nodes via nova_minion_hub.py). 'idle' or 'dedicated' with a fresh heartbeat = usable. Every reader call
+# on a remote node notes what it is reading in minion_activity, and the work row records which node read it —
+# that is what the Nova Minion screensaver shows.
+MINION_FRESH_S = 90
+_MIN = {"t": 0.0, "rows": [], "lock": threading.Lock()}
+_TL = threading.local()
+
+
+def _minion_conn():
+    c = getattr(_TL, "mconn", None)
+    if c is None or c.closed:
+        c = connect(ps.OPS_DSN)
+        _TL.mconn = c
+    return c
+
+
+def minion_rows() -> list:
+    with _MIN["lock"]:
+        if time.time() - _MIN["t"] > 30:
+            try:
+                cur = _minion_conn().cursor()
+                cur.execute("SELECT node, ollama_url, models FROM minion_nodes WHERE state IN ('idle','dedicated') "
+                            "AND ollama_url IS NOT NULL AND last_seen > now() - %s * interval '1 second'",
+                            (MINION_FRESH_S,))
+                _MIN["rows"] = cur.fetchall() or []
+            except Exception as e:  # noqa: BLE001 — no minion table: the fleet as before
+                log(f"minions unavailable ({e})")
+                _MIN["rows"] = []
+            _MIN["t"] = time.time()
+        return list(_MIN["rows"])
+
+
+def minion_endpoints(models) -> list[tuple[str, str]]:
+    rows = minion_rows()
+    return [(url.rstrip("/"), m) for m in models for node, url, ms in rows if m in (ms or [])]
+
+
+def node_of(base: str) -> str:
+    base = base.rstrip("/")
+    for node, url, _ in _MIN["rows"]:
+        if (url or "").rstrip("/") == base:
+            return node
+    return ps._host(base)
+
+
+def note_activity(base: str, start: bool):
+    """minion_activity row for the work this thread is reading (start) / its tok/s after the call."""
+    w = getattr(_TL, "work", None)
+    node = node_of(base)
+    if getattr(_TL, "host", None) is None and not start:
+        _TL.host = node
+    try:
+        cur = _minion_conn().cursor()
+        if start and w:
+            cur.execute("INSERT INTO minion_activity (node, work_key, title, kind, phase) VALUES (%s,%s,%s,%s,%s) "
+                        "ON CONFLICT (node, work_key) DO UPDATE SET phase=EXCLUDED.phase",
+                        (node, w["work_key"][:300], (w.get("title") or "")[:300], w.get("kind"),
+                         getattr(_TL, "phase", None)))
+        elif not start:
+            n, d = getattr(_TL, "last_eval", (None, None)) or (None, None)
+            if n and d:
+                tps = n / (d / 1e9)
+                cur.execute("UPDATE minion_nodes SET info = info || jsonb_build_object('tok_s', round((coalesce("
+                            "(info->>'tok_s')::numeric, %s) * 0.7 + %s * 0.3)::numeric, 1), 'model_last', %s::text) "
+                            "WHERE node = %s", (tps, tps, getattr(_TL, "model", None), node))
+    except Exception:  # noqa: BLE001 — the display is never worth a failed read
+        pass
+
+
+def begin_work(work: dict, phase: str = "reading"):
+    _TL.work, _TL.phase, _TL.host = work, phase, None
+
+
+def end_work(work_keys: list[str]):
+    try:
+        _minion_conn().cursor().execute("DELETE FROM minion_activity WHERE work_key = ANY(%s)",
+                                        ([k[:300] for k in work_keys],))
+    except Exception:  # noqa: BLE001
+        pass
+    _TL.work = None
+
+
 REMOTE_SLOTS = int(os.environ.get("NOVA_WORK_REMOTE_SLOTS", "2"))   # concurrent reader calls per remote strong node
 _REMOTE = {"sems": {}, "lock": threading.Lock()}
 
@@ -1267,7 +1359,11 @@ def remote_try(base: str, model: str, prompt: str, max_tokens: int, temperature:
     if not sem.acquire(blocking=False):
         return None
     try:
-        return ollama_chat(base, model, prompt, max_tokens, temperature, NUM_CTX)
+        _TL.model = model
+        note_activity(base, True)
+        out = ollama_chat(base, model, prompt, max_tokens, temperature, NUM_CTX)
+        note_activity(base, False)
+        return out
     finally:
         sem.release()
 
@@ -1278,7 +1374,10 @@ def bulk_call(base: str, model: str, prompt: str, max_tokens: int, temperature: 
     if not _BULK["sem"].acquire(timeout=wait_s):
         raise RuntimeError("no free bulk slot")
     try:
-        return ollama_chat(base, model, prompt, max_tokens, temperature, NUM_CTX)
+        out = ollama_chat(base, model, prompt, max_tokens, temperature, NUM_CTX)
+        if getattr(_TL, "host", None) is None:
+            _TL.host = "studio-bulk"
+        return out
     finally:
         _BULK["sem"].release()
 
@@ -1301,6 +1400,9 @@ def llm_work(prompt: str, oc=None, max_tokens: int = 1400, temperature: float = 
         bmodel = next((m for m in (models or STRONG_MODELS) if bulk and m in installed(bulk)), None)
         rank0 = None if os.environ.get("NOVA_WORK_LLM") else ps.load_ranking()
         remotes = [e for e in strong_endpoints(rank0, models=models) if ps._host(e[0]) not in me]
+        for e in minion_endpoints(models or STRONG_MODELS):          # minions first: they asked for the work
+            if e not in remotes and ps._host(e[0]) not in me:
+                remotes.insert(0, e)
         if remotes or bmodel:
             give_up = time.monotonic() + 900
             while time.monotonic() < give_up:
@@ -1649,6 +1751,7 @@ def read_work(oc, mc, work: dict, dry_run: bool = False, transcript: str | None 
         year = year or wy
     srcs = ps.dedupe_sources(build_sources(plot, plot_url, passages, kind), cap=PASSAGES + 4)
     reading = reading_for(kind, work["source"], work["work_key"])
+    begin_work({**work, "title": title}, "reading")
     raw, model = llm_work(reading_prompt(kind, title, reading, srcs), oc, max_tokens=1800, models=TIER_A_MODELS,
                           allow_fleet=False)
     res.update(model=model, n_sources=len(srcs), plot_url=plot_url, year=year,
@@ -1674,6 +1777,7 @@ def read_work(oc, mc, work: dict, dry_run: bool = False, transcript: str | None 
         return _finish(oc, work, res, t0, dry_run, run_tag)
     smap = self_map(oc)
     over = overused_refs(oc, exclude_key=work["work_key"])
+    _TL.phase = "mapping"
     mraw, mmodel = llm_work(mapping_prompt(title, [l["lesson"] for l in rd["lessons"]], smap, verdict=True,
                                            overused=over, judge_source=kind != "film", kind=kind), oc, max_tokens=900, temperature=0.3, models=MAP_MODELS,
                             allow_fleet=False)
@@ -1783,8 +1887,8 @@ def _finish(oc, work, res, t0, dry_run, run_tag):
         oc.execute("""INSERT INTO work_lessons (work_key, kind, source, wtype, title, series, year, tier, status,
                         processed_at, run_tag, lessons_json, connections_json, belief_ids, proposal_id, claude_queue_id,
                         taste_id, memory_id, plot_url, model, n_sources, lessons_raw, lessons_kept, elapsed_s, detail,
-                        quality, credibility)
-                      VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,now(),%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        quality, credibility, host)
+                      VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,now(),%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                       ON CONFLICT (work_key) DO UPDATE SET status=EXCLUDED.status, processed_at=now(),
                         run_tag=EXCLUDED.run_tag, year=coalesce(EXCLUDED.year, work_lessons.year),
                         lessons_json=EXCLUDED.lessons_json, connections_json=EXCLUDED.connections_json,
@@ -1793,7 +1897,7 @@ def _finish(oc, work, res, t0, dry_run, run_tag):
                         memory_id=EXCLUDED.memory_id, plot_url=EXCLUDED.plot_url, model=EXCLUDED.model,
                         n_sources=EXCLUDED.n_sources, lessons_raw=EXCLUDED.lessons_raw,
                         lessons_kept=EXCLUDED.lessons_kept, elapsed_s=EXCLUDED.elapsed_s, detail=EXCLUDED.detail,
-                        quality=EXCLUDED.quality, credibility=EXCLUDED.credibility
+                        quality=EXCLUDED.quality, credibility=EXCLUDED.credibility, host=EXCLUDED.host
                       WHERE work_lessons.status <> 'done' OR EXCLUDED.status = 'done'""",
                    (work["work_key"], work["kind"], work["source"], work.get("wtype"), res["title"][:300],
                     work.get("series"), res.get("year"), work.get("tier") or "A", res["status"], run_tag,
@@ -1802,7 +1906,7 @@ def _finish(oc, work, res, t0, dry_run, run_tag):
                     p.get("proposal_id"), p.get("claude_queue_id"), res.get("taste"), res.get("memory_id"),
                     res.get("plot_url"), res.get("model"), res.get("n_sources"), res.get("lessons_raw"),
                     len(res.get("lessons") or []), res["elapsed_s"], (res.get("detail") or "")[:400],
-                    json.dumps(res.get("quality") or {}), res.get("credibility")))
+                    json.dumps(res.get("quality") or {}), res.get("credibility"), getattr(_TL, "host", None)))
     except Exception as e:  # noqa: BLE001
         log(f"work_lessons row not written ({e})")
     return res
@@ -1837,6 +1941,7 @@ def read_set(oc, mc, rows: list[dict], tier: str, dry_run: bool = False, run_tag
            "beliefs": [], "proposal": {}, "memory_id": None}
     if len(srcs) >= 2:
         reading = reading_for(owner[0]["kind"], owner[0]["source"], owner[0]["work_key"])
+        begin_work({"work_key": rows[0]["work_key"], "title": f"set — {label}"[:300], "kind": owner[0]["kind"]})
         fleet = tier == "C" and C_ROUTE["val"] == "fleet"
         raw, model = llm_work(set_prompt(label, reading, srcs, per_item=(tier == "B")), oc,
                               max_tokens=2200 if tier == "B" else 1300, fleet_only=fleet, allow_fleet=fleet,
@@ -1913,14 +2018,14 @@ def _finish_set(oc, rows, owner, srcs, res, run_tag):
         try:
             oc.execute("""UPDATE work_lessons SET status=%s, processed_at=now(), run_tag=%s, lessons_json=%s,
                           connections_json=%s, memory_id=%s, model=%s, n_sources=%s, lessons_raw=%s, lessons_kept=%s,
-                          belief_ids=%s, elapsed_s=%s, detail=%s, quality=%s, set_id=%s, credibility=%s WHERE work_key=%s""",
+                          belief_ids=%s, elapsed_s=%s, detail=%s, quality=%s, set_id=%s, credibility=%s, host=%s WHERE work_key=%s""",
                        (st, run_tag, json.dumps(mine), json.dumps(mine_c), res.get("memory_id"), res.get("model"),
                         len(srcs), round(per_raw), len(mine),
                         [b["id"] for b in res["beliefs"] if b.get("id")] or None, res["elapsed_s"],
                         f"set of {len(rows)}; {len(res['lessons'])} set lesson(s)",
                         json.dumps(res.get("quality") or {}) if w is rows[0] else None, set_id,
                         "fringe" if FRINGE_RX.search(f"{w.get('title') or ''} {w.get('series') or ''}")
-                        else res.get("credibility"), w["work_key"]))
+                        else res.get("credibility"), getattr(_TL, "host", None), w["work_key"]))
         except Exception as e:  # noqa: BLE001
             log(f"set row not updated ({e})")
 
@@ -2130,6 +2235,7 @@ def run_queue(minutes: float, streams: int = 2, run_tag: str = "backfill", quota
             if not unit:
                 return
             t = unit[0]["tier"]
+            _TL.host = None
             try:
                 r = (read_work(oc, mc, unit[0], dry_run=dry_run, run_tag=run_tag) if t == "A"
                      else read_set(oc, mc, unit, t, dry_run=dry_run, run_tag=run_tag))
@@ -2143,6 +2249,7 @@ def run_queue(minutes: float, streams: int = 2, run_tag: str = "backfill", quota
                 log(f"unit failed ({e}); back to the queue")
                 oc.execute("UPDATE work_lessons SET status = CASE WHEN attempts >= 3 THEN 'error' ELSE 'queued' END, "
                            "detail=%s WHERE work_key = ANY(%s)", (str(e)[:300], [w["work_key"] for w in unit]))
+            end_work([w["work_key"] for w in unit])
             with lock:
                 done[t] += len(unit); calls[t] += 1
 
@@ -2355,18 +2462,18 @@ def scheduled(minutes: float, streams: int) -> int:
 
     pilot_tiers = tuple(cfg_get(oc, "pilot_tiers", ["B", "C"]) or ())
 
-    def pilots():                                     # tiers not yet enabled pilot + gate alongside the backfill
-        if not pilot_tiers:
-            return                                    # service_config work_lessons/pilot_tiers=[]: tier A only
-        poc = connect(ps.OPS_DSN).cursor()
-        pmc = connect(ps.MEM_DSN).cursor()
-        gates.update(pilot_and_gate(poc, pmc, minutes, 1, tiers=pilot_tiers))
-    pt = threading.Thread(target=pilots, daemon=True)
-    pt.start()
+    def pilot(tier):                                  # each tier not yet enabled pilots + gates in its own stream,
+        poc = connect(ps.OPS_DSN).cursor()            # alongside the backfill (Jordan 2026-10-16: "A, B and C in
+        pmc = connect(ps.MEM_DSN).cursor()            # parallel"); service_config work_lessons/pilot_tiers=[] stops it
+        gates.update(pilot_and_gate(poc, pmc, minutes, 1, tiers=(tier,)))
+    pts = [threading.Thread(target=pilot, args=(t,), daemon=True) for t in pilot_tiers]
+    for pt in pts:
+        pt.start()
     on = enabled_tiers(oc)
     r = run_queue(minutes, streams, run_tag="backfill", tiers=on) if on else \
         {"works": {}, "calls": {}, "works_per_hour": 0, "elapsed_min": 0}
-    pt.join(max(1.0, minutes * 60 + 1800))
+    for pt in pts:
+        pt.join(max(1.0, minutes * 60 + 1800))
     if not on:
         log(f"no tier enabled yet; pilots: {gates}")
     tp = throughput(oc)

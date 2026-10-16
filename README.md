@@ -4262,6 +4262,32 @@ consolidation. One Studio Ollama call at a time with embedding-latency backoff �
 starved the memory server's embeddings for ~10 minutes. Tiers B and C stay off until their gates pass
 (B: 8 of 45 works yielded a lesson; C: not enough grounded lessons yet). Queue: A 34k, B 131k, C 297k.
 
+### Nova minions — idle Macs read for Nova (2026-10-16)
+Any Mac can lend its GPU to Nova while nobody is using it, SETI@home-style, and show what it is doing on the
+**Nova Minion screensaver** (`apps/NovaMinionSaver`). `scripts/minion/nova_minion_agent.py` (stdlib, the Mac's
+own python3) reports every 30 s to `scripts/nova_minion_hub.py` on the Studio (`:37590`, launchd
+`net.digitalnoise.nova-minion-hub`): **idle** (screensaver up or 10 min without input, on AC, not throttled, in
+the optional overnight window — the reader's model is preloaded), **away** (someone is back: no new work, model
+unloaded), or **dedicated** (a fleet node, always on). The work reader sends reads to every idle/dedicated
+minion with a fresh heartbeat, notes what each one is reading (`minion_activity`) and which node read each work
+(`work_lessons.host`). The agent serves `127.0.0.1:37591/status` for the screensaver, so the saver needs no
+address or token. Enroll a Mac from the Studio: `scripts/minion/enroll_minion.sh <ssh-host> <node> [--hours 22-07]
+[--dedicated]` (token minted by the hub, only its hash stored; on the Mac in the Keychain, or a 0600 file when
+installed over SSH). First minion: nova-core10 (dedicated).
+
+```mermaid
+flowchart LR
+    subgraph Mac[Minion Mac]
+      A[nova_minion_agent<br/>idle / away / dedicated] -->|preload / unload| O[Ollama :11434<br/>qwen3:30b-a3b]
+      S[Nova Minion screensaver] -->|GET :37591/status| A
+    end
+    A -->|heartbeat 30 s, token| H[nova_minion_hub :37590<br/>Studio]
+    H --> DB[(minion_nodes<br/>minion_activity<br/>work_lessons.host)]
+    R[work reader] -->|idle/dedicated minions| O
+    R --> DB
+    H -->|status: reading now, tonight, lessons| A
+```
+
 ### Work reader: own Ollama + source credibility (2026-10-16)
 The reader was queuing behind chat and embeddings on the Studio's main Ollama (~14 Tier A works/hour, a
 ~100-day backlog). It now has its own Ollama: launchd daemon `net.digitalnoise.ollama-bulk`
