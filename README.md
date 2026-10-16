@@ -4218,3 +4218,38 @@ flowchart TB
   catch-up re-runs for weekly/monthly tasks killed by environment failures, SDR audio/SNR/API health checks.
 - **Chaos:** Phase 0 proved all 14 never-red critical monitors can go red (sandboxed); the wargame registry holds the
   experiments with `chaos/enabled=false` until Claude approves a run.
+
+## Learning, Not Just Remembering — Ingest Repairs & the Work Reader (2026-10-15, evening)
+
+Re-ingesting the Ripped Movies exposed that Nova had been throwing away real speech for months, and that even
+what she kept was stored as dialogue nobody read. Three changes followed.
+
+```mermaid
+flowchart LR
+    V[Video / audio / article / book] --> W[Whisper, forced English for films]
+    W --> SN[Skipping Needle: collapse stuck loops]
+    SN --> F{Junk filter: junk must cover >= 35% of a chunk}
+    F -- keep --> M[(Memory: dialogue / text chunks = evidence)]
+    F -- drop --> X[Discard log]
+    M --> R[Work reader: plot + sampled evidence -> lessons]
+    R --> L[(work_lessons + one lesson memory per work)]
+    L --> B[Beliefs with cited evidence]
+    L --> P[Proposals into Nova's own decision path]
+    L --> T[Taste and preoccupations]
+    L --> MM[Mark-to-Market: were lessons ever used?]
+```
+
+- **Filters that ate speech.** `nova_tv_ingest.is_trash_chunk` dropped a whole 400-word chunk on any single
+  repetition ("no, no, no", a sung chorus), and the memory server's quality filter discarded whole memories the
+  same way (3,567 in 90 days). Both now reject only when junk covers at least 35% of the text (`junk_share()`).
+  *Anchorman* went from 14 to 27 chunks.
+- **Wrong-language hallucinations.** Whisper auto-detection read some films as Chinese or Russian and produced
+  garble; the movie run now forces English, and garbled chunks were superseded, never deleted.
+- **`nova_media_reingest.py`** — nightly local re-transcription of the TV/video library (11,119 files still on disk),
+  files previously rejected as junk first, then most-watched; new chunks supersede old ones. First evening: 120+
+  episodes and ~270,000 words of speech recovered that Nova had zero of.
+- **The work reader** (extends `nova_pursue_skill.py`) reads every ingested work — films, episodes, documentaries,
+  books, articles, research — for cited lessons and "what this means for me" connections (or honest nulls), in
+  three tiers (individual / batched / clustered) with a self-gating pilot, daily caps and weekly consolidation.
+  Tier A (34k long works) runs now; Tiers B and C start when their path passes the gate.
+- **Scheduler:** a never-run cron task now waits for its first real slot instead of firing at registration.

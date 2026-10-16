@@ -304,7 +304,7 @@ class TestFunctional(unittest.TestCase):
 
     def test_movie_job_detected_by_cwd(self):
         def run(cmd, **kw):
-            if cmd[0] == "ps":
+            if cmd[0].endswith("ps"):
                 return subprocess.CompletedProcess(cmd, 0, stdout="  101 /usr/bin/Python -I run.py\n", stderr="")
             return subprocess.CompletedProcess(cmd, 0, stdout="p101\nfcwd\nn/tmp/x/movie-ingest\n", stderr="")
         self.assertTrue(mr.movie_job_running(_run=run))

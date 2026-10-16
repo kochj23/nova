@@ -308,7 +308,7 @@ def movie_job_running(_run=subprocess.run) -> bool:
     """The 2026-10-15 one-off movie job: matches 'movie-ingest/run.py' in argv, or a run.py whose cwd is
     .../movie-ingest (it is started as `python -I run.py` from its own directory)."""
     try:
-        ps = _run(["ps", "-axo", "pid=,command="], capture_output=True, text=True, timeout=10).stdout
+        ps = _run(["/bin/ps", "-axo", "pid=,command="], capture_output=True, text=True, timeout=10).stdout
     except Exception:  # noqa: BLE001
         return False
     for line in ps.splitlines():
@@ -317,7 +317,7 @@ def movie_job_running(_run=subprocess.run) -> bool:
             return True
         if re.search(r"(^|[\s/])run\.py(\s|$)", cmd) and "python" in cmd.lower():
             try:
-                cwd = _run(["lsof", "-a", "-p", pid, "-d", "cwd", "-Fn"], capture_output=True, text=True,
+                cwd = _run(["/usr/sbin/lsof", "-a", "-p", pid, "-d", "cwd", "-Fn"], capture_output=True, text=True,
                            timeout=10).stdout
             except Exception:  # noqa: BLE001
                 continue

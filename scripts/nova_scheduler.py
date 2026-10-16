@@ -358,7 +358,9 @@ class NovaScheduler:
                 else:
                     task.state.next_run = now + 5  # first run in 5s
             elif task._cron_expr:
-                ref = max(task.state.last_run, now - 86400)
+                # A task that has run before may catch a slot missed in the last 24h; a NEW task waits for its
+                # first real slot (2026-10-15: a never-run nightly job fired at registration, 4h early).
+                ref = max(task.state.last_run, now - 86400) if task.state.last_run else now
                 task.state.next_run = next_cron_time(task._cron_expr, ref, tz)
 
     def _advance_next_run(self, task):

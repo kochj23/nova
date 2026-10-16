@@ -1507,3 +1507,10 @@ class TestCatchUp(_HouseBase):
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+def test_new_cron_task_waits_for_its_first_slot_2026_10_15():
+    """A never-run cron task must not fire at registration (it used to look back 24h and find a 'missed' slot)."""
+    import time as _t
+    src = (Path(__file__).resolve().parents[1] / "nova_scheduler.py").read_text()
+    assert "if task.state.last_run else now" in src
