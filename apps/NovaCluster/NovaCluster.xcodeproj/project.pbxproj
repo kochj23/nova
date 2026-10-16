@@ -1,0 +1,461 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		05466FD4003B614F068C1EC6 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A49C3E6C79225425EF4D2D19 /* Assets.xcassets */; };
+		1787256FFD39386EE3AEDB0E /* MacSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 170C4889C16562313989172B /* MacSettings.swift */; };
+		43CEB11962D4E65D62500C0F /* Cluster.swift in Sources */ = {isa = PBXBuildFile; fileRef = C39A9ACD991F51B4B62E164E /* Cluster.swift */; };
+		49D65C334CEECD7A038FF43B /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9125D25D592C3C4A77303531 /* Views.swift */; };
+		4CD93514B7B612EA84F5D475 /* ClusterConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD81C272AC09022CFF3383D7 /* ClusterConfig.swift */; };
+		647AE03B21E362DD0B2B472D /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C08C85821DFE82FC434B3C5 /* DashboardView.swift */; };
+		6B644FACA4B4E9E59980E493 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 07D292F2558B56C3E618E442 /* Assets.xcassets */; };
+		6F34B03F14F37FF1C2143227 /* NovaClusterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CADB3C72F3259EE50E0893B /* NovaClusterApp.swift */; };
+		7CA52776663E0C511416FC20 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9125D25D592C3C4A77303531 /* Views.swift */; };
+		81FDFDDEC2FFB97BAE2713F6 /* ClusterMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4647A44D805423ED4850D6D /* ClusterMap.swift */; };
+		9C98E7F5A58B0D46F3183295 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C08C85821DFE82FC434B3C5 /* DashboardView.swift */; };
+		A7DD4B8784BA1261B641376C /* Cluster.swift in Sources */ = {isa = PBXBuildFile; fileRef = C39A9ACD991F51B4B62E164E /* Cluster.swift */; };
+		A9F9EB6A9CF09F585ADF6C76 /* Palette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 700FE44BE3D2E67271438271 /* Palette.swift */; };
+		D13CA4888B46747A75EFE0B9 /* NovaClusterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CADB3C72F3259EE50E0893B /* NovaClusterApp.swift */; };
+		D67D28AC5D24119849E6C0B3 /* ClusterMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4647A44D805423ED4850D6D /* ClusterMap.swift */; };
+		E9B152E78CC029F2F8DC3A57 /* Palette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 700FE44BE3D2E67271438271 /* Palette.swift */; };
+		FA7AA9622CAB5CF7E953AAE4 /* ClusterConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD81C272AC09022CFF3383D7 /* ClusterConfig.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		07D292F2558B56C3E618E442 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		170C4889C16562313989172B /* MacSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSettings.swift; sourceTree = "<group>"; };
+		700FE44BE3D2E67271438271 /* Palette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Palette.swift; sourceTree = "<group>"; };
+		8C08C85821DFE82FC434B3C5 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
+		9125D25D592C3C4A77303531 /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views.swift; sourceTree = "<group>"; };
+		9CADB3C72F3259EE50E0893B /* NovaClusterApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaClusterApp.swift; sourceTree = "<group>"; };
+		A49C3E6C79225425EF4D2D19 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		ACA7F39CD05736028AF22DD1 /* NovaClusterMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NovaClusterMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AD81C272AC09022CFF3383D7 /* ClusterConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterConfig.swift; sourceTree = "<group>"; };
+		C39A9ACD991F51B4B62E164E /* Cluster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cluster.swift; sourceTree = "<group>"; };
+		C4647A44D805423ED4850D6D /* ClusterMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterMap.swift; sourceTree = "<group>"; };
+		D722EFD1B4DA8014C032194A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		F156BDC51B34A60ADF576BD9 /* NovaClusterPad.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = NovaClusterPad.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		5DA54BE4C834311C12D7796C /* NovaClusterMac */ = {
+			isa = PBXGroup;
+			children = (
+				07D292F2558B56C3E618E442 /* Assets.xcassets */,
+				170C4889C16562313989172B /* MacSettings.swift */,
+			);
+			path = NovaClusterMac;
+			sourceTree = "<group>";
+		};
+		6F32BFC03C5A28BF934D4E6F = {
+			isa = PBXGroup;
+			children = (
+				EEDDCA6AC491B96BA0B2037A /* NovaCluster */,
+				5DA54BE4C834311C12D7796C /* NovaClusterMac */,
+				DC509D58FF1DFEFAD4F25A20 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		DC509D58FF1DFEFAD4F25A20 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				ACA7F39CD05736028AF22DD1 /* NovaClusterMac.app */,
+				F156BDC51B34A60ADF576BD9 /* NovaClusterPad.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		EEDDCA6AC491B96BA0B2037A /* NovaCluster */ = {
+			isa = PBXGroup;
+			children = (
+				A49C3E6C79225425EF4D2D19 /* Assets.xcassets */,
+				C39A9ACD991F51B4B62E164E /* Cluster.swift */,
+				AD81C272AC09022CFF3383D7 /* ClusterConfig.swift */,
+				C4647A44D805423ED4850D6D /* ClusterMap.swift */,
+				8C08C85821DFE82FC434B3C5 /* DashboardView.swift */,
+				D722EFD1B4DA8014C032194A /* Info.plist */,
+				9CADB3C72F3259EE50E0893B /* NovaClusterApp.swift */,
+				700FE44BE3D2E67271438271 /* Palette.swift */,
+				9125D25D592C3C4A77303531 /* Views.swift */,
+			);
+			path = NovaCluster;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		0C5ECC1D5ED2476C2256A99D /* NovaClusterPad */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 61E8A6F4F7F52B32B26F256D /* Build configuration list for PBXNativeTarget "NovaClusterPad" */;
+			buildPhases = (
+				D984664049AB301739F59AAD /* Sources */,
+				207C1A2874339E33845E0420 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NovaClusterPad;
+			packageProductDependencies = (
+			);
+			productName = NovaClusterPad;
+			productReference = F156BDC51B34A60ADF576BD9 /* NovaClusterPad.app */;
+			productType = "com.apple.product-type.application";
+		};
+		CE4DFF91809660EA002A6843 /* NovaClusterMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7ED8DA62F9FF4BD4EC06E308 /* Build configuration list for PBXNativeTarget "NovaClusterMac" */;
+			buildPhases = (
+				2906132430C95FFEF3E9FE50 /* Sources */,
+				62A3D62041C8E70FA11F5292 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NovaClusterMac;
+			packageProductDependencies = (
+			);
+			productName = NovaClusterMac;
+			productReference = ACA7F39CD05736028AF22DD1 /* NovaClusterMac.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		4AA50AECA05371B56FE877F5 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					0C5ECC1D5ED2476C2256A99D = {
+						DevelopmentTeam = QRRCB8HB3W;
+						ProvisioningStyle = Automatic;
+					};
+					CE4DFF91809660EA002A6843 = {
+						DevelopmentTeam = QRRCB8HB3W;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = ABA1BE2873B0C293CEB50B51 /* Build configuration list for PBXProject "NovaCluster" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 6F32BFC03C5A28BF934D4E6F;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = DC509D58FF1DFEFAD4F25A20 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				0C5ECC1D5ED2476C2256A99D /* NovaClusterPad */,
+				CE4DFF91809660EA002A6843 /* NovaClusterMac */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		207C1A2874339E33845E0420 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				05466FD4003B614F068C1EC6 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		62A3D62041C8E70FA11F5292 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6B644FACA4B4E9E59980E493 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		2906132430C95FFEF3E9FE50 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A7DD4B8784BA1261B641376C /* Cluster.swift in Sources */,
+				FA7AA9622CAB5CF7E953AAE4 /* ClusterConfig.swift in Sources */,
+				D67D28AC5D24119849E6C0B3 /* ClusterMap.swift in Sources */,
+				647AE03B21E362DD0B2B472D /* DashboardView.swift in Sources */,
+				1787256FFD39386EE3AEDB0E /* MacSettings.swift in Sources */,
+				D13CA4888B46747A75EFE0B9 /* NovaClusterApp.swift in Sources */,
+				E9B152E78CC029F2F8DC3A57 /* Palette.swift in Sources */,
+				49D65C334CEECD7A038FF43B /* Views.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D984664049AB301739F59AAD /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				43CEB11962D4E65D62500C0F /* Cluster.swift in Sources */,
+				4CD93514B7B612EA84F5D475 /* ClusterConfig.swift in Sources */,
+				81FDFDDEC2FFB97BAE2713F6 /* ClusterMap.swift in Sources */,
+				9C98E7F5A58B0D46F3183295 /* DashboardView.swift in Sources */,
+				6F34B03F14F37FF1C2143227 /* NovaClusterApp.swift in Sources */,
+				A9F9EB6A9CF09F585ADF6C76 /* Palette.swift in Sources */,
+				7CA52776663E0C511416FC20 /* Views.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		06F56B78D311156F37F70E47 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		3A67C6B2A7C82D15DE9B0B4F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = QRRCB8HB3W;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = NovaClusterMac/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.digitalnoise.NovaCluster;
+				PRODUCT_NAME = "Nova Cluster";
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		41BFAA93EDBE5F1D203E4ECE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		AA0C2A841376266B682B0DD7 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = QRRCB8HB3W;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = NovaClusterMac/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.digitalnoise.NovaCluster;
+				PRODUCT_NAME = "Nova Cluster";
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		EAF307308647867845418B62 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = QRRCB8HB3W;
+				INFOPLIST_FILE = NovaCluster/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = net.digitalnoise.NovaClusterPad;
+				PRODUCT_NAME = NovaCluster;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 2;
+			};
+			name = Debug;
+		};
+		EDC2C4CD3B90F544B9092C34 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = QRRCB8HB3W;
+				INFOPLIST_FILE = NovaCluster/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = net.digitalnoise.NovaClusterPad;
+				PRODUCT_NAME = NovaCluster;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 2;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		61E8A6F4F7F52B32B26F256D /* Build configuration list for PBXNativeTarget "NovaClusterPad" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EAF307308647867845418B62 /* Debug */,
+				EDC2C4CD3B90F544B9092C34 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		7ED8DA62F9FF4BD4EC06E308 /* Build configuration list for PBXNativeTarget "NovaClusterMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA0C2A841376266B682B0DD7 /* Debug */,
+				3A67C6B2A7C82D15DE9B0B4F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		ABA1BE2873B0C293CEB50B51 /* Build configuration list for PBXProject "NovaCluster" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				41BFAA93EDBE5F1D203E4ECE /* Debug */,
+				06F56B78D311156F37F70E47 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 4AA50AECA05371B56FE877F5 /* Project object */;
+}

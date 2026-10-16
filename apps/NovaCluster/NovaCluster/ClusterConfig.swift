@@ -1,0 +1,131 @@
+//
+//  ClusterConfig.swift
+//  Nova Cluster (iPad + Mac)
+//
+//  Hub URL + viewer node live in UserDefaults; the token lives in the Keychain
+//  (iOS: this-device-only; macOS: the login keychain, service = the app's bundle id,
+//  account "cluster-token"). Nothing network-specific is compiled in — the hub is
+//  supplied at setup (Settings, novacluster://setup deep link, or NOVA_CLUSTER_HUB /
+//  NOVA_CLUSTER_NODE / NOVA_CLUSTER_TOKEN in the environment on launch).
+//
+
+import Foundation
+import Security
+
+struct ClusterConfig: Equatable {
+    var hub: String
+    var node: String
+    var token: String
+
+    #if os(macOS)
+    static let defaultNode = "mac-studio-view"
+    #else
+    static let defaultNode = "ipad-air"
+    #endif
+    private static let hubKey = "hub.url"
+    private static let nodeKey = "hub.node"
+
+    static var current: ClusterConfig {
+        let d = UserDefaults.standard
+        return ClusterConfig(hub: d.string(forKey: hubKey) ?? "",
+                             node: d.string(forKey: nodeKey) ?? defaultNode,
+                             token: Keychain.read() ?? "")
+    }
+
+    var isConfigured: Bool { clusterURL != nil }
+
+    var clusterURL: URL? {
+        var h = hub.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !h.isEmpty else { return nil }
+        if !h.contains("://") { h = "http://" + h }
+        while h.hasSuffix("/") { h.removeLast() }
+        guard var comps = URLComponents(string: h + "/cluster"), comps.host != nil else { return nil }
+        let n = node.trimmingCharacters(in: .whitespacesAndNewlines)
+        comps.queryItems = [URLQueryItem(name: "node", value: n.isEmpty ? Self.defaultNode : n)]
+        return comps.url
+    }
+
+    func save() {
+        let d = UserDefaults.standard
+        d.set(hub.trimmingCharacters(in: .whitespacesAndNewlines), forKey: Self.hubKey)
+        d.set(node.trimmingCharacters(in: .whitespacesAndNewlines), forKey: Self.nodeKey)
+        Keychain.write(token.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// `novacluster://view?mode=map|dashboard` switches the view. Returns true if handled.
+    static func applyView(url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "novacluster",
+              let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              (comps.host ?? "").lowercased() == "view",
+              let m = comps.queryItems?.first(where: { $0.name == "mode" })?.value,
+              ["map", "dashboard"].contains(m) else { return false }
+        UserDefaults.standard.set(m, forKey: "view.mode")
+        return true
+    }
+
+    /// Apply `novacluster://setup?hub=…&node=…&token=…`. Missing fields keep their current value.
+    @discardableResult
+    static func apply(url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "novacluster",
+              let comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
+        let host = (comps.host ?? comps.path).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard host == "setup" else { return false }
+        var cfg = current
+        for q in comps.queryItems ?? [] {
+            guard let v = q.value else { continue }
+            switch q.name {
+            case "hub": cfg.hub = v
+            case "node": cfg.node = v
+            case "token": cfg.token = v
+            default: break
+            }
+        }
+        cfg.save()
+        return true
+    }
+
+    /// Launch-time configuration from the environment (e.g. devicectl DEVICECTL_CHILD_*).
+    static func applyEnvironment() {
+        let env = ProcessInfo.processInfo.environment
+        guard env["NOVA_CLUSTER_HUB"] != nil || env["NOVA_CLUSTER_TOKEN"] != nil else { return }
+        var cfg = current
+        if let v = env["NOVA_CLUSTER_HUB"] { cfg.hub = v }
+        if let v = env["NOVA_CLUSTER_NODE"] { cfg.node = v }
+        if let v = env["NOVA_CLUSTER_TOKEN"] { cfg.token = v }
+        cfg.save()
+    }
+}
+
+enum Keychain {
+    /// iOS: net.digitalnoise.NovaClusterPad · macOS: net.digitalnoise.NovaCluster
+    private static let service = Bundle.main.bundleIdentifier ?? "net.digitalnoise.NovaCluster"
+    private static let account = "cluster-token"
+
+    private static var query: [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: service,
+         kSecAttrAccount as String: account]
+    }
+
+    static func read() -> String? {
+        var q = query
+        q[kSecReturnData as String] = true
+        q[kSecMatchLimit as String] = kSecMatchLimitOne
+        var out: CFTypeRef?
+        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess,
+              let data = out as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    static func write(_ value: String) {
+        if value == read() { return }
+        SecItemDelete(query as CFDictionary)
+        guard !value.isEmpty else { return }
+        var q = query
+        q[kSecValueData as String] = Data(value.utf8)
+        #if os(iOS)
+        q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        #endif
+        SecItemAdd(q as CFDictionary, nil)
+    }
+}
