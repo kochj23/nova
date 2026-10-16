@@ -107,13 +107,16 @@ def pg_repairs(oc, hours: int) -> dict:
     iv = f"{int(hours)} hours"
     res = {"remediation": [], "selfcheck": [], "escalation": [], "autonomy": [], "guard": []}
     q = {
-        "remediation": ("SELECT action || coalesce(' — ' || left(result, 80), '') FROM telemetry.remediations "
-                        "WHERE executed_at > now() - %s::interval AND NOT coalesce(dry_run, false) ORDER BY executed_at"),
-        "selfcheck": ("SELECT check_name || ': ' || action || ' (' || status || ')' FROM selfcheck_runs "
-                      "WHERE ts > now() - %s::interval AND action IS NOT NULL AND action <> '' ORDER BY ts"),
+        # each line carries WHY (co-agency #185, 2026-10-16): the incident title, the failing detail, the stated rationale
+        "remediation": ("SELECT r.action || coalesce(' — ' || left(r.result, 80), '') || coalesce(' (why: ' || left(i.title, 80) || ')', '') "
+                        "FROM telemetry.remediations r LEFT JOIN telemetry.incidents i ON i.id = r.incident_id "
+                        "WHERE r.executed_at > now() - %s::interval AND NOT coalesce(r.dry_run, false) ORDER BY r.executed_at"),
+        "selfcheck": ("SELECT check_name || ': ' || action || ' (' || status || ')' || coalesce(' (why: ' || nullif(left(detail, 80), '') || ')', '') "
+                      "FROM selfcheck_runs WHERE ts > now() - %s::interval AND action IS NOT NULL AND action <> '' ORDER BY ts"),
         "escalation": ("SELECT left(coalesce(description, action_type), 120) FROM claude_actions "
                        "WHERE session_id='selfcheck-escalation' AND ts > now() - %s::interval ORDER BY ts"),
-        "autonomy": ("SELECT action || ' — ' || CASE WHEN verified THEN 'verified' ELSE 'unverified' END FROM autonomy_ledger "
+        "autonomy": ("SELECT action || ' — ' || CASE WHEN verified THEN 'verified' ELSE 'unverified' END "
+                     "|| coalesce(' (why: ' || nullif(left(stated_rationale, 80), '') || ')', '') FROM autonomy_ledger "
                      "WHERE executed AND action_class LIKE 'restart:%%' AND ts > now() - %s::interval ORDER BY ts"),
         "guard": ("SELECT context || ': ' || left(would_have_said, 100) FROM restraint_ledger "
                   "WHERE channel='guard' AND ts > now() - %s::interval ORDER BY ts"),
