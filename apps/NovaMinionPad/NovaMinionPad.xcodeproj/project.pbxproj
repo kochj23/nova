@@ -1,0 +1,331 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		4BAE46D3CCDADC93BCA4D663 /* Starfield.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5646A9FFBB0AA94196201EE /* Starfield.swift */; };
+		5C3C6B88C5ED2ECDC3A97CFE /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 41C147BBBC4503F09F496747 /* Assets.xcassets */; };
+		6ADE421CADE13D61B8F0CD4A /* MinionConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DD42CC5FCC72614CA9E6F3D /* MinionConfig.swift */; };
+		D681067169A184A57A6CD00F /* Fleet.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF09D7F69F8FCD23A496AA1A /* Fleet.swift */; };
+		EF963EE1B9E5485F9F1E609A /* NovaMinionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DF4515BFECF733E1A2C5594 /* NovaMinionApp.swift */; };
+		FC5FDFFF8BA61A1B8DC18ACE /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21D62E039CF2C46F218BD717 /* Views.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		21D62E039CF2C46F218BD717 /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views.swift; sourceTree = "<group>"; };
+		41C147BBBC4503F09F496747 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		4CA05EE5F256AEAFDBD34D31 /* NovaMinionPad.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = NovaMinionPad.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4DF4515BFECF733E1A2C5594 /* NovaMinionApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaMinionApp.swift; sourceTree = "<group>"; };
+		6DD42CC5FCC72614CA9E6F3D /* MinionConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinionConfig.swift; sourceTree = "<group>"; };
+		86AFC834AE828FC38372403F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		BF09D7F69F8FCD23A496AA1A /* Fleet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fleet.swift; sourceTree = "<group>"; };
+		D5646A9FFBB0AA94196201EE /* Starfield.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Starfield.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		5B21823075E64F31BF2342BD /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				4CA05EE5F256AEAFDBD34D31 /* NovaMinionPad.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		9AF39BF63D288E817FB24A38 /* NovaMinionPad */ = {
+			isa = PBXGroup;
+			children = (
+				41C147BBBC4503F09F496747 /* Assets.xcassets */,
+				BF09D7F69F8FCD23A496AA1A /* Fleet.swift */,
+				86AFC834AE828FC38372403F /* Info.plist */,
+				6DD42CC5FCC72614CA9E6F3D /* MinionConfig.swift */,
+				4DF4515BFECF733E1A2C5594 /* NovaMinionApp.swift */,
+				D5646A9FFBB0AA94196201EE /* Starfield.swift */,
+				21D62E039CF2C46F218BD717 /* Views.swift */,
+			);
+			path = NovaMinionPad;
+			sourceTree = "<group>";
+		};
+		E54FF1F3C7DD3333B5FE5A4E = {
+			isa = PBXGroup;
+			children = (
+				9AF39BF63D288E817FB24A38 /* NovaMinionPad */,
+				5B21823075E64F31BF2342BD /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1DE3F54BE470F2208908911D /* NovaMinionPad */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 685496893F9B520B66F542C9 /* Build configuration list for PBXNativeTarget "NovaMinionPad" */;
+			buildPhases = (
+				E378D3066881C3184F060956 /* Sources */,
+				ED2CA25467EBDF44AFEF0C88 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NovaMinionPad;
+			packageProductDependencies = (
+			);
+			productName = NovaMinionPad;
+			productReference = 4CA05EE5F256AEAFDBD34D31 /* NovaMinionPad.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		45F84ED608264FD54F0D7A69 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					1DE3F54BE470F2208908911D = {
+						DevelopmentTeam = QRRCB8HB3W;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = A479A7E3139C7B4ABEAEB0B0 /* Build configuration list for PBXProject "NovaMinionPad" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = E54FF1F3C7DD3333B5FE5A4E;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 5B21823075E64F31BF2342BD /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				1DE3F54BE470F2208908911D /* NovaMinionPad */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		ED2CA25467EBDF44AFEF0C88 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5C3C6B88C5ED2ECDC3A97CFE /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		E378D3066881C3184F060956 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D681067169A184A57A6CD00F /* Fleet.swift in Sources */,
+				6ADE421CADE13D61B8F0CD4A /* MinionConfig.swift in Sources */,
+				EF963EE1B9E5485F9F1E609A /* NovaMinionApp.swift in Sources */,
+				4BAE46D3CCDADC93BCA4D663 /* Starfield.swift in Sources */,
+				FC5FDFFF8BA61A1B8DC18ACE /* Views.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		0AE1D5AE877DB92D15B9FB9F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = QRRCB8HB3W;
+				INFOPLIST_FILE = NovaMinionPad/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = net.digitalnoise.NovaMinion;
+				PRODUCT_NAME = NovaMinion;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 2;
+			};
+			name = Release;
+		};
+		204EE98327EC8E5BD60A2551 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = QRRCB8HB3W;
+				INFOPLIST_FILE = NovaMinionPad/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = net.digitalnoise.NovaMinion;
+				PRODUCT_NAME = NovaMinion;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 2;
+			};
+			name = Debug;
+		};
+		8C3FF684EA1A2823615B7139 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		FAB25538EFDC808E9F39BF96 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		685496893F9B520B66F542C9 /* Build configuration list for PBXNativeTarget "NovaMinionPad" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				204EE98327EC8E5BD60A2551 /* Debug */,
+				0AE1D5AE877DB92D15B9FB9F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		A479A7E3139C7B4ABEAEB0B0 /* Build configuration list for PBXProject "NovaMinionPad" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8C3FF684EA1A2823615B7139 /* Debug */,
+				FAB25538EFDC808E9F39BF96 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 45F84ED608264FD54F0D7A69 /* Project object */;
+}
