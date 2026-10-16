@@ -174,6 +174,11 @@ def gather_day(oc, day=None):
                      WHERE completed_at::date = %s AND status = ANY(%s)""", (day, list(DONE_STATUSES)))
     if rows and rows[0][0]:
         out["did"].append(f"Claude closed {rows[0][0]} queue item(s), e.g. {_short(rows[0][1], 70)}")
+    # overnight re-transcription (nova_media_reingest writes its own line)
+    rows = _q(oc, "SELECT value FROM service_config WHERE service = 'media_reingest' AND key = 'latest'")
+    v = rows[0][0] if rows else None
+    if isinstance(v, dict) and v.get("day") == str(day) and v.get("line"):
+        out["did"].append(_short(v["line"], 160))
     # fixed: problems closed, postmortems finalised
     rows = _q(oc, """SELECT title FROM problems WHERE state IN ('closed','resolved','fixed')
                      AND state_changed_at::date = %s ORDER BY state_changed_at DESC LIMIT %s""", (day, SUMMARY_LINES))

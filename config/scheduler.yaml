@@ -1258,3 +1258,16 @@ tasks:
     schedule: cron 0 17 * * 0
     timeout: 300
     overlap: skip
+  media_reingest:                  # nightly: re-transcribe TV/video with LOCAL MLX Whisper — lost speech first, then most-watched; supersedes, never deletes (2026-10-15)
+    script: nova_media_reingest.py
+    args: ["--scheduled", "--hours", "7"]
+    schedule: cron 0 23 * * *
+    timeout: 25500
+    overlap: skip
+    gpu_heavy: true
+  media_reingest_queue:            # Sun 21:30 — refresh the re-transcription queue (new files, Plex plays, recall)
+    script: nova_media_reingest.py
+    args: ["--build-queue"]
+    schedule: cron 30 21 * * 0
+    timeout: 900
+    overlap: skip
