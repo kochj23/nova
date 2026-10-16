@@ -47,6 +47,10 @@ struct MinionStatus {
     var tonightWorks: Int?
     var tonightLessons: Int?
     var tonightBeliefs: Int?
+    var tonightTranscribed: Int?
+    var tonightAudioH: Double?
+    var fleetTranscribed: Int?
+    var fleetAudioH: Double?
     var fleetWorks: Int?
     var fleetLessons: Int?
     var fleetMinions: Int?
@@ -76,11 +80,15 @@ struct MinionStatus {
             tonightWorks = MinionStatus.int(t["works"])
             tonightLessons = MinionStatus.int(t["lessons"])
             tonightBeliefs = MinionStatus.int(t["beliefs"])
+            tonightTranscribed = MinionStatus.int(t["transcribed"])
+            tonightAudioH = MinionStatus.num(t["audio_h"])
         }
         if let f = d["fleet_tonight"] as? [String: Any] {
             fleetWorks = MinionStatus.int(f["works"])
             fleetLessons = MinionStatus.int(f["lessons"])
             fleetMinions = MinionStatus.int(f["minions"])
+            fleetTranscribed = MinionStatus.int(f["transcribed"])
+            fleetAudioH = MinionStatus.num(f["audio_h"])
         }
         if let q = d["queue"] as? [String: Any] {
             for (k, v) in q { if let n = MinionStatus.int(v) { queue[k] = n } }

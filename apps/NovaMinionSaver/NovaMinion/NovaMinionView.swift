@@ -403,13 +403,23 @@ final class NovaMinionView: ScreenSaverView {
             parts.append(rest)
             if let w = s?.tonightWorks { parts.append("\(n(w)) works read tonight") }
         } else {
-            if let w = s?.tonightWorks { parts.append("This Mac has read \(n(w)) works for Nova tonight"); accentFirst = true }
-            if let l = s?.tonightLessons { parts.append("\(n(l)) lessons") }
+            let works = s?.tonightWorks ?? 0, eps = s?.tonightTranscribed ?? 0
+            let hours = s?.tonightAudioH.map { String(format: "%.1f h", $0) } ?? ""
+            if eps > 0 && works == 0 {
+                // a Whisper minion: it transcribes TV for Nova rather than reading for lessons
+                parts.append("This Mac has transcribed \(n(eps)) episode\(eps == 1 ? "" : "s") for Nova tonight"); accentFirst = true
+                if !hours.isEmpty { parts.append("\(hours) of audio") }
+            } else {
+                if let w = s?.tonightWorks { parts.append("This Mac has read \(n(w)) works for Nova tonight"); accentFirst = true }
+                if let l = s?.tonightLessons { parts.append("\(n(l)) lessons") }
+                if eps > 0 { parts.append("\(n(eps)) episode\(eps == 1 ? "" : "s") transcribed") }
+            }
             if let b = s?.tonightBeliefs, b > 0 { parts.append("\(n(b)) beliefs") }
             if let tk = s?.tokS { parts.append("\(Int(tk.rounded())) tok/s") }
             var fleet: [String] = []
             if let m = s?.fleetMinions { fleet.append("\(n(m)) minion\(m == 1 ? "" : "s")") }
             if let w = s?.fleetWorks { fleet.append("\(n(w)) works") }
+            if let e = s?.fleetTranscribed, e > 0 { fleet.append("\(n(e)) episodes transcribed") }
             if !fleet.isEmpty { parts.append("fleet: " + fleet.joined(separator: ", ")) }
             if let a = s?.queue["A"] ?? (s?.queue.isEmpty == false ? s?.queue.values.reduce(0, +) : nil) {
                 var q = "\(n(a)) still to read"
