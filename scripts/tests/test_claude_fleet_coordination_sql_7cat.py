@@ -200,6 +200,37 @@ class TestUnit(unittest.TestCase):
             self.assertRegex(SQL, rf"CREATE OR REPLACE FUNCTION {fn}\(")
 
 
+class TestKanban(unittest.TestCase):
+    """Plan #56 (2026-10-15): one finished status, WIP limit in claude_claim, zombie reap, flow views."""
+    def test_claim_signature_stays_call_compatible(self):
+        # the old 3-arg form is dropped and the new one only ADDS a defaulted 4th arg
+        self.assertIn("DROP FUNCTION IF EXISTS claude_claim(text, int, interval);", SQL)
+        self.assertRegex(SQL, r"claude_claim\(p_who text, p_id int DEFAULT NULL, p_lease interval DEFAULT '20 minutes',\s+p_wip int DEFAULT 3\)")
+
+    def test_finished_statuses_collapse(self):
+        self.assertIn("NEW.status IN ('completed', 'resolved', 'built')", SQL)
+        self.assertIn("CREATE OR REPLACE TRIGGER claude_queue_normalize_status", SQL)
+
+    def test_flow_view_has_p85(self):
+        self.assertIn("percentile_cont(0.85)", SQL)
+
+    @unittest.skipUnless(LIVE, "local PostgreSQL not available")
+    def test_wip_limit_is_per_claimant(self):
+        c = _db(); cur = c.cursor()
+        ids = [_task(cur, f"k{i}", prio=-70) for i in range(4)]
+        got = []
+        for i in ids:
+            cur.execute("SELECT count(*) FROM claude_claim('hK/s1', %s)", (i,))
+            got.append(cur.fetchone()[0])
+        self.assertEqual(got, [1, 1, 1, 0])
+        cur.execute("SELECT claude_finish(%s, 'hK/s1', 'completed', 'ok')", (ids[0],))
+        cur.execute("SELECT count(*) FROM claude_claim('hK/s1', %s)", (ids[3],))
+        self.assertEqual(cur.fetchone()[0], 1)
+        cur.execute("SELECT status, outcome FROM claude_queue WHERE id = %s", (ids[0],))
+        self.assertEqual(cur.fetchone(), ("done", "ok [finished as completed]"))
+        c.close()
+
+
 class TestIntegration(unittest.TestCase):
     @unittest.skipUnless(LIVE, "local PostgreSQL not available")
     def test_shipped_selftest_passes(self):

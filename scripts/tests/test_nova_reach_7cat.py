@@ -47,6 +47,11 @@ for _k in ("NOVA_REACH_WINDOW", "NOVA_REACH_DIRECT", "NOVA_REACH_DAILY_CAP",
 rc = _load("reach_7cat_under_test")
 
 
+# 2026-10-15: direct reaches now wait for the 18:00 summary unless they are real impact. The tests
+# below exercise the posting mechanism itself, so the impact-only hold is off here; TestImpactOnly
+# (test_nova_reach.py) covers it on.
+rc.IMMEDIATE_ONLY_FOR_IMPACT = False
+
 class _Resp:
     def __init__(self, payload):
         self._b = json.dumps(payload).encode()

@@ -228,6 +228,22 @@ def ensure_schema(oc):
     ensure_mode_row(oc)
 
 
+def _classify_change(oc, pid, action, rationale="", origin=""):
+    """ITIL change class (standard/normal/emergency) on every filed proposal (nova_change_class, 2026-10-15).
+    Never blocks filing."""
+    try:
+        import nova_change_class
+        oc.execute("SELECT count(*) FROM telemetry.incidents WHERE status='open' AND severity='critical'")
+        crit = bool((oc.fetchone() or [0])[0])
+        cls = nova_change_class.classify_proposal(action, rationale, origin, open_critical=crit)
+        oc.execute("UPDATE coagency_proposals SET change_class=%s WHERE id=%s", (cls, pid))
+    except Exception:  # noqa: BLE001
+        try:
+            oc.connection.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def clog(oc, mode, event, detail=""):
     oc.execute("INSERT INTO coagency_log (mode, event, detail) VALUES (%s,%s,%s)",
                (mode, event, (detail or "")[:2000]))
@@ -415,6 +431,19 @@ class ExecutionRefused(Exception):
     pass
 
 
+def value_denied(vc) -> bool:
+    """True when Nova's own value_check RAN and said no. 2026-10-15 (#29, Jordan): a denial is binding
+    for her — no approval (blanket or single, Jordan's or Claude's) turns it into an execution; she
+    revises it (a new proposal) or drops it, and a red-line one goes to Claude. Unavailable != denied."""
+    if isinstance(vc, str):
+        try:
+            vc = json.loads(vc)
+        except Exception:  # noqa: BLE001
+            return False
+    vc = vc or {}
+    return bool(vc.get("available")) and vc.get("allowed") is not True
+
+
 def assert_executable(mode: str, row: dict):
     """RAISE ExecutionRefused unless EVERY lock is satisfied. There is no other way
     to reach execution — every caller must pass through here. This is contract #5.
@@ -567,20 +596,22 @@ def mode_propose(oc, mode):
                    (c["origin"], action, c.get("rationale", ""), tgt, rp,
                     json.dumps(vc), status, json.dumps(_lineage())))
         pid = oc.fetchone()[0]
+        _classify_change(oc, pid, action, c.get("rationale", ""), c["origin"])
         stored.append((pid, status, action, rp, vc.get("available")))
         clog(oc, mode, f"proposal_{status}",
              f"#{pid} origin={c['origin']} redline_pass={rp} value_available={vc.get('available')} :: {action[:120]}")
 
     pend = [s for s in stored if s[1] == "pending_human"]
     blocked = [s for s in stored if s[1] == "blocked"]
-    lines = [f"🤖 Nova co-agency ({mode}) — {len(pend)} proposal(s) awaiting your call"
+    lines = [f"🤖 Nova co-agency ({mode}) — {len(pend)} proposal(s) filed for my own decision path"
              + (f", {len(blocked)} auto-blocked by redline" if blocked else "") + ":"]
     for pid, status, action, rp, avail in stored:
         tag = "⏳ pending" if status == "pending_human" else "⛔ blocked"
         vtag = "" if avail else " (value-check unavailable → not approvable)"
         lines.append(f"  {tag} #{pid}: {action[:140]}{vtag}")
-    lines.append("Reply to approve/reject. Nothing runs without approval + value-check + redline. Mode ships OFF.")
-    notify("\n".join(lines))
+    lines.append("Decided by my own path (value-check binding; red lines go to Claude). FYI only.")
+    # 2026-10-15: Jordan is informed by the 18:00 daily summary, not per-run digests.
+    log("\n".join(lines))
     return 0
 
 
@@ -610,6 +641,7 @@ def file_proposal(oc, origin, action, rationale="", target_service=None, context
                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
                (origin, action, rationale, tgt, rp, json.dumps(vc), status, json.dumps(_lineage())))
     pid = oc.fetchone()[0]
+    _classify_change(oc, pid, action, rationale, origin)
     clog(oc, mode, f"proposal_{status}",
          f"#{pid} origin={origin} redline_pass={rp} value_available={vc.get('available')} :: {action[:120]}")
     return {"filed": True, "pid": pid, "status": status, "redline_pass": rp,
@@ -636,6 +668,10 @@ def mode_decide(oc, mode, pid, decision, note, by, expect_status=None):
         clog(oc, mode, "decide_refused", f"#{pid} is redline-blocked — cannot be approved"); return 1
     if expect_status and cur_status != expect_status:
         clog(oc, mode, "decide_refused", f"#{pid} is '{cur_status}', not '{expect_status}' — already decided"); return 1
+    if decision == "approve" and value_denied(vc):
+        clog(oc, mode, "decide_refused",
+             f"#{pid}: her own value_check denied it — binding; approval by {by} not recorded (she revises or drops it)")
+        return 1
     new_status = "approved" if decision == "approve" else "rejected"
     oc.execute("""UPDATE coagency_proposals
                   SET status=%s, decided_at=now(), decided_by=%s, decision_note=%s WHERE id=%s""",
@@ -659,9 +695,12 @@ def mode_decide(oc, mode, pid, decision, note, by, expect_status=None):
 def hand_to_claude(oc, pid, action):
     """File an approved non-restart proposal as a claude_queue item. Returns the queue id or None."""
     try:
-        oc.execute("SELECT origin, rationale, decided_by FROM coagency_proposals WHERE id=%s", (pid,))
+        oc.execute("SELECT origin, rationale, decided_by, value_check FROM coagency_proposals WHERE id=%s", (pid,))
         row = oc.fetchone()
         origin, rationale = row[0], row[1]
+        if len(row) > 3 and value_denied(row[3]):
+            log(f"hand_to_claude: #{pid} was denied by her own value_check — not handed over (binding)")
+            return None
         approver = (row[2] if len(row) > 2 else None) or "Jordan"
         oc.execute("SELECT 1 FROM claude_queue WHERE description LIKE %s", (f"Execute approved co-agency proposal #{pid}:%",))
         if oc.fetchone():
@@ -689,6 +728,14 @@ def mode_execute(oc, mode, pid):
         clog(oc, mode, "execute_missing", f"no proposal #{pid}"); return 1
     row = {"status": r[0], "redline_pass": r[1], "value_check": r[2],
            "target_service": r[3], "decided_by": r[4], "proposed_action": r[5]}
+    # #29 (2026-10-15): a value-denied proposal approved anyway (32 such rows went out 09-25..10-13, one
+    # via a blanket "All approved") is refused HERE, before the non-restart hand-off to Claude below
+    # that used to run ahead of assert_executable.
+    if value_denied(row["value_check"]):
+        oc.execute("UPDATE coagency_proposals SET status='refused', execution_result=%s WHERE id=%s",
+                   ("REFUSED: her own value_check denied it — binding; approval does not override it", pid))
+        clog(oc, mode, "execute_refused", f"#{pid}: value_check denied (binding, final)")
+        return 0
     # ── Semantics guard: co-agency v1 can only RESTART a bounded SAFE service. An
     # approved observation/goal ("monitor motion events") is a note, not an action —
     # acknowledge it, never force a restart of its target_service. ──
@@ -1058,6 +1105,104 @@ def _gave_up(oc, mode, pid) -> bool:
     return True
 
 
+NOVA_BY = "nova:own-decision"   # 2026-10-15: Nova decides what used to wait on Jordan
+HERD_BY = "nova:herd-policy"    # Jordan's answer (2): herd outreach on her own judgment
+
+
+def _red_line_classes(act: str, is_herd_reach: bool) -> list:
+    """nova_red_line.classify, fail CLOSED (unavailable -> treated as a red line). A reach to an active
+    herd member is outward by nature and Jordan made it hers, so 'two_man' does not apply to it."""
+    try:
+        import nova_red_line as rl
+        cls = rl.classify(act)
+    except Exception as e:  # noqa: BLE001
+        log(f"red-line classifier unavailable ({e}) — treating as a red line")
+        return ["unclassifiable"]
+    return [c for c in cls if not (is_herd_reach and c == "two_man")]
+
+
+def mode_dispose(oc, mode):
+    """Nova's own decision path for every pending_human proposal (Jordan 2026-10-15: "Her questions go
+    back to her ... She shouldn't wait for me to answer"). Nothing here executes; it only decides who
+    decides:
+      * a reach to anyone who is not an active herd member -> dropped (outbound outside the herd is blocked)
+      * a red line (Proteus physical, two-man, AE-35, kill switch, live chaos) -> claude_queue
+        'red_line_decision', status 'awaiting_claude' (a Claude session decides; Jordan only if unsure)
+      * her own value_check denied it -> dropped (binding; she may file a revised proposal)
+      * everything else stays pending for her second key (nova_claude_reviewer), earned autonomy, or the
+        herd policy in mode_auto. Returns the number of rows disposed."""
+    if mode == "off":
+        return 0
+    oc.execute("""SELECT id, origin, proposed_action, coalesce(rationale,''), value_check
+                  FROM coagency_proposals WHERE status='pending_human' ORDER BY created_at ASC""")
+    n = 0
+    for pid, origin, act, rat, vc in oc.fetchall():
+        reach = _reach_parts(act)
+        if reach and not _herd_email(oc, reach[0])[1]:
+            note = f"recipient '{reach[0]}' is not an active herd member — outbound outside the herd is blocked"
+            oc.execute("""UPDATE coagency_proposals SET status='dropped', decided_at=now(), decided_by=%s,
+                          decision_note=%s WHERE id=%s AND status='pending_human'""", (NOVA_BY, note, pid))
+            clog(oc, mode, "disposed_dropped", f"#{pid}: {note}"); n += 1
+            continue
+        classes = _red_line_classes(act, bool(reach))
+        if classes:
+            try:
+                import nova_red_line as rl
+                qid = rl.route_to_claude(oc, f"co-agency proposal #{pid}: {act[:240]}",
+                                         f"origin: {origin}\nNova's rationale: {rat[:800]}\nvalue_check: "
+                                         f"{json.dumps(vc) if not isinstance(vc, str) else vc}"[:2000]
+                                         + f"\nDecide with: nova_coagency.py --mode approve|reject --id {pid} "
+                                           f"--by claude-red-line --note '<why>'",
+                                         "coagency", pid, classes)
+            except Exception as e:  # noqa: BLE001
+                qid = None; log(f"red-line routing failed for #{pid}: {e}")
+            if qid:
+                oc.execute("""UPDATE coagency_proposals SET status='awaiting_claude', decision_note=%s
+                              WHERE id=%s AND status='pending_human'""",
+                           (f"red line ({', '.join(classes)}) — asked Claude: claude_queue #{qid}", pid))
+                clog(oc, mode, "disposed_red_line", f"#{pid} [{', '.join(classes)}] -> claude_queue #{qid}"); n += 1
+            continue
+        if value_denied(vc):
+            vcd = json.loads(vc) if isinstance(vc, str) else (vc or {})
+            why = str(vcd.get("reasoning") or vcd.get("reason") or "")[:300]
+            note = f"my own value_check denied it ({why or 'no reason given'}) — binding; dropped. A revised proposal may be filed."
+            oc.execute("""UPDATE coagency_proposals SET status='dropped', decided_at=now(), decided_by=%s,
+                          decision_note=%s WHERE id=%s AND status='pending_human'""", (NOVA_BY, note, pid))
+            clog(oc, mode, "disposed_dropped", f"#{pid}: value_check denied (binding)"); n += 1
+    return n
+
+
+def _herd_policy(oc, mode, pid, act, rp, vc) -> bool:
+    """Jordan's answer (2), 2026-10-15: outreach to an ACTIVE herd member is Nova's own call. A reach
+    that passed the redline and her own value_check is approved by her and sent through the same single
+    gate (assert_executable + kill switch + rate cap + per-recipient spacing). True when handled."""
+    reach = _reach_parts(act)
+    if not reach or not _herd_email(oc, reach[0])[1]:
+        return False
+    vcd = json.loads(vc) if isinstance(vc, str) else (vc or {})
+    if not (rp and vcd.get("available") and vcd.get("allowed") is True) or _red_line_classes(act, True):
+        return False
+    ok_rate, rwhy = _safety.rate_ok(oc)
+    if not ok_rate:
+        clog(oc, mode, "herd_ratecapped", f"#{pid}: {rwhy}"); return False
+    oc.execute("""UPDATE coagency_proposals SET status='approved', decided_at=now(), decided_by=%s, decision_note=%s
+                  WHERE id=%s AND status='pending_human'""",
+               (HERD_BY, "herd outreach on my own judgment (Jordan 2026-10-15)", pid))
+    if getattr(oc, "rowcount", 1) == 0:     # another executor got there first
+        return False
+    row = {"status": "approved", "redline_pass": rp, "value_check": vc, "target_service": None,
+           "decided_by": HERD_BY, "proposed_action": act}
+    try:
+        assert_executable(mode, row)
+    except ExecutionRefused as e:
+        oc.execute("UPDATE coagency_proposals SET status='refused', execution_result=%s WHERE id=%s",
+                   (f"REFUSED (herd policy): {e}", pid))
+        clog(oc, mode, "herd_refused", f"#{pid}: {e}")
+        return True
+    _do_reach(oc, mode, pid, row, source="herd-policy", autonomy_level="rung3-herd", vetoable=True)
+    return True
+
+
 def mode_auto(oc, mode):
     """Rung 3 — earned autonomy. For each PENDING proposal whose action-class Nova has
     earned (clean track record + good calibration + under caps), auto-approve as
@@ -1070,11 +1215,15 @@ def mode_auto(oc, mode):
     _safety.ensure_schema(oc)
     if _safety.kill_switch_engaged(oc):
         clog(oc, mode, "auto_skip", "kill switch engaged"); return 0
+    mode_dispose(oc, mode)   # decide who decides first: drops, red lines -> Claude, the rest below
     oc.execute("""SELECT id, target_service, proposed_action, redline_pass, value_check, decided_by
                   FROM coagency_proposals WHERE status='pending_human' ORDER BY created_at ASC""")
     rows = oc.fetchall()
     acted = 0
     for pid, tgt, act, rp, vc, decided_by in rows:
+        if _herd_policy(oc, mode, pid, act, rp, vc):
+            acted += 1
+            continue
         ac = _safety.action_class_of(act, tgt)
         ok, why = _safety.earned_ok(oc, ac)
         if not ok:
@@ -1185,7 +1334,7 @@ def mode_status(oc, mode):
 def main():
     ap = argparse.ArgumentParser(description="Nova co-agency (bounded, gated, ships OFF)")
     ap.add_argument("--mode", choices=["propose", "status", "approve", "reject", "execute",
-                                       "execute-approved", "auto", "veto"], default="status")
+                                       "execute-approved", "auto", "veto", "dispose"], default="status")
     ap.add_argument("--id", type=int, help="proposal id (approve|reject|execute) or ledger id (veto)")
     ap.add_argument("--note", default="", help="decision note (approve|reject|veto)")
     ap.add_argument("--by", default=os.environ.get("USER", "human"), help="human approver id")
@@ -1213,6 +1362,8 @@ def main():
         return mode_execute_approved(oc, mode)
     if args.mode == "auto":
         return mode_auto(oc, mode)
+    if args.mode == "dispose":
+        log(f"disposed {mode_dispose(oc, mode)} pending proposal(s)"); return 0
     if args.mode == "veto":
         if not args.id:
             log("--id required for veto (the autonomy_ledger id)"); return 2

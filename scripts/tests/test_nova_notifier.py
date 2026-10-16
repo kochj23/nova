@@ -232,6 +232,22 @@ class TestIntegration(unittest.TestCase):
         self.assertEqual(kw["slack_channel"], "C_FEED")
         self.assertEqual(cur.ran("SET status='sent'")[0][1], ("C_FEED", 1))
 
+    def test_ticket_goes_to_digest_never_the_mesh(self):
+        # RULE C (#39, 2026-10-15): no SLO/Tier-0/house impact -> ticket for Nova's queue
+        t = _triage_stub(result={"verdict": "real_actionable", "decision": "ticket", "annotation": "Do: x"})
+        n, cur, mesh, _ = _drain([_ev(level="critical")], triage=t)
+        msg, kw = nf.nova_config.post_both.call_args[0][0], nf.nova_config.post_both.call_args[1]
+        self.assertTrue(msg.startswith(":ticket: ")); self.assertIn("Do: x", msg)
+        self.assertEqual(kw["slack_channel"], nf.nova_config.SLACK_DIGEST)
+        mesh.assert_not_called()
+        self.assertEqual(n, 1)
+
+    def test_page_still_reaches_alerts_and_mesh(self):
+        t = _triage_stub(result={"verdict": "real_actionable", "decision": "page", "annotation": ""})
+        n, cur, mesh, _ = _drain([_ev(level="critical")], triage=t)
+        self.assertEqual(nf.nova_config.post_both.call_args[1]["slack_channel"], "C_ALERTS")
+        mesh.assert_called_once()
+
     def test_maintenance_window_mutes_security_only(self):
         with patch.object(nf, "_maint_active", lambda: True):
             n, cur, _, _ = _drain([_ev(id=1, category="security"), _ev(id=2, category="storage", dedup_key="s")])

@@ -30,7 +30,11 @@ CLI:   --scheduled         daily; acts once a quarter (first run after a quarter
        --report [N]        last N quarters: counts, flop rate, flag, duds
        --selftest          offline checks of the pure functions
 Table: flop_slate (quarter, initiative) primary key.
-Schedule: scheduler-core, daily 05:50, timeout 900, overlap skip.
+
+MERGED 2026-10-15 (consolidation item #13; Claude, as integrator, approved — no coverage lost): one
+ledger. The slate is now `nova_mark_to_market.py --slate`, and its daily/quarterly step runs inside the
+single `mark_to_market --scheduled` entry (scheduler-core, daily 05:40). The logic and the flop_slate
+table stay here (run_slate); main() is a thin wrapper so `nova_flop_slate.py ...` keeps working.
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -385,7 +389,15 @@ def selftest() -> int:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    """Thin wrapper (merge 2026-10-15): same options as before; the survivor is mark_to_market --slate."""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not any(x in argv for x in ("--selftest", "-h", "--help")):
+        log("merged into nova_mark_to_market.py --slate on 2026-10-15; running the slate")
+    return run_slate(argv)
+
+
+def run_slate(argv=None) -> int:
+    ap = argparse.ArgumentParser(prog="nova_mark_to_market.py --slate", description=__doc__.split("\n")[0])
     ap.add_argument("--scheduled", action="store_true", help="daily; acts once a quarter")
     ap.add_argument("--quarter", default=None, help="e.g. 2026Q3 (default: last completed quarter)")
     ap.add_argument("--dry-run", action="store_true", help="classify and print; write and notify nothing")

@@ -192,6 +192,30 @@ class TestFrame(unittest.TestCase):
         self.assertEqual((r.returncode, r.stdout.strip()), (0, ""), r.stderr)
 
 
+class TestDeploymentRunsFix(_Base):
+    """#60 (Little Mister, 2026-10-15): 152/152 'failures' in 30 days were SSH unreachable from .2."""
+    def test_unreachable_is_its_own_status_not_a_failed_deploy(self):
+        with patch.object(co, "ssh_test", return_value=False), patch.object(co, "db_exec") as dbx, \
+                patch.object(co, "is_local", return_value=False):
+            self.assertEqual(co.converge_node(NODE), (False, 0, "SSH unreachable"))
+        self.assertIn("status = 'unreachable'", dbx.call_args[0][0])
+        self.assertNotIn("status = 'failure'", dbx.call_args[0][0])
+
+    def test_local_node_is_decided_by_own_addresses(self):
+        with patch.object(co, "is_local", return_value=True), patch.object(co, "_converge_local",
+                                                                          return_value=(True, 0, "")) as loc, \
+                patch.object(co, "db_exec"), patch.object(co, "ssh_test") as st:
+            co.converge_node(NODE)
+        loc.assert_called_once()
+        st.assert_not_called()
+        self.assertTrue(co.is_local("127.0.0.1"))
+        self.assertNotIn('if ip in ("127.0.0.1", "192.168.1.6"):\n        return _converge_local', SRC)
+
+    def test_dsn_comes_from_nova_dsn(self):
+        self.assertNotIn("host=pg-primary", SRC)
+        self.assertIn("_nova_dsn.pg_dsn(\"nova_ops\")", SRC)
+
+
 def tearDownModule():
     shutil.rmtree(TMP, ignore_errors=True)
 

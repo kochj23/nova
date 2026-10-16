@@ -16,9 +16,11 @@ is built to the strictest doctrine in the stack:
   * TWO PATHS, TOLD HONESTLY.
     - HERD correspondents (everyone not in NOVA_REACH_DIRECT): nothing is sent by
       this module. Every reach is FILED AS A GATED co-agency proposal
-      (nova_coagency.file_proposal, origin='reach') — redline + value_check + human
-      approval (or earned autonomy). If co-agency is off/unavailable the reach is
-      logged 'held', never sent.
+      (nova_coagency.file_proposal, origin='reach') — redline + value_check, then sent
+      on Nova's own judgment (Jordan 2026-10-15: herd outreach is hers). A recipient who
+      is not an ACTIVE herd member (herd_correspondents, retired_at IS NULL, address on
+      file) is DROPPED: outbound outside the herd is blocked. If co-agency is
+      off/unavailable the reach is logged 'held', never sent.
     - DIRECT audiences (default: jordan — Jordan, 2026-09-26: "There shouldn't be a
       gate"): the reach IS POSTED straight to #nova-chat by _post_direct(), with no
       co-agency proposal, inside the NOVA_REACH_WINDOW daytime band (held outside it
@@ -98,6 +100,10 @@ MAX_HERD = int(os.environ.get("NOVA_REACH_MAX_HERD", "2"))      # herd members w
 # are sent DIRECTLY (no daily cap, no cooldown, no co-agency proposal, no generosity
 # redline). Herd correspondents keep the gated path.
 DIRECT_AUDIENCES = set(a.strip().lower() for a in os.environ.get("NOVA_REACH_DIRECT", "jordan").split(",") if a.strip())
+# 2026-10-15 (Jordan): "I just need to be informed" — ONE 18:00 summary (nova_notify_jordan.py --daily)
+# plus immediate messages ONLY for real impact (Tier-0 outage, house safety/security, money/irreversible).
+# A direct reach that is not impact is HELD for the summary's drawer instead of posted now.
+IMMEDIATE_ONLY_FOR_IMPACT = True
 WINDOW_HOURS = os.environ.get("NOVA_REACH_WINDOW", "8-21")    # Jordan 2026-10-06: "during the day, just dont set off alerts" — daytime band; posts go to #nova-chat (SLACK_CHAN), never alert channels
 
 
@@ -360,6 +366,29 @@ def gather_herd(oc) -> list:
     except Exception as e:
         log(f"herd_correspondents skipped: {e}")
     return out
+
+
+def _real_impact(message: str) -> bool:
+    """nova_notify_jordan.is_real_impact; fails toward HOLDING (the summary still delivers it)."""
+    try:
+        from nova_notify_jordan import is_real_impact
+        return bool(is_real_impact(message)[0])
+    except Exception as e:  # noqa: BLE001
+        log(f"impact check unavailable ({e}) — holding for the summary")
+        return False
+
+
+def is_active_herd(oc, name: str) -> bool:
+    """Outbound policy (Jordan's answer (2), 2026-10-15): Nova reaches herd members — rows in
+    herd_correspondents with retired_at IS NULL and an address on file — on her own judgment; anyone
+    else outside the household is blocked. Fails CLOSED (unreadable table -> not herd)."""
+    try:
+        oc.execute("SELECT 1 FROM herd_correspondents WHERE (lower(name)=lower(%s) OR lower(split_part(name,' ',1))=lower(%s)) "
+                   "AND retired_at IS NULL AND coalesce(email,'') <> '' LIMIT 1", (name, name))
+        return bool(oc.fetchone())
+    except Exception as e:  # noqa: BLE001
+        log(f"herd lookup failed ({e}) — treating {name!r} as outside the herd")
+        return False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -671,6 +700,10 @@ def process_reach(oc, reach: dict) -> str:
         # it is HELD, and nova_notify_jordan.py delivers the drawer as one bundle inside the window.
         # Quiet mode (nova_relationship): during a hard stretch a non-urgent reach is a nag —
         # hold it for the drawer (nova_notify_jordan shrinks that too). urgent=True still goes.
+        if IMMEDIATE_ONLY_FOR_IMPACT and not reach.get("urgent") and not _real_impact(message):
+            rid = _record(oc, audience, topic, message, rationale, None, "held")
+            log(f"HELD direct reach #{rid} to {audience} for the 18:00 summary (not real impact): {topic}")
+            return "held"
         if not reach.get("urgent") and quiet_active(oc):
             rid = _record(oc, audience, topic, message, rationale, None, "held")
             log(f"HELD direct reach #{rid} to {audience} — quiet mode (hard stretch): {topic}")
@@ -692,6 +725,12 @@ def process_reach(oc, reach: dict) -> str:
         log(f"{'SENT' if ok else 'HELD (post failed)'} direct reach #{rid} to {audience}: {topic}")
         return "sent" if ok else "held"
 
+    # Outbound policy (2026-10-15): herd members only. Jordan himself is the DIRECT path above.
+    if not is_active_herd(oc, audience):
+        rid = _record(oc, audience, topic, message, rationale, None, "dropped")
+        log(f"DROPPED reach #{rid} to {audience} — not an active herd member; outbound outside the herd is blocked")
+        return "dropped"
+
     # Generosity redline FIRST — a self-promoting / persistence-seeking / pestering
     # reach is dropped before it can ever become a proposal.
     if not passes_generosity(message) or not passes_generosity(rationale or "x reason"):
@@ -707,9 +746,10 @@ def process_reach(oc, reach: dict) -> str:
         rid = _record(oc, audience, topic, message, rationale, None, "dropped")
         log(f"DROPPED reach #{rid} to {audience} — repeat of a thought already filed/sent in {REPEAT_DAYS}d: {topic}")
         return "dropped"
-    # File it as a gated proposal — redline + value_check + human approval, exactly the
-    # tinkerer's path. The action is a SEND-TO-PERSON, which co-agency will hold as
-    # pending_human; nothing goes out without Jordan's approval.
+    # File it as a gated proposal — redline + value_check, exactly the tinkerer's path. 2026-10-15: a
+    # reach to an active herd member that passes both is sent on Nova's own judgment by co-agency's
+    # herd policy (nova_coagency._herd_policy, every 20m) through the single execution gate; a red line
+    # goes to Claude. Nothing goes out from here.
     action = f"send-to-{audience}: {message}"
     context = (f"Nova's unprompted relational reach toward {audience}. Topic: {topic}. "
                "Passed the honesty gate: every factual claim is cited to a retrieved source "

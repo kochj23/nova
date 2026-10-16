@@ -28,6 +28,12 @@ annotation) and nova_correlator.llm_summarize (evidence block in the summary pro
 
   nova_evidence_check.py --event <telemetry.events id>   # print the bundle for one event
   nova_evidence_check.py --selftest                       # pure-logic assertions, no DB
+  nova_evidence_check.py --absence --scheduled            # The Tahiti Check (monthly 1st 05:20)
+
+--absence (consolidation item #12, 2026-10-15; was the standalone nova_tahiti_check.py entry):
+THE TAHITI CHECK, evidence for absence claims ("no X", "never", "unused"). Logic, the tahiti_check
+table and the monthly digest stay in nova_tahiti_check.py; this mode forwards the remaining args
+to nova_tahiti_check.main() (--scheduled | --dry-run | --report [N] | --selftest).
 """
 import argparse
 import json
@@ -290,10 +296,23 @@ def check(oc, *, title, body="", level="info", category=None, source=None, dedup
     return b
 
 
-def main():
+def run_absence(argv) -> int:
+    """--absence: The Tahiti Check (merged 2026-10-15, item #12). Logic stays in nova_tahiti_check."""
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import nova_tahiti_check
+    log("--absence: The Tahiti Check (merged 2026-10-15): running nova_tahiti_check")
+    return nova_tahiti_check.main([a for a in argv if a != "--absence"])
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "--absence" in argv:
+        return run_absence(argv)
     ap = argparse.ArgumentParser(description="Nova's evidence check — read the raw row before believing the alert")
     ap.add_argument("--event", type=int, help="telemetry.events id to bundle (read-only, files nothing)")
-    args = ap.parse_args()
+    ap.add_argument("--absence", action="store_true", help="The Tahiti Check: absence claims (see nova_tahiti_check)")
+    args = ap.parse_args(argv)
     if not args.event:
         ap.print_help(); return 2
     conn = psycopg2.connect(OPS_DSN, connect_timeout=5); conn.autocommit = True
@@ -341,7 +360,7 @@ def demo():
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
+    if len(sys.argv) > 1 and sys.argv[1] == "--selftest" and "--absence" not in sys.argv:
         demo()
     else:
         sys.exit(main())

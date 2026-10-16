@@ -191,7 +191,7 @@ class TestRetry(unittest.TestCase):
         with patch.object(urllib.request, "urlopen", boom):
             self.assertEqual(tri.llm("p"), "")
         with _Triage(llm_out="") as t:
-            d = tri.triage("Disk 91% on nova-core", level="warning")
+            d = tri.triage("Memory server down on nova-core", level="warning")
         self.assertEqual(d["decision"], "page")
         self.assertIn("triage parse failed", d["reason"])
 
@@ -234,7 +234,7 @@ class TestUnit(unittest.TestCase):
 
     def test_verdict_outside_the_set_is_coerced_to_real(self):
         with _Triage(llm_out=json.dumps({"verdict": "whatever", "confidence": 0.99})) as t:
-            d = tri.triage("x is odd", level="warning")
+            d = tri.triage("gateway is failing oddly", level="warning")
         self.assertEqual((d["verdict"], d["decision"]), ("real_actionable", "page"))
 
 
@@ -266,7 +266,7 @@ class TestIntegration(unittest.TestCase):
     def test_evidence_fault_on_critical_still_pages_but_is_annotated(self):
         ev = {"verdict": "detector_fault", "note": "rule bug", "raw": [], "who": {}, "advice": "fix rule"}
         with _Triage(llm_out=REAL, evidence=ev) as t:
-            d = tri.triage("Something critical", level="critical")
+            d = tri.triage("Gateway down (something critical)", level="critical")
         self.assertEqual(d["decision"], "page")
         self.assertEqual(len(t.llm_calls), 1)
         self.assertIn("🛠 Do: fix rule", d["annotation"])  # evidence advice beats the model's next_action
@@ -275,7 +275,7 @@ class TestIntegration(unittest.TestCase):
 class TestFunctional(unittest.TestCase):
     def test_cli_golden_path_prints_the_decision_json(self):
         buf = io.StringIO()
-        with _Triage(llm_out=REAL) as t, patch.object(sys, "argv", ["x", "Disk 91% on nova-core", "--level", "warning", "--category", "disk"]):
+        with _Triage(llm_out=REAL) as t, patch.object(sys, "argv", ["x", "Memory server down on nova-core", "--level", "warning", "--category", "disk"]):
             with redirect_stdout(buf):
                 rc = tri.main()
         self.assertEqual(rc, 0)
@@ -292,15 +292,15 @@ class TestFunctional(unittest.TestCase):
 
     def test_rule_b_backoff_suppresses_a_repeat_page(self):
         with _Triage(llm_out=REAL, backoff=(1, 600)) as t:
-            d = tri.triage("Disk 91% on nova-core", level="warning", dedup_key="disk:nova-core")
+            d = tri.triage("Memory server down on nova-core", level="warning", dedup_key="mem:nova-core")
         self.assertEqual(d["decision"], "suppress")
         self.assertTrue(d["reason"].startswith("backoff: paged 10m ago"))
 
     def test_critical_downgrade_becomes_warning_and_log_write_failure_is_non_fatal(self):
         with _Triage(llm_out=json.dumps({"verdict": "expected_change", "confidence": 0.9})) as t:
             t.cur.answers.append(("INSERT INTO alert_triage_log", RuntimeError("log table gone")))
-            d = tri.triage("Replica lag", level="critical")
-        self.assertEqual((d["decision"], d["level"]), ("page", "critical"))   # critical always pages
+            d = tri.triage("Gateway timeout", level="critical")
+        self.assertEqual((d["decision"], d["level"]), ("page", "critical"))   # critical Tier-0 pages
         with _Triage(llm_out=json.dumps({"verdict": "expected_change", "confidence": 0.9})) as t:
             d = tri.triage("Replica lag", level="warning")
         self.assertEqual((d["decision"], d["level"]), ("downgrade", "warning"))
@@ -316,6 +316,65 @@ class TestFrame(unittest.TestCase):
     def test_import_never_runs_main(self):
         self.assertIn('if __name__ == "__main__":\n    sys.exit(main())', SRC)
         self.assertEqual(tri.__name__, "tri")
+
+
+class TestRuleCPageClass(unittest.TestCase):
+    """#39 (Little Mister, 2026-10-15): page only for SLO / Tier-0 / house impact; else a ticket."""
+    def test_slo_critical_pages_and_slo_warning_is_a_ticket(self):
+        self.assertEqual(tri.page_class("SLO chat burning 14x", "critical", "slo")[0], "page")
+        self.assertEqual(tri.page_class("SLO chat slow burn", "warning", "slo")[0], "ticket")
+
+    def test_tier0_down_pages_but_tier0_mention_alone_does_not(self):
+        for t in ("Keystone DOWN: Memory server", "Keystone health 'Gateway' = down",
+                  "PROBE FAIL: memory_roundtrip @ host", "Keystone DOWN: PostgreSQL primary",
+                  "Keystone DOWN: PgBouncer", "Keystone DOWN: Inference router"):
+            self.assertEqual(tri.page_class(t, "critical", "core-liveness")[0], "page", t)
+        self.assertEqual(tri.page_class("Gateway config reloaded", "warning", "fleet")[0], "ticket")
+        self.assertEqual(tri.page_class("Keystone DOWN: Scheduler", "critical", "core-liveness")[0], "ticket")
+
+    def test_house_impact_pages_but_world_news_and_freeways_do_not(self):
+        self.assertEqual(tri.page_class("Smoke alarm: kitchen", "critical", "home")[0], "page")
+        self.assertEqual(tri.page_class("LA County evacuation order", "critical", "emergency")[0], "page")
+        self.assertEqual(tri.page_class("BREAKING: UDM-Pro blocks inbound", "critical", "security_news")[0], "ticket")
+        self.assertEqual(tri.page_class("FLOOD — I-5 : (37) Olive", "critical", "traffic_watch")[0], "ticket")
+        self.assertEqual(tri.page_class("FIRE — I-210 : Allen", "critical", "traffic_watch")[0], "ticket")
+        self.assertEqual(tri.page_class("Pod: LEAKED texts", "info", "media")[0], "ticket")
+
+    def test_declared_impact_and_hard_title_page(self):
+        self.assertEqual(tri.page_class("anything", "warning", "x", {"impact": "house"})[0], "page")
+        self.assertEqual(tri.page_class("Nightly backup failed", "warning", "backup")[0], "page")
+        self.assertEqual(tri.page_class("UNRESOLVED x8: probe", "critical", "incident_escalation")[0], "ticket")
+
+    def test_hard_match_in_body_only_is_a_ticket_never_suppressed(self):
+        with _Triage(llm_out=BENIGN) as t:
+            d = tri.triage("Scheduler Heartbeat", body="all workers down? no: all ok", level="info",
+                           category="scheduler")
+        self.assertEqual(d["decision"], "ticket")
+        self.assertTrue(d["hard_override"])
+        self.assertEqual(t.llm_calls, [])
+
+    def test_would_be_page_becomes_ticket_and_critical_level_drops_to_warning(self):
+        with _Triage(llm_out=REAL) as t:
+            d = tri.triage("Disk 91% on nova-core", level="critical", category="storage")
+        self.assertEqual((d["decision"], d["level"]), ("ticket", "warning"))
+        self.assertTrue(d["reason"].startswith("ticket (RULE C)"))
+        self.assertEqual(t.logged()[7], "ticket")
+
+    def test_ticket_is_not_subject_to_backoff_reads(self):
+        with _Triage(llm_out=REAL, backoff=(1, 600)) as t:
+            d = tri.triage("Disk 91% on nova-core", level="warning", dedup_key="disk:x")
+        self.assertEqual(d["decision"], "ticket")
+
+    def test_meta_json_string_is_parsed(self):
+        self.assertEqual(tri._ev_meta({"meta": '{"impact": "jordan"}'}), {"impact": "jordan"})
+        self.assertEqual(tri._ev_meta({"meta": "not json"}), {})
+        self.assertEqual(tri._ev_meta(None), {})
+
+    def test_page_class_fast_on_10k(self):
+        t0 = time.perf_counter()
+        for i in range(10000):
+            tri.page_class(f"Keystone DOWN: thing {i}", "critical", "core-liveness")
+        self.assertLess(time.perf_counter() - t0, 2.0)
 
 
 if __name__ == "__main__":

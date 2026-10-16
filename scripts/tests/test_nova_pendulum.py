@@ -228,5 +228,27 @@ class TestFrame(unittest.TestCase):
         self.assertIn('if __name__ == "__main__":', SRC)
 
 
+
+class TestMergedIntoDiskForecast(unittest.TestCase):
+    """Consolidation #18 (2026-10-15): the 6-hourly run is `nova_disk_forecast.py --pendulum`."""
+
+    def test_run_delegates(self):
+        import nova_disk_forecast
+        with mock.patch.object(nova_disk_forecast, "main", return_value=0) as m:
+            self.assertEqual(P.main(["--run", "--dry-run"]), 0)
+        m.assert_called_once_with(["--pendulum", "--dry-run"])
+
+    def test_disk_forecast_pendulum_runs_pendulum(self):
+        import nova_disk_forecast
+        with mock.patch.object(P, "run", return_value=[]) as r:
+            self.assertEqual(nova_disk_forecast.main(["--pendulum"]), 0)
+        r.assert_called_once_with(dry=False)
+        with mock.patch.object(P, "show", return_value=0) as sh:
+            self.assertEqual(nova_disk_forecast.main(["--pendulum", "--line"]), 0)
+        sh.assert_called_once_with(line_only=True)
+
+    def test_line_name_still_pendulum(self):
+        self.assertIn("Pendulum", P.watch_bill_line([]))
+
 if __name__ == "__main__":
     unittest.main()

@@ -222,10 +222,77 @@ class TestFunctional(unittest.TestCase):
 
     def test_error_path_exit_code_contract(self):
         # __main__ maps a non-empty issue list to exit 1 — the same expression, evaluated here
-        self.assertIn("sys.exit(1 if check() else 0)", SRC)
+        self.assertIn("sys.exit(1 if (_issues or _missed) else 0)", SRC)
         cur = _Cur(last={p: None for p in bm.JOBS})
         issues, _, _, _ = _check(cur)
         self.assertEqual(1 if issues else 0, 1)
+
+
+class _NightCur:
+    """Cursor stub for check_nightly(): last successful ended_at (epoch ms) per task id."""
+    def __init__(self, last_ms):
+        self.last_ms, self.sql, self._row = last_ms, [], None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, params=None):
+        self.sql.append((sql, params))
+        v = self.last_ms.get(params[0], "absent")
+        self._row = (None, 0) if v == "absent" else (v, 5)
+
+    def fetchone(self):
+        return self._row
+
+
+def _nightly(last_ms):
+    cur, n = _NightCur(last_ms), MagicMock()
+    conn = _conn(cur)
+    with patch.object(bm.psycopg2, "connect", MagicMock(return_value=conn)), \
+         patch.object(bm.nova_notify, "notify", n), patch.object(bm.time, "sleep"), redirect_stdout(io.StringIO()):
+        issues = bm.check_nightly()
+    return issues, n, cur, conn
+
+
+def _ms_ago(h):
+    return (time.time() - h * 3600) * 1000
+
+
+class TestMissedNight(unittest.TestCase):
+    """Little Mister, 2026-10-15 (#34): a skipped 02:00 pg_backup must alarm the next morning."""
+
+    def test_all_fresh_is_silent(self):
+        issues, n, cur, conn = _nightly({t: _ms_ago(3) for t in bm.NIGHTLY})
+        self.assertEqual(issues, [])
+        n.assert_not_called()
+        self.assertTrue(conn.closed)
+        self.assertTrue(all("scheduler_runs" in q and "%s" in q for q, _ in cur.sql))
+
+    def test_one_missed_night_warns_two_is_critical(self):
+        last = {t: _ms_ago(3) for t in bm.NIGHTLY}
+        last["pg_backup"] = _ms_ago(30)
+        issues, n, _, _ = _nightly(last)
+        self.assertEqual([(t, lvl) for t, _, lvl in issues], [("pg_backup", "warning")])
+        self.assertIn("missed night", issues[0][1])
+        self.assertEqual(n.call_args.kwargs["dedup_key"], "backup-missed:pg_backup")
+        last["pg_backup"] = _ms_ago(60)
+        issues, _, _, _ = _nightly(last)
+        self.assertEqual(issues[0][2], "critical")
+
+    def test_never_succeeded_warns(self):
+        issues, _, _, _ = _nightly({t: None for t in bm.NIGHTLY})
+        self.assertEqual({t for t, _, _ in issues}, set(bm.NIGHTLY))
+
+    def test_not_yet_scheduled_is_skipped_not_alarmed(self):
+        issues, n, _, _ = _nightly({})
+        self.assertEqual(issues, [])
+        n.assert_not_called()
+
+    def test_pg_backup_is_watched_nightly(self):
+        self.assertLessEqual(bm.NIGHTLY["pg_backup"], 26)
 
 
 class TestFrame(unittest.TestCase):

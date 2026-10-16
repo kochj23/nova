@@ -38,7 +38,8 @@ from nova_notify import notify as nova_notify
 CINC_BASE = Path("/Volumes/Data/AI/cinc")
 COOKBOOKS = CINC_BASE / "cookbooks"
 NODES_DIR = CINC_BASE / "nodes"
-DB_DSN = "dbname=nova_ops user=kochj host=pg-primary.digitalnoise.net"
+import nova_dsn as _nova_dsn  # noqa: E402
+DB_DSN = _nova_dsn.pg_dsn("nova_ops")   # was a hardcoded host string (2026-10-15, #60)
 SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new"]
 REMOTE_BASE = "/opt/nova-config"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_orchestrate.log"
@@ -96,6 +97,16 @@ def db_exec(sql, params=None):
         conn.close()
     except Exception as e:
         log(f"DB exec error: {e}", "ERROR")
+
+
+def is_local(ip) -> bool:
+    """Is `ip` this machine? Shares nova_cinc_daily.is_local_host (own addresses); falls back to
+    loopback only, so a missing helper never SSHes a host into itself silently."""
+    try:
+        from nova_cinc_daily import is_local_host
+        return bool(is_local_host(ip))
+    except Exception:  # noqa: BLE001
+        return str(ip).split("/")[0] in ("127.0.0.1", "localhost", "::1")
 
 
 # ── SSH Helpers ───────────────────────────────────────────────────────────────
@@ -173,15 +184,18 @@ def converge_node(node, dry_run=False):
         "VALUES (%s, %s, %s, %s, 'orchestrator')",
         (run_id, name, ip, "drift_check" if dry_run else "converge"))
 
-    # Local node (this machine)
-    if ip in ("127.0.0.1", "192.168.1.6"):
+    # Local node (this machine) — decided from this host's own addresses, not a hardcoded .6
+    # (from scheduler-core on .2 every Mac + nova-core itself was "SSH unreachable", #60)
+    if is_local(ip):
         return _converge_local(node, run_id, start, dry_run)
 
-    # Test SSH
+    # Test SSH. Unreachable is NOT a failed deployment — nothing was changed — so it is recorded as
+    # status 'unreachable' and stays out of the change-failure rate (152 of 152 "failures" in the
+    # 30 days to 2026-10-15 were this; Little Mister, 2026-10-15, #60).
     if not ssh_test(user, ip):
         duration = time.time() - start
         db_exec(
-            "UPDATE deployment_runs SET ended_at = now(), status = 'failure', "
+            "UPDATE deployment_runs SET ended_at = now(), status = 'unreachable', "
             "exit_code = -1, duration_s = %s, error_output = 'SSH unreachable' "
             "WHERE run_id = %s", (duration, run_id))
         log(f"[{name}] SSH unreachable", "ERROR")

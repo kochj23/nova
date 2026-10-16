@@ -6,6 +6,11 @@ reporting, how many recent actions have no recorded rationale, and how many chec
 gaps. It does not read memory content, email, messages or any private source, so it can be shared as is.
 
 Usage: nova_whole_picture.py [--hours 24] [--notify] [--dry-run]
+
+RETIRED 2026-10-15 (consolidation item #10; approved by Claude 2026-10-15). It was never scheduled. Its useful
+lines (open conflicts, failed reviews, actions with no rationale) now live in nova_directive_conflict.gaps_lines(),
+which the Watch Bill gaps block reads; `nova_directive_conflict.py --gaps` prints them. The HomeKit line is
+nova_home_reachability's own. Thin wrapper: main() runs --gaps; digest_lines()/gather() stay importable.
 Written by Jordan Koch (via Claude).
 """
 import argparse
@@ -58,22 +63,12 @@ def gather(conn, hours: int) -> dict:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--hours", type=int, default=24)
-    ap.add_argument("--notify", action="store_true")
+    ap.add_argument("--notify", action="store_true", help="kept for old callers; ignored (the Watch Bill carries it)")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
-    import psycopg2
-    conn = _nova_dsn.pg_connect()
-    try:
-        g = gather(conn, a.hours)
-    finally:
-        conn.close()
-    lines = digest_lines(g["conflicts"], g["reachability"], g["actions"], g["review_errors"])
-    print("\n".join(lines))
-    if a.notify and not a.dry_run:
-        import nova_notify
-        nova_notify.notify("Nova whole-picture digest", "\n".join(lines), level="info", category="governance",
-                           source="nova_whole_picture", dedup_key=f"whole-picture-{a.hours}h")
-    return 0
+    print("[whole-picture] retired into nova_directive_conflict.py --gaps on 2026-10-15; delegating", flush=True)
+    import nova_directive_conflict as DC
+    return DC.main(["--gaps", "--hours", str(a.hours)]) or 0
 
 
 if __name__ == "__main__":

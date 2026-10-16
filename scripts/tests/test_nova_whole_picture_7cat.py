@@ -38,7 +38,9 @@ def test_performance_digest_lines_handle_many_conflicts_quickly():
 
 # ── Retry ─────────────────────────────────────────────────────────────────────
 def test_retry_connection_uses_shared_helper():
-    assert "_nova_dsn.pg_connect(" in (SCRIPTS / "nova_whole_picture.py").read_text()
+    # gather() keeps the shared retrying helper's contract (callers pass a conn); main delegates to --gaps.
+    src = (SCRIPTS / "nova_whole_picture.py").read_text()
+    assert 'DC.main(["--gaps"' in src
 
 
 # ── Unit ──────────────────────────────────────────────────────────────────────
@@ -75,7 +77,7 @@ def test_functional_dry_run_prints_digest():
     out = subprocess.run([sys.executable, str(SCRIPTS / "nova_whole_picture.py"), "--dry-run"],
                          capture_output=True, text=True, timeout=60, cwd=SCRIPTS)
     assert out.returncode == 0, out.stderr
-    assert "HomeKit:" in out.stdout
+    assert "retired into nova_directive_conflict.py --gaps" in out.stdout
 
 
 # ── Frame ─────────────────────────────────────────────────────────────────────

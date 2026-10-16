@@ -71,8 +71,53 @@ class TestSecurity(unittest.TestCase):
     def test_awesome_repos_skipped(self):
         ts = (nr.NOW - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         ev = [{"created_at": ts, "repo": {"name": "kochj23/awesome-x"}, "type": "WatchEvent"}]
-        with patch.object(nr.subprocess, "run", side_effect=[_p(json.dumps(ev)), _p("[]")]):
+        with patch.object(nr, "_github_token", return_value=None), \
+             patch.object(nr, "_github_api", side_effect=[ev, {"items": []}]):
             self.assertIn("No activity", nr.github_digest())
+
+
+class TestGithubToken(unittest.TestCase):
+    """#3: the digest picks up a token from 1Password/Keychain when one exists, else public-only."""
+    def _env(self):
+        return patch.dict(os.environ, {"GH_TOKEN": "", "GITHUB_TOKEN": ""})
+
+    def test_vault_item_name_is_github_token(self):
+        self.assertEqual(nr.GITHUB_TOKEN_ITEM, "github-token")
+
+    def test_vault_token_used_when_present(self):
+        import nova_secrets
+        with self._env(), patch.object(nova_secrets, "vault_secret", return_value="tokV") as v:
+            self.assertEqual(nr._github_token(), "tokV")
+        v.assert_called_once_with("github-token")
+
+    def test_keychain_used_when_vault_missing(self):
+        import nova_secrets
+        with self._env(), patch.object(nova_secrets, "vault_secret", side_effect=KeyError("x")), \
+             patch.object(nova_secrets, "_keychain", return_value="tokK"):
+            self.assertEqual(nr._github_token(), "tokK")
+
+    def test_public_only_when_nothing(self):
+        import nova_secrets
+        with self._env(), patch.object(nova_secrets, "vault_secret", side_effect=SystemExit(1)), \
+             patch.object(nova_secrets, "_keychain", return_value=None), \
+             patch.object(nr.shutil if hasattr(nr, "shutil") else __import__("shutil"), "which", return_value=None), \
+             patch.object(nr, "Path", side_effect=lambda p: SimpleNamespace(exists=lambda: False)):
+            self.assertIsNone(nr._github_token())
+
+    def test_rejected_token_falls_back_to_public(self):
+        import io, urllib.error
+        calls = []
+        def fake(req, timeout=30):
+            calls.append(req.headers.get("Authorization"))
+            if req.headers.get("Authorization"):
+                raise urllib.error.HTTPError(req.full_url, 401, "bad", {}, None)
+            return io.BytesIO(b'{"ok": 1}')
+        with patch.object(nr.urllib.request, "urlopen", side_effect=fake):
+            self.assertEqual(nr._github_api("/x", "stale"), {"ok": 1})
+        self.assertEqual(calls, ["Bearer stale", None])
+
+    def test_no_token_in_source(self):
+        self.assertNotRegex(SRC, r"gh[pousr]_[A-Za-z0-9]{20,}")
 
 
 class TestPerformance(_Base):
@@ -88,10 +133,12 @@ class TestPerformance(_Base):
 class TestRetry(_Base):
     def test_sections_fail_open(self):
         # RETRY GAP: github_digest()/weather_report()/burbank_reddit() — one attempt; errors become text, never raise
-        with patch.object(nr.subprocess, "run", side_effect=subprocess.TimeoutExpired("gh", 30)) as r:
+        with patch.object(nr, "_github_token", return_value=None), \
+             patch.object(nr.urllib.request, "urlopen", side_effect=OSError("down")):
             self.assertIn("_Error:", nr.github_digest())
+        with patch.object(nr.subprocess, "run", side_effect=subprocess.TimeoutExpired("x", 30)) as r:
             self.assertIn("_Error:", nr.weather_report())
-        self.assertEqual(r.call_count, 2)
+        self.assertEqual(r.call_count, 1)
         with patch.object(nr.urllib.request, "urlopen", side_effect=OSError("down")):
             self.assertIn("_Error:", nr.burbank_reddit())
 

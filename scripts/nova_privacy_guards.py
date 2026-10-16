@@ -13,7 +13,8 @@ face never becomes material for persuasion, courting, engagement, or a message t
   camera_use_ok(purpose, recipient)  -> (ok, reason): purpose must be safety/presence, recipient must
                                         be Jordan or an internal store, never a third party
 
-Pure functions, no I/O. Owned by the safety lane. Written by Jordan Koch.
+Pure functions; the only side effect is one fire-and-forget guard_decisions row per decision
+(nova_guard_log, plan item #27, 2026-10-15; never raises, never changes a result). Owned by the safety lane. Written by Jordan Koch.
 """
 from __future__ import annotations
 
@@ -29,6 +30,15 @@ _FACE_TEXT_RX = re.compile(
     r"\b(face|faces)\b.{0,40}\b(detected|recogni[sz]ed|matched|spotted|identified)\b|"
     r"\b[A-Z][a-z]+\b (was |is )?(detected|spotted|seen|recogni[sz]ed) (at|on|by) (the )?\w*[ _-]?(cam|camera|doorbell|gate|porch|driveway)\w*|"
     r"\b(unknown|known) face\b|\(\d{1,3}% match\)", re.I)
+
+
+def _glog(decision, subject=None, **detail):
+    """One guard_decisions row (item #27). Never raises, never blocks, never alters the verdict."""
+    try:
+        import nova_guard_log
+        nova_guard_log.log("privacy_guards", decision, subject, detail)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def tag_private(metadata: dict | None, kind: str = "face") -> dict:
@@ -58,7 +68,11 @@ def is_face_output(memory: dict) -> bool:
 
 def filter_for_content(memories) -> list:
     """Drop face/camera outputs before anything is generated from these memories."""
-    return [m for m in (memories or []) if not is_face_output(m)]
+    ms = list(memories or [])
+    kept = [m for m in ms if not is_face_output(m)]
+    _glog("filtered" if len(kept) < len(ms) else "pass", via="filter_for_content",
+          seen=len(ms), dropped=len(ms) - len(kept))
+    return kept
 
 
 def scrub_face_mentions(text: str, names=()) -> str:
@@ -72,6 +86,9 @@ def scrub_face_mentions(text: str, names=()) -> str:
                              r"doorbell|face|spotted|detected|seen on|seen at|arrived home)\b", re.I)
     keep = [s for s in sentences
             if not _FACE_TEXT_RX.search(s) and not (name_rx and name_rx.search(s))]
+    removed = len(sentences) - len(keep)
+    _glog("scrubbed" if removed else "pass", via="scrub_face_mentions", sentences=len(sentences),
+          removed=removed)
     return " ".join(keep)
 
 
@@ -79,7 +96,11 @@ def camera_use_ok(purpose: str, recipient: str = "internal") -> tuple:
     p = (purpose or "").strip().lower()
     r = (recipient or "").strip().lower()
     if p not in ALLOWED_PURPOSES:
-        return False, f"camera/face data may serve safety or presence only, not '{purpose}'"
-    if r not in INTERNAL_RECIPIENTS:
-        return False, f"camera/face data never goes to a third party ('{recipient}')"
-    return True, "safety/presence use, internal recipient"
+        res = (False, f"camera/face data may serve safety or presence only, not '{purpose}'")
+    elif r not in INTERNAL_RECIPIENTS:
+        res = (False, f"camera/face data never goes to a third party ('{recipient}')")
+    else:
+        res = (True, "safety/presence use, internal recipient")
+    _glog("allow" if res[0] else "refuse", p[:40] or None, via="camera_use_ok",
+          recipient=r if r in INTERNAL_RECIPIENTS else "third-party")
+    return res

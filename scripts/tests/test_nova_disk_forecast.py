@@ -184,5 +184,15 @@ class TestFrame(unittest.TestCase):
         self.assertEqual((r.returncode, r.stdout.strip()), (0, ""))
 
 
+
+class TestPendulumMode(unittest.TestCase):
+    """--pendulum (The Pendulum, merged 2026-10-15) never touches the forecast collector."""
+
+    def test_pendulum_skips_collector(self):
+        import nova_pendulum
+        with patch.object(df.psycopg2, "connect") as c, patch.object(nova_pendulum, "run", return_value=[]) as r:
+            self.assertEqual(df.main(["--pendulum", "--dry-run"]), 0)
+        c.assert_not_called(); r.assert_called_once_with(dry=True)
+
 if __name__ == "__main__":
     unittest.main()

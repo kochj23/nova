@@ -11,9 +11,14 @@ his private states and losing every time. Replace the bets with a loop that clos
   it to #nova-chat as its own message, remember the message ts in slack_prompts, and let
   nova_slack_answers.py harvest the thread reply (or reaction, once the app has the scope).
 
-  nova_ask_one.py            # post today's question (no-op if one is still open)
-  nova_ask_one.py --dry-run  # print the question it would post
+  nova_ask_one.py            # 2026-10-15: no longer posts — prints that the question rides the 18:00 summary
+  nova_ask_one.py --dry-run  # print the question the summary would carry today
   nova_ask_one.py --selftest # pure-logic assertions
+
+2026-10-15 (Jordan: "Her questions go back to her ... She shouldn't wait for me to answer"): Nova no
+longer posts a question to him every morning. At most ONE optional question a day rides inside her 18:00
+summary (nova_notify_jordan.py --daily -> question_for_summary()), and only when it is about JORDAN
+HIMSELF — his preferences — never a decision she should make, never trivia from her reading.
 """
 import json
 import re
@@ -53,6 +58,50 @@ def pick(rows):
         if ABOUT_HIM_RE.search(r[1]):
             return r
     return live[0]
+
+
+ABOUT_JORDAN_RX = re.compile(r"\bjordan\b|\byou\b|\byour\b|\blittle mister\b", re.I)
+PREFERENCE_RX = re.compile(r"\b(prefer\w*|like|likes|enjoy\w*|favou?rite|love|hate|rather|want|wish|"
+                           r"feel about|think (of|about)|care about|taste|style|mood|annoy\w*|bother\w*|"
+                           r"comfortable|happy with)\b", re.I)
+DECISION_RX = re.compile(r"\b(should i|shall i|can i|may i|could i|do you want me to|would you like me to|"
+                         r"approve|approval|permission|allowed to|ok(ay)? (for me )?to|let me|go ahead|"
+                         r"which (one|option) should|decide|decision)\b", re.I)
+ADDRESSED_TO_NOVA_RX = re.compile(r"^\s*nova\b", re.I)
+
+
+def is_about_jordan_preference(question: str) -> bool:
+    """Pure. True only for a question about Jordan himself and his preferences — not a decision she
+    should make herself, not one addressed to herself, not trivia."""
+    q = question or ""
+    return bool(ABOUT_JORDAN_RX.search(q) and PREFERENCE_RX.search(q)
+                and not DECISION_RX.search(q) and not ADDRESSED_TO_NOVA_RX.search(q))
+
+
+def pick_for_summary(rows):
+    """rows: (id, question, memory_source, asked_at) newest first -> the one row to carry, or None. Pure."""
+    for r in rows:
+        if (r[2] or "") in SKIP_SOURCES or not (r[1] or "").strip():
+            continue
+        if is_about_jordan_preference(r[1]):
+            return r
+    return None
+
+
+def question_for_summary(cur):
+    """(qid, question) for today's 18:00 summary, or None. None when quiet mode is on or a question from
+    the last OPEN_MAX_DAYS is still unanswered (never stack). Read-only."""
+    if quiet_active(cur):
+        return None
+    cur.execute("SELECT count(*) FROM slack_prompts WHERE kind='question' AND resolved_at IS NULL "
+                "AND posted_at > now() - (%s || ' days')::interval", (str(OPEN_MAX_DAYS),))
+    if (cur.fetchone() or (0,))[0]:
+        return None
+    cur.execute("SELECT id, question, memory_source, asked_at FROM reflection_questions "
+                "WHERE answer IS NULL AND id NOT IN (SELECT ref_id::int FROM slack_prompts WHERE kind='question') "
+                "ORDER BY asked_at DESC LIMIT 80")
+    r = pick_for_summary(cur.fetchall())
+    return (r[0], r[1]) if r else None
 
 
 def compose(qid, question):
@@ -126,6 +175,20 @@ def main():
     dry = "--dry-run" in sys.argv
     conn = _pg_connect(); conn.autocommit = True; cur = conn.cursor()
     ensure_schema(cur)
+    # 2026-10-15: no standalone morning post. The one optional question rides the 18:00 summary.
+    q = question_for_summary(cur)
+    if dry:
+        print(compose(*q) if q else "(no question about Jordan himself today)")
+    else:
+        log("standalone posting retired — " + (f"Q#{q[0]} will ride the 18:00 summary" if q else "nothing about him today"))
+    return 0
+
+
+def _legacy_post_main():
+    """The pre-2026-10-15 morning post, kept for reference/tests; nothing schedules it."""
+    dry = "--dry-run" in sys.argv
+    conn = _pg_connect(); conn.autocommit = True; cur = conn.cursor()
+    ensure_schema(cur)
     cur.execute("SELECT count(*) FROM slack_prompts WHERE kind='question' AND resolved_at IS NULL "
                 "AND posted_at > now() - (%s || ' days')::interval", (str(OPEN_MAX_DAYS),))
     if cur.fetchone()[0]:
@@ -157,6 +220,10 @@ def demo():
     assert pick(rows[1:])[0] == 3                 # self-directed source skipped, newest trivia wins
     assert pick([rows[1]]) is None
     t = compose(5, rows[0][1]); assert "Q#5" in t and "thread" in t
+    assert is_about_jordan_preference("Jordan, do you prefer the lights warmer in the evening?")
+    assert not is_about_jordan_preference("Should I restart the printer for you?")          # a decision: hers
+    assert not is_about_jordan_preference("What is the role of disputation in scholastic thought?")
+    assert not is_about_jordan_preference("Nova, what did you like about that passage?")    # to herself
     print("all ask-one assertions passed")
 
 

@@ -33,7 +33,17 @@ Ledger's Lagash runbooks. A drill result 'worked' with a "how" note is written b
 Measures: % of automated functions with a VERIFIED manual fallback (worked by hand in the latest live
 drill); last drill date. Table haven_drills.
 
+BUTLERIAN SECTION (merged 2026-10-15, consolidation item #16 — approved by Claude for Little Mister):
+the Butlerian Ledger (nova_butlerian_ledger.py) is now a section of this organ. Its logic and tables
+(butlerian_weekly, butlerian_drills) stay in that module; this one runs it:
+  --butlerian [--weeks N] [--dry-run]        the weekly share ("how much of his judgement moved to Nova")
+  --aub-offer [--dry-run]                    Aub's Drill: the quarterly offer (no-op without consent)
+  --aub-record TASK --result R [--note T]    record a hand drill he ran
+--report carries a "Butlerian Ledger" section (latest week, trend, Aub's Drill state). None of these
+paths can touch the kill switch: they never reach engage()/live(); --live keeps its own refusals.
+
 CLI: --scheduled | --dry-run | --report | --selftest | --watchdog
+     --butlerian | --aub-offer | --aub-record TASK --result R   (the Butlerian section)
      --schedule-window "YYYY-MM-DD HH:MM"         record the window Jordan picked
      --live --confirm [--window-min 30] [--results-file F] [--drill-id N]   HUMAN-RUN ONLY
 Run --live on the host that runs the automation engine (the tripwire file is per-host).
@@ -669,6 +679,7 @@ def report() -> int:
         summ = summarize(d["checklist"], (last_live or {}).get("results") or {})
         print(render(d, summ))
         print(f"Last live drill: {last:%Y-%m-%d} " if last else "Last live drill: never")
+        print("\n".join(butlerian_lines(cur)))
         return 0
     finally:
         conn.close()
@@ -739,6 +750,52 @@ def run_live(a) -> int:
         conn.close()
 
 
+# ── Butlerian section (Butlerian Ledger + Aub's Drill, merged 2026-10-15) ───
+# Read-only with respect to the kill switch: nothing here calls the engage, live or restore paths.
+
+def butlerian_lines(cur) -> list:
+    """The report's Butlerian section from butlerian_weekly / butlerian_drills. Never raises."""
+    try:
+        import nova_butlerian_ledger as B
+        if not B._table(cur, "butlerian_weekly"):
+            return ["Butlerian Ledger: no week recorded yet."]
+        rows = B._q(cur, "SELECT week, decided, him_unchanged, delegated, nova_decided, dependence "
+                         "FROM butlerian_weekly ORDER BY week DESC LIMIT 6")
+        out = []
+        if rows:
+            wk, dec, unch, dlg, nova, dep = rows[0]
+            weeks = {str(r[0]): {"decided": r[1] or 0, "dependence": r[5]} for r in reversed(rows)
+                     if r[5] is not None}
+            out.append(f"Butlerian Ledger, week of {wk}: {dec} decisions on Nova's proposals; he took {unch} "
+                       f"unchanged, {dlg} decided by the Claude reviewer, {nova} by Nova "
+                       f"(dependence {dep}; trend {B.trend(weeks, n=3)}).")
+        consent = B.consented(cur)
+        last = (B._q(cur, "SELECT quarter, task, result, coalesce(ran_at, offered_at) FROM butlerian_drills "
+                          "ORDER BY id DESC LIMIT 1") if B._table(cur, "butlerian_drills") else [])
+        aub = f"Aub's Drill: consent {'yes' if consent else 'no'}"
+        if last:
+            q, task, res, ts = last[0]
+            aub += f"; last {task} ({q or '-'}) {res or 'offered, not yet run'}{f' {ts:%Y-%m-%d}' if ts else ''}"
+        return out + [aub + "."]
+    except Exception as e:  # noqa: BLE001 — a section, never a reason the report fails
+        return [f"Butlerian Ledger: unreadable ({str(e)[:100]})."]
+
+
+def butlerian(a) -> int:
+    """--butlerian / --aub-offer / --aub-record: the Butlerian Ledger's runs, logic unchanged."""
+    import nova_butlerian_ledger as B
+    if a.aub_record:
+        if a.result not in B.RESULTS:
+            print(f"--aub-record needs --result one of {', '.join(B.RESULTS)}", file=sys.stderr)
+            return 2
+        return B.record_drill(a.aub_record, a.result, a.note or "", dry=a.dry_run)
+    if a.aub_offer:
+        B.offer_drill(dry=a.dry_run)
+        return 0
+    B.run(dry=a.dry_run, n_weeks=max(1, min(a.weeks, 104)))
+    return 0
+
+
 def selftest() -> int:
     assert clamp_window(30) == 30 and clamp_window(500) == 120 and clamp_window(1) == 5 and clamp_window("x") == 30
     assert quarter(datetime(2026, 10, 15)) == "2026-Q4" and quarter(datetime(2026, 1, 1)) == "2026-Q1"
@@ -771,6 +828,12 @@ def main(argv=None) -> int:
     ap.add_argument("--drill-id", type=int)
     ap.add_argument("--restore-due", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--deadline", type=float, help=argparse.SUPPRESS)
+    ap.add_argument("--butlerian", action="store_true", help="Butlerian Ledger: compute and store the weekly share")
+    ap.add_argument("--weeks", type=int, default=8, help="with --butlerian: complete weeks (default 8)")
+    ap.add_argument("--aub-offer", action="store_true", help="Aub's Drill: this quarter's offer (needs consent)")
+    ap.add_argument("--aub-record", metavar="TASK", help="Aub's Drill: record a drill he ran (with --result)")
+    ap.add_argument("--result", help="with --aub-record: could | partly | could_not")
+    ap.add_argument("--note", default="", help="with --aub-record")
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
@@ -786,6 +849,8 @@ def main(argv=None) -> int:
             conn.close()
     if a.schedule_window:
         return schedule_window(a.schedule_window)
+    if a.butlerian or a.aub_offer or a.aub_record:
+        return butlerian(a)
     if a.report:
         return report()
     if a.scheduled or a.dry_run:

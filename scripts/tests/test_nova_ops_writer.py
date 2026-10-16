@@ -180,6 +180,40 @@ class TestIntegration(_Base):
         self.assertEqual((a1[0], a2[0], a2[4]), ("abc", "abc", "failure"))
         self.assertTrue(pool.closed)
 
+    def test_trigger_and_host_are_recorded(self):
+        pool = _Pool()
+        _drive(pool, lambda: _start(run_id="cu", was_retry=True, trigger="catch_up", sched_host="studio"))
+        sql, args = pool.done[0]
+        self.assertIn('"trigger", sched_host', sql)
+        self.assertEqual(args[-3:], (True, "catch_up", "studio"))
+        _reset(); pool = _Pool()
+        _drive(pool, lambda: _start(run_id="legacy"))                    # old callers: defaults
+        self.assertEqual(pool.done[0][1][-2:], ("schedule", None))
+
+    def test_pre_migration_table_falls_back_to_legacy_insert(self):
+        class _OldConn(_Conn):
+            async def execute(self, sql, *args):
+                if "sched_host" in sql:
+                    raise RuntimeError('column "trigger" of relation "scheduler_runs" does not exist')
+                self.pool.done.append((sql, args))
+
+        class _OldPool(_Pool):
+            def acquire(self):
+                pool = self
+
+                class A:
+                    async def __aenter__(self):
+                        return _OldConn(pool)
+
+                    async def __aexit__(self, *a):
+                        return False
+                return A()
+        pool = _OldPool()
+        _drive(pool, lambda: _start(run_id="old", trigger="catch_up"))
+        sql, args = pool.done[0]
+        self.assertNotIn("trigger", sql)
+        self.assertEqual(len(args), 9)
+
     def test_uses_shared_logger(self):
         self.assertIn("from nova_logger import log", SRC)
 

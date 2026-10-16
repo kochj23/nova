@@ -179,14 +179,14 @@ class TestIntegration(unittest.TestCase):
 
     def test_applied_set_gates_which_migrations_run_in_order(self):
         out, conn, _ = _run(_Conn(applied={1, 2}))
-        self.assertEqual([a[0] for a in conn.inserts()], [3, 4, 5])
-        self.assertIn("Applied 3 migration(s)", out)
+        self.assertEqual([a[0] for a in conn.inserts()], [3, 4, 5, 6])
+        self.assertIn("Applied 4 migration(s)", out)
         self.assertTrue(conn.closed)
 
     def test_get_applied_feeds_the_list_view(self):
         out, conn, _ = _run(_Conn(applied={1, 3}), argv=["x", "--list"])
         rows = {int(l.split()[0]): l.split()[1] for l in out.splitlines() if l[:4].strip().isdigit()}
-        self.assertEqual(rows, {1: "APPLIED", 2: "PENDING", 3: "APPLIED", 4: "PENDING", 5: "PENDING"})
+        self.assertEqual(rows, {1: "APPLIED", 2: "PENDING", 3: "APPLIED", 4: "PENDING", 5: "PENDING", 6: "PENDING"})
         self.assertEqual(conn.executed, [])
 
 
@@ -194,22 +194,28 @@ class TestFunctional(unittest.TestCase):
     def test_golden_path_applies_everything_on_a_fresh_database(self):
         out, conn, attempts = _run(_Conn(applied=set()))
         self.assertEqual(attempts, [M.DB_DSN])
-        self.assertEqual([a[0] for a in conn.inserts()], [1, 2, 3, 4, 5])
-        self.assertEqual(conn.tx_opened, 5)
-        self.assertIn("Applied 5 migration(s)", out)
+        self.assertEqual([a[0] for a in conn.inserts()], [1, 2, 3, 4, 5, 6])
+        self.assertEqual(conn.tx_opened, 6)
+        self.assertIn("Applied 6 migration(s)", out)
         self.assertTrue(conn.closed)
 
     def test_up_to_date_database_runs_nothing(self):
-        out, conn, _ = _run(_Conn(applied={1, 2, 3, 4, 5}))
+        out, conn, _ = _run(_Conn(applied={1, 2, 3, 4, 5, 6}))
         self.assertEqual(conn.executed, [])
         self.assertIn("All migrations applied", out)
 
     def test_check_reports_pending_without_applying(self):
         out, conn, _ = _run(_Conn(applied={1}), argv=["x", "--check"])
-        self.assertIn("Pending migrations (4):", out)
+        self.assertIn("Pending migrations (5):", out)
         self.assertIn("[2] Create scheduler_runs table", out)
         self.assertEqual(conn.executed, [])
         self.assertTrue(conn.closed)
+
+    def test_migration_6_adds_catch_up_columns_idempotently(self):
+        mid, _, sql = M.MIGRATIONS[-1]
+        self.assertEqual(mid, 6)
+        self.assertIn('ADD COLUMN IF NOT EXISTS "trigger" TEXT NOT NULL DEFAULT \'schedule\'', sql)
+        self.assertIn("ADD COLUMN IF NOT EXISTS sched_host TEXT", sql)
 
     def test_missing_asyncpg_exits_one_without_touching_the_network(self):
         code = "import sys; sys.modules['asyncpg'] = None; import nova_ops_migrate as m; m.main()"

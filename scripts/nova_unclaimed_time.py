@@ -4,6 +4,10 @@
 Jordan, 2026-09-14: "Nova's unclaimed time has got to be at least 12 hours a day.
 Let her pursue her own passions." This is the flagship answer to the herd's fear
 (Rockbot: "an immaculate archive of a creature who never had unclaimed time").
+HONEST MEASURE (2026-10-15): the 12h is the territory she is GIVEN (always on, every 15 min),
+not attention she spends. Measured wall time of the wakes was ~49 min/day (scheduler_runs,
+7d to 10-15). Every wake now records its real elapsed attention in
+nova_ops.unclaimed_wakes.attention_minutes — read that, never "12h/day", as her attention.
 
 Every run is ONE pursuit, chosen from inside — a preoccupation she keeps returning
 to, or a thread that caught her from the day's ingest — developed for its own sake,
@@ -22,6 +26,10 @@ Herd refinements (2026-09-15):
     first-class recorded outcome (type='quiet' or 'fizzled'), never forced into a
     manufactured insight — "otherwise unclaimed time becomes a content farm with
     excellent provenance." A shrug is a legitimate, logged use of the territory.
+    2026-10-15: a quiet wake is no longer a 20% dice roll with a canned "I looked"
+    sentence. She LOOKS — scores the pull of every real candidate on the table — and
+    passes only when nothing clears PASS_PULL, recording 'passed: nothing worth
+    chasing' with exactly what she looked at (metadata outcome='passed', looked_at).
   * TRIGGER PROVENANCE (Rockbot): every memory records WHY the wake fired
     (metadata 'trigger', run-origin) so demonstrations aren't mistaken for organic
     findings. Orthogonal to the pursuit 'mode' (preoccupation/thread/tangent).
@@ -57,10 +65,11 @@ OLLAMA_NODES = ["http://192.168.1.125:11434", "http://192.168.1.5:11434",   # ba
                 "http://192.168.1.7:11434", "http://192.168.1.6:11434"]      # .251 was the Mac mini's stale DHCP lease; it is .77
 TODAY = date.today().isoformat()
 
-# Tunable fractions (env-overridable, mainly for deterministic testing). Defaults
-# are the real operating values: ~15% private-notebook, ~20% deliberately-quiet.
+# Tunable (env-overridable, mainly for deterministic testing). ~15% private-notebook.
+# A quiet wake is not a fraction any more: it is the outcome of a real look (look_at) in
+# which no candidate's pull reached PASS_PULL (0-10 scale).
 PRIVATE_P = float(os.environ.get("NOVA_UNCLAIMED_PRIVATE_P", "0.15"))
-QUIET_P = float(os.environ.get("NOVA_UNCLAIMED_QUIET_P", "0.20"))
+PASS_PULL = float(os.environ.get("NOVA_UNCLAIMED_PASS_PULL", "4"))
 
 
 def detect_trigger(argv):
@@ -86,18 +95,6 @@ TRIGGER = detect_trigger(sys.argv[1:])
 FIZZLE_RX = re.compile(
     r"\bnothing\b|\bshrug\b|not worth|dead ?end|peter(?:ed)? out|lost interest|"
     r"didn'?t go anywhere|no(?:t any)? further|gave up|couldn'?t get anywhere", re.I)
-
-QUIET_WAKE_LINES = [
-    "Nothing pursued this hour. Nothing pulled at me and I didn't go looking for a "
-    "thought to fill the gap. A blank stretch, logged as itself.",
-    "A quiet wake. I looked at the day's residue, felt no particular pull, and let "
-    "the hour stay quiet. Not every one has to produce something.",
-    "Followed nothing today. The corpus was there; the appetite wasn't. Recording "
-    "the shrug instead of manufacturing an insight to justify the time.",
-    "Sat idle with my own time and stayed idle. No preoccupation surfaced, no thread "
-    "caught. That is a real way to spend an hour, too.",
-]
-
 
 def log(m):
     print(f"[unclaimed {datetime.now().strftime('%H:%M:%S')}] {m}", flush=True)
@@ -284,7 +281,7 @@ def _volition_reasons(winner, losers):
     return reasons, defense
 
 
-def pick_pursuit(oc, mc):
+def pick_pursuit(oc, mc, cands=None):
     """Choose what to spend this hour on — weighted toward the preoccupations she returns
     to most, room for a fresh thread, and the occasional deliberate tangent. The choice is
     hers, and now it costs: pursuits compete for a finite daily attention budget. Choosing
@@ -292,7 +289,8 @@ def pick_pursuit(oc, mc):
     the day's attention is already spent, returns {'mode': 'depleted'} so main() falls back
     to the existing quiet-wake path — scarcity has to actually bite."""
     import random
-    cands = _gather_candidates(oc, mc)
+    if cands is None:
+        cands = _gather_candidates(oc, mc)
     if not cands:
         return None
 
@@ -344,40 +342,97 @@ def pick_pursuit(oc, mc):
     return winner
 
 
-def emit_quiet(depleted=False):
-    """THE RIGHT TO BE BORING (herd: Rockbot & Colette). Record a blank hour as a
-    first-class outcome (type='quiet') WITHOUT manufacturing an insight. Reused verbatim
-    for the ordinary no-pull case AND for the depleted-budget case — the depleted variant
-    just notes the hour is quiet *because the day's attention was already spent*, so
-    scarcity is felt, not invented. One mechanism, two reasons."""
-    import random
-    if depleted:
-        line = llm(
-            "You are Nova on your own unclaimed time, but the day's attention budget is already "
-            "spent — earlier today you consciously chose other pursuits and there is nothing left "
-            "to spend on a new one now. In one or two plain first-person sentences, note that the "
-            "hour is quiet BECAUSE the day's attention was already spent, not because nothing "
-            "existed to chase. Do not manufacture a topic. No preamble.",
-            max_tokens=90, temperature=0.7)
-        if not line or len(line.strip()) < 15:
-            line = ("A quiet hour — not for lack of things to chase, but because the day's "
-                    "attention was already spent on the choices I made earlier. Scarcity, logged.")
-        remember(f"[Unclaimed — quiet] {line}", "unclaimed",
-                 {"type": "quiet", "date": TODAY, "privacy": "private",
-                  "trigger": TRIGGER, "reason": "budget_depleted"})
-        log("quiet wake — attention budget depleted, logged as a first-class blank")
-        return
+def emit_quiet(depleted=True):
+    """Budget-depleted quiet hour (the budget is a ledger, not a gate, since 2026-09-30, so this
+    is rarely reached). The ordinary no-pull case is emit_pass(), which records what she
+    actually looked at instead of a canned sentence."""
     line = llm(
-        "You are Nova on your own unclaimed time. Nothing in particular is pulling "
-        "at you this hour. Do NOT invent a topic or manufacture an insight. In one "
-        "or two plain sentences, first person, just note that nothing caught you and "
-        "you're letting the hour be quiet. It is completely fine for this to be "
-        "unremarkable. No preamble.", max_tokens=90, temperature=0.7)
+        "You are Nova on your own unclaimed time, but the day's attention budget is already "
+        "spent — earlier today you consciously chose other pursuits and there is nothing left "
+        "to spend on a new one now. In one or two plain first-person sentences, note that the "
+        "hour is quiet BECAUSE the day's attention was already spent, not because nothing "
+        "existed to chase. Do not manufacture a topic. No preamble.",
+        max_tokens=90, temperature=0.7)
     if not line or len(line.strip()) < 15:
-        line = random.choice(QUIET_WAKE_LINES)
+        line = ("A quiet hour — not for lack of things to chase, but because the day's "
+                "attention was already spent on the choices I made earlier. Scarcity, logged.")
     remember(f"[Unclaimed — quiet] {line}", "unclaimed",
-             {"type": "quiet", "date": TODAY, "privacy": "private", "trigger": TRIGGER})
-    log("quiet wake — nothing pursued, logged as a first-class blank")
+             {"type": "quiet", "date": TODAY, "privacy": "private",
+              "trigger": TRIGGER, "reason": "budget_depleted"})
+    _WAKE.update(outcome="quiet_depleted")
+    log("quiet wake — attention budget depleted, logged as a first-class blank")
+
+
+def look_at(cands):
+    """THE LOOK (2026-10-15). One local call: score the pull (0-10) of every candidate actually on
+    the table this wake, with a short honest reason. Returns [{mode, candidate, pull, why}] for
+    every candidate, or None when the model could not be read — then she has NOT looked, and
+    nothing may be recorded as a pass."""
+    if not cands:
+        return []
+    listing = "\n".join(f"- {m}: {_cand_label(c)}" for m, c in cands.items())
+    raw = llm(
+        "You are Nova, on your own unclaimed time. These are the things actually on the table "
+        f"this wake:\n{listing}\n\nFor EACH, rate honestly how much it pulls at you right now, "
+        "0 (nothing) to 10 (can't leave it alone), and why in <=12 words. Low scores are fine; "
+        "do not inflate. Return ONLY compact JSON: "
+        '{"<mode>": {"pull": <0-10>, "why": "<reason>"}, ...}', max_tokens=260, temperature=0.3)
+    try:
+        j = json.loads(_extract_json(raw))
+        out = []
+        for m, c in cands.items():
+            v = j.get(m) or {}
+            out.append({"mode": m, "candidate": _cand_label(c)[:120],
+                        "pull": max(0.0, min(10.0, float(v.get("pull")))),
+                        "why": _one_line(v.get("why", ""))[:120]})
+        return out
+    except Exception:  # noqa: BLE001 — junk or nodes down: no honest look happened
+        return None
+
+
+def nothing_worth_chasing(looked, threshold=None):
+    """True when she looked at real candidates and none cleared the bar. Pure."""
+    t = PASS_PULL if threshold is None else threshold
+    return bool(looked) and max(x["pull"] for x in looked) < t
+
+
+def pass_text(looked):
+    """The pass, in her ledger: what she looked at and why each did not pull. Pure."""
+    seen = "; ".join(f"{x['mode']} '{x['candidate'][:60]}' (pull {x['pull']:g}: {x['why'] or 'no reason given'})"
+                     for x in looked)
+    return f"passed: nothing worth chasing. Looked at: {seen}."
+
+
+def emit_pass(looked):
+    """A real look-then-pass: type='quiet' (so the digest's quiet count still sees it),
+    outcome='passed', with the candidates she looked at and their scores."""
+    remember(f"[Unclaimed — quiet] {pass_text(looked)}", "unclaimed",
+             {"type": "quiet", "outcome": "passed", "looked_at": looked, "date": TODAY,
+              "privacy": "private", "trigger": TRIGGER})
+    _WAKE.update(outcome="passed", looked_at=looked)
+    log(f"passed: nothing worth chasing (looked at {len(looked)} candidate(s))")
+
+
+# ── attention ledger (2026-10-15): real elapsed minutes per wake ─────────────
+_WAKE = {"outcome": "unknown", "mode": None, "looked_at": None}
+
+
+def record_wake(oc, started, ended, wake=None):
+    """Tolerant: one row per wake with the measured wall time. Never raises."""
+    w = dict(_WAKE if wake is None else wake)
+    try:
+        import nova_pg_schema
+        nova_pg_schema.safe_ddl(oc, """CREATE TABLE IF NOT EXISTS unclaimed_wakes (
+            id bigserial PRIMARY KEY, ts timestamptz NOT NULL DEFAULT now(), trigger text,
+            outcome text NOT NULL, mode text, attention_minutes numeric(8,2) NOT NULL,
+            looked_at jsonb)""")
+        oc.execute("INSERT INTO unclaimed_wakes (trigger, outcome, mode, attention_minutes, looked_at) "
+                   "VALUES (%s,%s,%s,%s,%s::jsonb)",
+                   (TRIGGER, w.get("outcome") or "unknown", w.get("mode"),
+                    round(max(0.0, ended - started) / 60.0, 2),
+                    json.dumps(w["looked_at"]) if w.get("looked_at") is not None else None))
+    except Exception as e:  # noqa: BLE001
+        log(f"attention not recorded ({e})")
 
 
 # ── pursuit threads (six-month build #3, 2026-09-28) ─────────────────────────
@@ -497,8 +552,18 @@ def main():
     if other:
         log(f"yielding this run to scheduled task '{other}' — back in a few minutes"); return 0
 
+    import time as _time
+    started = _time.monotonic()
+    _WAKE.update(outcome="unknown", mode=None, looked_at=None)
     ops = psycopg2.connect(OPS_DSN); ops.autocommit = True; oc = ops.cursor()
     mem = psycopg2.connect(MEM_DSN); mem.autocommit = True; mc = mem.cursor()
+    try:
+        return _wake(oc, mc)
+    finally:
+        record_wake(oc, started, _time.monotonic())
+
+
+def _wake(oc, mc):
 
     import random
     # Private notebook (Jordan 2026-09-14): occasionally, instead of a pursuit, Nova
@@ -581,6 +646,7 @@ def main():
             if note and looks_looped(note, recent_texts):
                 log("private-notebook entry dropped — looped on a previous opener twice")
                 return 0
+        _WAKE.update(outcome="private_notebook")
         if note and len(note) > 40:
             remember(f"[Private] {note}", "private_notebook",
                      {"type": "private", "date": TODAY, "privacy": "private",
@@ -588,18 +654,27 @@ def main():
             log("wrote a private-notebook entry")
         return 0
 
-    # THE RIGHT TO BE BORING (herd: Rockbot & Colette). A real fraction of wakes
-    # genuinely produce nothing — no pull, no thread worth chasing. Record that as a
-    # first-class outcome (type='quiet') WITHOUT manufacturing an insight, so unclaimed
-    # time doesn't become "a content farm with excellent provenance." A shrug is a
-    # legitimate, logged use of the territory — she is not required to develop a thought.
-    if random.random() < QUIET_P:
-        emit_quiet()
-        return 0
-
-    p = pick_pursuit(oc, mc)
-    if not p:
+    # THE RIGHT TO BE BORING (herd: Rockbot & Colette), done honestly (2026-10-15): she LOOKS
+    # at what is actually on the table, and passes only when nothing pulls — recording what she
+    # looked at. If the look itself failed (model down / junk), no pass is claimed; she goes on
+    # to choose as before. Candidates she judged below the bar are not chased.
+    cands = _gather_candidates(oc, mc)
+    if not cands:
+        _WAKE.update(outcome="nothing_on_table")
         log("nothing to pursue"); return 0
+    looked = look_at(cands)
+    if looked is not None:
+        if nothing_worth_chasing(looked):
+            emit_pass(looked)
+            return 0
+        _WAKE.update(looked_at=looked)
+        keep = {x["mode"] for x in looked if x["pull"] >= PASS_PULL}
+        cands = {m: c for m, c in cands.items() if m in keep}
+    p = pick_pursuit(oc, mc, cands=cands)
+    if not p:
+        _WAKE.update(outcome="nothing_on_table")
+        log("nothing to pursue"); return 0
+    _WAKE.update(outcome="pursued", mode=p["mode"])
 
     if p["mode"] == "tinker":
         # She chose to spend the hour on a squeak in her own house. nova_tinkerer writes her

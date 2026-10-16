@@ -1263,5 +1263,247 @@ class TestFrame(unittest.TestCase):
         self.assertEqual(r.stdout.strip(), "1")
 
 
+# ============================================================================
+# #26 — catch-up re-runs of missed less-than-daily slots
+# ============================================================================
+
+_MOD_ERR = (b"Traceback (most recent call last):\n  File \"x.py\", line 3\n    import psycopg2\n"
+            b"ModuleNotFoundError: No module named 'psycopg2'\n")
+
+
+def _exec_trigger(s, task, trigger, procs):
+    procs = list(procs)
+
+    async def cse(*cmd, **kw):
+        return procs.pop(0)
+
+    with patch.object(_sh.asyncio, "create_subprocess_exec", side_effect=cse):
+        asyncio.run(s.execute_task(task, trigger=trigger))
+
+
+def _weekly(tid="wk"):
+    t = _sh.Task(id=tid, script="weekly.py", schedule="cron 30 9 * * 1", timeout=30)
+    t._cron_expr = "30 9 * * 1"
+    t.state.next_run = time.time() - 5
+    return t
+
+
+def _failed_weekly(s, tid="wk"):
+    """A weekly task whose slot just failed (scheduled run + its 60s retry) on a missing module."""
+    t = _weekly(tid)
+    s.tasks[tid] = t
+    slot = t.state.next_run
+    _exec(s, t, [_Proc(1, err=_MOD_ERR)])
+    _exec(s, t, [_Proc(1, err=_MOD_ERR)])
+    return t, slot
+
+
+def _catch_up_round(s, now, rc=0):
+    async def go():
+        with patch.object(_sh.asyncio, "create_subprocess_exec",
+                          side_effect=lambda *c, **k: _Proc(rc, err=_MOD_ERR if rc else b"")):
+            await s._run_catch_ups(now, 6)
+            for _ in range(20):
+                await asyncio.sleep(0.01)
+    asyncio.run(go())
+
+
+class TestCatchUpClassify(unittest.TestCase):
+    def test_environment_errors_are_classified(self):
+        c = _sh.classify_env_error
+        self.assertEqual(c(_MOD_ERR.decode()), "module")
+        self.assertEqual(c("FATAL: missing dependency: No module named 'asyncpg'"), "module")
+        self.assertEqual(c("ImportError: cannot import name 'x' from 'y'"), "import")
+        self.assertEqual(c("[Errno 2] No such file or directory: '/opt/homebrew/bin/python3'"), "interpreter")
+        self.assertEqual(c("python3: can't open file '/Volumes/nas/s/x.py': [Errno 2] No such file"), "path")
+        self.assertEqual(c("PermissionError: [Errno 1] Operation not permitted: '/Volumes/nas/x'"), "path")
+        self.assertEqual(c('psycopg2.OperationalError: connection to server at "pg-primary", port 5432 '
+                           'failed: Connection refused'), "pg")
+        self.assertEqual(c("ConnectionRefusedError: Connect call failed ('pg-primary', 5432)"), "pg")
+
+    def test_script_bugs_are_not_environment_errors(self):
+        for e in ("KeyError: 'foo'", "Timed out after 300s", "ValueError: bad", "", None,
+                  "requests.exceptions.ConnectionError: Connection refused to api.example.com:443"):
+            self.assertEqual(_sh.classify_env_error(e), "", e)
+
+    def test_only_less_than_daily_cron_qualifies(self):
+        self.assertGreaterEqual(_sh.cron_period_s("30 9 * * 1"), 7 * 86400 - 3600)
+        self.assertGreaterEqual(_sh.cron_period_s("0 3 1 * *"), 27 * 86400)
+        self.assertEqual(_sh.cron_period_s("0 23 * * *"), 0.0)
+        self.assertLess(_sh.cron_period_s("0 9 * * 1-5"), 30 * 3600)
+        s = _sched()
+        self.assertFalse(s._catch_up_eligible_task(_task()))           # interval task
+        self.assertTrue(s._catch_up_eligible_task(_weekly()))
+
+
+class TestCatchUp(_HouseBase):
+    def setUp(self):
+        super().setUp()
+        os.environ.pop("NOVA_SCHED_CATCH_UP", None)
+        self.s = _sched(alerts=False)
+        self.s.tasks = {}
+        self.probe = patch.object(_sh.NovaScheduler, "_env_probe", return_value=(True, "import psycopg2: ok"))
+        self.probe.start()
+        self.addCleanup(patch.stopall)
+
+    def test_env_failure_on_weekly_slot_records_missed_slot(self):
+        t, slot = _failed_weekly(self.s)
+        self.assertEqual(t.state.catch_up_slot, slot)                   # the 60s retry inherits the slot
+        self.assertEqual((t.state.catch_up_kind, t.state.catch_up_attempts), ("module", 0))
+        self.assertIn("psycopg2", t.state.catch_up_error)
+
+    def test_non_env_failure_and_frequent_tasks_record_nothing(self):
+        t = _weekly(); self.s.tasks["wk"] = t
+        _exec(self.s, t, [_Proc(1, err=b"KeyError: 'x'")])
+        self.assertEqual(t.state.catch_up_slot, 0)
+        d = _task("daily"); d._interval_s = 0; d._cron_expr = "0 7 * * *"; self.s.tasks["daily"] = d
+        _exec(self.s, d, [_Proc(1, err=_MOD_ERR)])
+        self.assertEqual(d.state.catch_up_slot, 0)
+        i = _task("every5"); self.s.tasks["every5"] = i
+        _exec(self.s, i, [_Proc(1, err=_MOD_ERR)])
+        self.assertEqual(i.state.catch_up_slot, 0)
+
+    def test_spacing_then_due_then_launch_records_catch_up_run(self):
+        t, slot = _failed_weekly(self.s)
+        now = time.time()
+        row = self.s.catch_up_report(now)[0]
+        self.assertFalse(row["would"]); self.assertIn("spacing", row["reason"])
+        later = now + 1801
+        self.assertTrue(self.s.catch_up_report(later)[0]["would"])
+        _sh.nova_ops_writer.record_run_start.reset_mock()
+        _catch_up_round(self.s, later, rc=0)
+        kw = _sh.nova_ops_writer.record_run_start.call_args[1]
+        self.assertEqual((kw["trigger"], kw["was_retry"]), ("catch_up", True))
+        self.assertEqual(kw["scheduled_at_ms"], int(slot * 1000))       # stands in for the missed slot
+        self.assertEqual(t.state.catch_up_slot, 0)                       # success satisfied the slot
+        self.assertGreater(t.state.next_run, later)                      # regular weekly slot untouched
+
+    def test_bounded_to_max_attempts_and_no_60s_retry(self):
+        t, _ = _failed_weekly(self.s)
+        now = time.time()
+        launched = 0
+        for _ in range(6):
+            now += 1801
+            before = _sh.nova_ops_writer.record_run_start.call_count
+            _catch_up_round(self.s, now, rc=1)
+            launched += _sh.nova_ops_writer.record_run_start.call_count - before
+            t.state.last_run = now                                       # wall clock of that run
+            self.assertFalse(t.state._retry_pending)                     # catch-up never self-retries
+        self.assertEqual((launched, t.state.catch_up_attempts), (3, 3))
+        self.assertIn("gave up", self.s.catch_up_report(now + 9999)[0]["reason"])
+
+    def test_launches_capped_per_check(self):
+        for i in range(5):
+            _failed_weekly(self.s, f"wk{i}")
+        _sh.nova_ops_writer.record_run_start.reset_mock()
+        _catch_up_round(self.s, time.time() + 1801, rc=0)
+        trig = [c[1]["trigger"] for c in _sh.nova_ops_writer.record_run_start.call_args_list]
+        self.assertEqual(trig, ["catch_up"] * 3)                         # max_per_check default
+
+    def test_new_slot_failure_resets_attempt_budget(self):
+        t, slot = _failed_weekly(self.s)
+        t.state.catch_up_attempts = 3
+        t.state.next_run = slot + 7 * 86400
+        _exec(self.s, t, [_Proc(1, err=_MOD_ERR)])
+        self.assertEqual((t.state.catch_up_slot, t.state.catch_up_attempts), (slot + 7 * 86400, 0))
+
+    def test_probe_failure_blocks(self):
+        _failed_weekly(self.s)
+        with patch.object(_sh.NovaScheduler, "_env_probe", return_value=(False, "import psycopg2: still failing")):
+            row = self.s.catch_up_report(time.time() + 1801)[0]
+        self.assertFalse(row["would"]); self.assertIn("still failing", row["reason"])
+
+    def test_config_flag_and_env_kill_switch(self):
+        _failed_weekly(self.s)
+        self.s.sched_cfg["catch_up"] = {"enabled": False}
+        self.assertEqual(self.s.catch_up_report(time.time() + 1801)[0]["reason"], "catch-up disabled")
+        self.s.sched_cfg["catch_up"] = False
+        self.assertFalse(self.s._catch_up_cfg()["enabled"])
+        self.s.sched_cfg.pop("catch_up")
+        os.environ["NOVA_SCHED_CATCH_UP"] = "0"
+        try:
+            self.assertFalse(self.s._catch_up_cfg()["enabled"])
+        finally:
+            os.environ.pop("NOVA_SCHED_CATCH_UP")
+        self.assertTrue(self.s._catch_up_cfg()["enabled"])              # default ON
+
+    def test_imminent_next_slot_and_quarantine_block(self):
+        t, _ = _failed_weekly(self.s)
+        now = time.time() + 1801
+        t.state.next_run = now + 600
+        self.assertIn("imminent", self.s.catch_up_report(now)[0]["reason"])
+        t.state.next_run = now + 86400
+        self.s._quarantined.add("wk")
+        self.assertIn("quarantined", self.s.catch_up_report(now)[0]["reason"])
+
+    def test_manual_run_failure_keeps_success_clears(self):
+        t, _ = _failed_weekly(self.s)
+        _sh.nova_ops_writer.record_run_start.reset_mock()
+        _exec_trigger(self.s, t, "manual", [_Proc(1, err=b"KeyError")])
+        self.assertNotEqual(t.state.catch_up_slot, 0)
+        _exec_trigger(self.s, t, "manual", [_Proc(0)])
+        self.assertEqual(t.state.catch_up_slot, 0)
+        self.assertEqual(_sh.nova_ops_writer.record_run_start.call_args[1]["trigger"], "manual")
+
+    def test_state_round_trip(self):
+        t, slot = _failed_weekly(self.s)
+        t.state.catch_up_attempts = 2
+        self.s._save_state()
+        s2 = _sched(); s2.tasks = {"wk": _weekly()}
+        s2._load_state()
+        st = s2.tasks["wk"].state
+        self.assertEqual((st.catch_up_slot, st.catch_up_attempts, st.catch_up_kind), (slot, 2, "module"))
+        self.assertIn("psycopg2", st.catch_up_error)
+
+    def test_seed_from_history_rows(self):
+        t = _weekly()
+        now = time.time()
+        slot_ms = int((now - 3 * 86400) * 1000)
+
+        def row(st, trig="schedule", retry=False, err=_MOD_ERR.decode(), sa=slot_ms):
+            return {"scheduled_at": sa, "started_at": sa + 1000, "status": st, "error_tail": err,
+                    "was_retry": retry, "trig": trig}
+        f = self.s._missed_slot_from_rows
+        self.assertIsNone(f(t, [], now))
+        self.assertIsNone(f(t, [row("success"), row("failure")], now))
+        self.assertIsNone(f(t, [row("failure", err="KeyError")], now))
+        rec = f(t, [row("failure", "catch_up", True), row("failure", retry=True, sa=slot_ms + 60000),
+                    row("failure")], now)
+        self.assertEqual(rec[:4], (slot_ms / 1000, 1, (slot_ms + 1000) / 1000, "module"))
+        old_ms = int((now - 9 * 86400) * 1000)                           # a newer slot has passed
+        self.assertIsNone(f(t, [row("failure", sa=old_ms)], now))
+
+    def test_module_probe_is_argv_and_name_validated(self):
+        self.probe.stop()
+        t = _weekly()
+        with patch.object(_sh.subprocess, "run", return_value=_types.SimpleNamespace(returncode=0)) as run:
+            ok, _ = self.s._env_probe(t, "module", _MOD_ERR.decode())
+            self.assertTrue(ok)
+            self.assertEqual(run.call_args[0][0][1:], ["-c", "import psycopg2"])
+            run.reset_mock()
+            ok, _ = self.s._env_probe(t, "module", "No module named 'x; import os'")
+            run.assert_not_called()                                       # not a module name: never executed
+        ok, detail = self.s._env_probe(t, "interpreter")
+        self.assertTrue(ok, detail)                                       # /usr/bin/python3 exists
+        self.probe.start()
+
+    def test_dry_run_lists_without_running(self):
+        t, _ = _failed_weekly(self.s)
+        t.state.last_run = time.time() - 3600
+        rows = self.s.catch_up_report()
+        cfg = self.s._catch_up_cfg()
+        with patch.object(_sh, "NovaScheduler") as cls, \
+                patch.object(_sh.asyncio, "create_subprocess_exec") as cse, \
+                patch("builtins.print") as pr:
+            inst = cls.return_value
+            inst.seed_catch_up_from_history = AsyncMock(return_value=0)
+            inst.catch_up_report.return_value = rows
+            inst._catch_up_cfg.return_value = cfg
+            self.assertEqual(_sh.catch_up_dry_run(), 0)
+        cse.assert_not_called()
+        out = "\n".join(str(c[0][0]) for c in pr.call_args_list)
+        self.assertIn("WOULD RUN", out); self.assertIn("wk", out)
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))

@@ -25,6 +25,9 @@ CLI:   --run [--dry-run]   --show   --selftest
 Table: threshold_ledger (PK kind, host, ident)
 Config: service_config threshold/rotation_days (default 180)
 Schedule: weekly, Tuesday 04:15.
+
+MERGED 2026-10-15 (consolidation #11) into nova_capability_ledger.py as `--grants`: the logic and
+table stay here; main() is a thin wrapper. TMA-1 decoys are filtered out of inventory().
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -176,7 +179,9 @@ def herd_senders() -> list:
 
 
 def inventory(cur, _sleep=None) -> list:
-    return fleet_keys(cur, _sleep=_sleep) + slack_tokens(cur) + herd_senders()
+    import nova_capability_ledger as CL   # TMA-1 decoys are never recorded
+    rows = fleet_keys(cur, _sleep=_sleep) + slack_tokens(cur) + herd_senders()
+    return CL.drop_decoys(rows, key=lambda r: (r.get("ident"), r.get("label"), r.get("host")))
 
 
 # ── flags (pure) ────────────────────────────────────────────────────────────
@@ -323,11 +328,10 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
-    if a.run:
-        run(dry=a.dry_run)
-        return 0
-    if a.show:
-        return show()
+    if a.run or a.show:   # merged 2026-10-15 (#11): nova_capability_ledger.py --grants
+        import nova_capability_ledger as CL
+        log(f"merged into nova_capability_ledger.py --grants on {CL.MERGED_ON}; delegating")
+        return CL.main(["--grants"] + (["--dry-run"] if a.dry_run else []) + (["--show"] if a.show and not a.run else []))
     ap.print_help()
     return 0
 

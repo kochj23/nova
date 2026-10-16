@@ -51,25 +51,39 @@ def negspace_dedup_key(kind, msg):
     return f"negspace:{kind}:{stable}"
 
 
-def alert_findings(findings, notify=None):
-    """Raise each (kind, msg) finding on the bus. Shared with nova_freshness_monitor (which
-    runs the sensor-quiet check). Re-notify window 8h (a broken sensor doesn't need 24
-    reminders). Never raises; returns how many were sent."""
+# Little Mister, 2026-10-15 (#22): per-event notify is off for negative space — findings go to the
+# daily roll-up (nova_noise_rollup; one row per finding key per day, sightings counted). The one
+# exception is a possible stranger at the property, which is house impact and still notifies now.
+IMMEDIATE_KINDS = frozenset({"arrival_no_device"})
+
+
+def alert_findings(findings, notify=None, record=None):
+    """Raise each (kind, msg) finding. Shared with nova_freshness_monitor (which runs the
+    sensor-quiet check). IMMEDIATE_KINDS notify on the bus (8h re-notify window); everything else
+    is counted in the daily roll-up under the same stable key. Never raises; returns how many
+    findings were handled."""
     if not findings:
         return 0
+    n = 0
     try:
-        if notify is None:
-            from nova_notify import notify
         for kind, msg in findings:
-            notify(f"Negative-space: {msg}", level="warning", category="security",
-                   source="nova_negative_space.py",
-                   dedup_key=negspace_dedup_key(kind, msg),
-                   meta={"dedup_window_s": 28800})
-        log(f"alerted on {len(findings)} finding(s)")
-        return len(findings)
+            key = negspace_dedup_key(kind, msg)
+            if kind in IMMEDIATE_KINDS:
+                if notify is None:
+                    from nova_notify import notify
+                notify(f"Negative-space: {msg}", level="warning", category="security",
+                       source="nova_negative_space.py", dedup_key=key,
+                       meta={"dedup_window_s": 28800, "impact": "house"})
+            else:
+                if record is None:
+                    from nova_noise_rollup import record
+                record("nova_negative_space.py", key, f"Negative-space: {msg}", "warning")
+            n += 1
+        log(f"handled {n} finding(s)")
+        return n
     except Exception as e:
         log(f"notify failed: {e}")
-        return 0
+        return n
 
 
 def main(alert):

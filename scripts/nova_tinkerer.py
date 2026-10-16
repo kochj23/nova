@@ -20,7 +20,10 @@ to the unclaimed-time DOCTRINE, not around it:
 
 surface_friction(oc, mc) -> a candidate dict (or None). pursue(oc, mc, cand) reasons in
 her voice, writes the reflection as an 'unclaimed'/mode='tinker' memory, and — if she
-genuinely wants the fix and it's concrete — files a co-agency proposal for Jordan.
+genuinely wants the fix and it's concrete — files a co-agency proposal. 2026-10-15 (#20/#25): that
+proposal is decided on Nova's OWN path (nova_coagency.mode_dispose; nova_claude_reviewer as her second
+key; her value_check binding), never put to Jordan; only a red line goes to a Claude session via
+claude_queue 'red_line_decision'.
 """
 import argparse
 import json

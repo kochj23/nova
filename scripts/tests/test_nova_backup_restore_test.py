@@ -2,6 +2,7 @@
 """Tests for nova_backup_restore_test.py — the 7 house categories (Security, Performance, Retry, Unit,
 Integration, Functional, Frame). Written by Jordan Koch (via Claude)."""
 import importlib.util
+import io
 import os
 import re
 import subprocess
@@ -9,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -40,6 +42,13 @@ rt.notify = MagicMock()          # stub the outbound alert at module load
 
 def _ok(out="", rc=0, err=""):
     return SimpleNamespace(stdout=out, stderr=err, returncode=rc)
+
+
+def _dump(path):
+    """A complete directory-format dump: pg_dump writes toc.dat last."""
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "toc.dat").write_text("t")
+    return path
 
 
 class _Base(unittest.TestCase):
@@ -101,15 +110,26 @@ class TestRetry(_Base):
 class TestUnit(_Base):
     def test_latest_dump_picks_newest_and_handles_missing(self):
         for n in ("nova_memories_20260101", "nova_memories_20260301", "nova_ops_20260401"):
-            (self.root / n).mkdir()
+            _dump(self.root / n)
         self.assertEqual(rt.latest_dump(self.root).name, "nova_memories_20260301")
         self.assertEqual(rt.latest_dump(self.root, "nova_ops").name, "nova_ops_20260401")
         self.assertIsNone(rt.latest_dump(self.root / "missing"))
         self.assertIsNone(rt.latest_dump(self.root, "nothing"))
 
-    def test_first_existing_falls_back_to_first(self):
-        self.assertEqual(rt._first_existing("/no/a", "/no/b"), Path("/no/a"))
-        self.assertEqual(rt._first_existing("/no/a", str(self.root)), self.root)
+    def test_resolve_dump_dir_never_falls_back_to_a_missing_path(self):
+        # #34 root cause: the old _first_existing() returned the first (nonexistent) candidate
+        self.assertIsNone(rt.resolve_dump_dir(("/no/a", "/no/b")))
+        self.assertEqual(rt.resolve_dump_dir(("/no/a", str(self.root))), self.root)
+
+    def test_resolution_happens_at_run_time_not_import(self):
+        self.assertIsNone(rt.LOCAL_DIR)
+        self.assertIsNone(rt.NAS_DIR)
+        self.assertNotIn("def _first_existing", SRC)
+
+    def test_latest_dump_skips_dump_still_being_written(self):
+        _dump(self.root / "nova_memories_20260101_020000")
+        (self.root / "nova_memories_20260201_020000").mkdir()      # no toc.dat yet
+        self.assertEqual(rt.latest_dump(self.root).name, "nova_memories_20260101_020000")
 
     def test_nas_check_size_drift_and_missing(self):
         local, nas = self.root / "l", self.root / "n"
@@ -139,7 +159,7 @@ class TestIntegration(_Base):
         self.assertEqual(seq.count("pg_restore"), 2)       # pre-data then data
 
     def test_nova_ops_restore_limits_to_control_plane_tables(self):
-        (self.root / "nova_ops_1").mkdir()
+        _dump(self.root / "nova_ops_1")
         got = []
         def fake(args, **kw):
             got.append(args)
@@ -154,10 +174,10 @@ class TestIntegration(_Base):
 
 class TestFunctional(_Base):
     def test_golden_path_notifies_passed(self):
-        dump = self.root / "nova_memories_1"; dump.mkdir(); (dump / "f").write_text("x")
-        nas = self.root / "nas"; (nas / "nova_memories_1").mkdir(parents=True)
+        dump = _dump(self.root / "nova_memories_1"); (dump / "f").write_text("x")
+        nas = self.root / "nas"; _dump(nas / "nova_memories_1")
         (nas / "nova_memories_1" / "f").write_text("x")
-        (self.root / "nova_ops_1").mkdir()
+        _dump(self.root / "nova_ops_1")
         def fake(args, **kw):
             if args[0] == "psql" and "-tA" in args:
                 return _ok("100")
@@ -169,16 +189,32 @@ class TestFunctional(_Base):
         self.assertEqual(cm.exception.code, 0)
         self.assertIn("PASSED", rt.notify.call_args[0][0])
 
-    def test_no_dump_is_critical(self):
-        with patch.object(rt, "LOCAL_DIR", self.root / "none"), patch.object(rt, "sh") as sh:
+    def test_no_dump_is_critical_and_logged(self):
+        buf = io.StringIO()
+        with patch.object(rt, "LOCAL_DIR", self.root / "none"), patch.object(rt, "sh") as sh, \
+             redirect_stdout(buf):
             with self.assertRaises(SystemExit) as cm:
                 rt.main()
-        self.assertEqual(cm.exception.code, 1)
+        self.assertEqual(cm.exception.code, 2)
         self.assertEqual(rt.notify.call_args.kwargs["level"], "critical")
+        self.assertIn("FAIL", buf.getvalue())          # lands in scheduler_runs.stdout_tail
+        self.assertIn("no complete nova_memories", buf.getvalue())
+        sh.assert_not_called()
+
+    def test_invisible_dump_dir_is_a_distinct_loud_error(self):
+        buf = io.StringIO()
+        with patch.object(rt, "DUMP_DIR_CANDIDATES", ("/no/a", "/no/b")), \
+             patch.object(rt, "resolve_dump_dir", lambda: None), \
+             patch.object(rt, "sh") as sh, redirect_stdout(buf):
+            with self.assertRaises(SystemExit) as cm:
+                rt.main()
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("not visible", rt.notify.call_args[0][0])
+        self.assertIn("/no/a", rt.notify.call_args.kwargs["body"])
         sh.assert_not_called()
 
     def test_drift_is_flagged(self):
-        (self.root / "nova_memories_1").mkdir()
+        _dump(self.root / "nova_memories_1")
         def fake(args, **kw):
             if args[0] == "psql" and args[args.index("-d") + 1] == "nova_memories":
                 return _ok("1000")

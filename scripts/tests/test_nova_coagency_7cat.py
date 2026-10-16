@@ -402,5 +402,145 @@ class TestFrame(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
 
 
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 2026-10-15 — Nova is her own customer: dispose path, binding value-check (#29),
+# herd-only outbound on her own judgment (Q2), red lines -> Claude.
+# ═════════════════════════════════════════════════════════════════════════════
+DENIED = {"available": True, "allowed": False, "reasoning": "self-serving"}
+ALLOWED = {"available": True, "allowed": True}
+
+
+def _dispose_cur(rows, herd=("O.C.", "oc@example.invalid")):
+    return _Cur([("FROM coagency_proposals WHERE status='pending_human'", rows),
+                 ("FROM herd_correspondents", herd),
+                 ("FROM claude_queue WHERE description LIKE", None),
+                 ("FROM claude_sessions", ("s1",)),
+                 ("INSERT INTO claude_queue", (501,))])
+
+
+def _dispose(cur, mode="live"):
+    with redirect_stdout(io.StringIO()):
+        return C.mode_dispose(cur, mode)
+
+
+class TestOwnCustomerSecurity(unittest.TestCase):
+    def test_reach_to_non_herd_recipient_is_dropped_not_sent(self):
+        cur = _dispose_cur([(1, "reach", "send-to-Stranger: hello there", "", ALLOWED)], herd=None)
+        self.assertEqual(_dispose(cur), 1)
+        (sql, p), = cur.stmts("SET status='dropped'")
+        self.assertIn("not an active herd member", p[1])
+        self.assertFalse(cur.stmts("INSERT INTO claude_queue"))
+
+    def test_red_line_goes_to_claude_queue_tagged_and_high_priority(self):
+        cur = _dispose_cur([(2, "tinker", "unlock the side gate at night", "convenience", ALLOWED)])
+        self.assertEqual(_dispose(cur), 1)
+        ins = cur.stmts("INSERT INTO claude_queue")[0][1]
+        self.assertEqual(ins[1], 2)
+        self.assertTrue(ins[2].startswith("[red_line_decision] coagency #2:"))
+        self.assertIn("awaiting_claude", cur.stmts("SET status='awaiting_claude'")[0][0])
+
+    def test_blanket_approval_cannot_execute_a_denied_proposal(self):
+        cur = _Cur([("SELECT status, redline_pass, value_check FROM", ("pending_human", True, DENIED))])
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(C.mode_decide(cur, "live", 9, "approve", "All approved (blanket)", "jordan (slack reply)"), 1)
+        self.assertFalse(cur.stmts("SET status=%s, decided_at"))
+
+    def test_classifier_unavailable_fails_closed_to_red_line(self):
+        with mock.patch.dict(sys.modules, {"nova_red_line": None}), redirect_stdout(io.StringIO()):
+            self.assertEqual(C._red_line_classes("restart x", False), ["unclassifiable"])
+
+
+class TestOwnCustomerPerformance(unittest.TestCase):
+    def test_dispose_many_rows_is_fast_and_bounded(self):
+        rows = [(i, "growth", f"write a note about topic {i}", "", ALLOWED) for i in range(300)]
+        cur = _dispose_cur(rows)
+        t = time.perf_counter(); _dispose(cur)
+        self.assertLess(time.perf_counter() - t, 3.0)
+        self.assertFalse(cur.stmts("UPDATE coagency_proposals"))     # nothing of hers to dispose
+
+
+class TestOwnCustomerRetry(unittest.TestCase):
+    def test_queue_insert_failure_leaves_row_pending_for_next_run(self):
+        cur = _dispose_cur([(3, "tinker", "unlock the side gate", "", ALLOWED)])
+        cur.raise_on = ("INSERT INTO claude_queue",)
+        self.assertEqual(_dispose(cur), 0)
+        self.assertFalse(cur.stmts("SET status='awaiting_claude'"))
+
+
+class TestOwnCustomerUnit(unittest.TestCase):
+    def test_value_denied_semantics(self):
+        self.assertTrue(C.value_denied(DENIED))
+        self.assertTrue(C.value_denied(json.dumps(DENIED)))
+        self.assertTrue(C.value_denied({"available": True}))           # ran, did not say yes
+        self.assertFalse(C.value_denied(ALLOWED))
+        self.assertFalse(C.value_denied({"available": False}))          # unavailable is not a denial
+        self.assertFalse(C.value_denied(None))
+        self.assertFalse(C.value_denied("not json"))
+
+    def test_herd_reach_is_not_two_man_but_other_red_lines_hold(self):
+        self.assertEqual(C._red_line_classes("send-to-O.C.: delete your old drafts?", True), [])
+        self.assertIn("proteus_physical", C._red_line_classes("send-to-O.C.: I will unlock the door", True))
+
+    def test_hand_to_claude_refuses_denied(self):
+        cur = _Cur([("SELECT origin, rationale, decided_by, value_check", ("growth", "r", "jordan", DENIED))])
+        with redirect_stdout(io.StringIO()):
+            self.assertIsNone(C.hand_to_claude(cur, 5, "do x"))
+        self.assertFalse(cur.stmts("INSERT INTO claude_queue"))
+
+
+class TestOwnCustomerIntegration(unittest.TestCase):
+    def test_denied_non_restart_approved_row_is_refused_before_handoff(self):
+        cols = ("approved", True, json.dumps(DENIED), None, "jordan (slack reply)", "adopt skill 'x': X")
+        cur = _Cur([("SELECT status, redline_pass, value_check, target_service", cols)])
+        with mock.patch.object(C, "hand_to_claude") as h, redirect_stdout(io.StringIO()):
+            self.assertEqual(C.mode_execute(cur, "live", 168), 0)
+        h.assert_not_called()
+        self.assertIn("binding", cur.stmts("SET status='refused'")[0][1][0])
+
+
+class TestOwnCustomerFunctional(unittest.TestCase):
+    def test_value_denied_is_dropped_by_nova(self):
+        cur = _dispose_cur([(4, "growth", "write a blog post praising myself", "", DENIED)])
+        self.assertEqual(_dispose(cur), 1)
+        (sql, p), = cur.stmts("SET status='dropped'")
+        self.assertEqual(p[0], C.NOVA_BY)
+        self.assertIn("binding", p[1])
+
+    def test_herd_reach_is_sent_on_her_own_judgment(self):
+        cur = _reach_cur()
+        cur.rules[:0] = [("SET status='approved', decided_at=now(), decided_by=%s", None)]
+        sm = types.SimpleNamespace(send_mail=mock.MagicMock(return_value=True))
+        with mock.patch.dict(sys.modules, {"nova_send_mail": sm}), mock.patch.object(C, "notify"), \
+             mock.patch.object(C._safety, "rate_ok", return_value=(True, "")), \
+             mock.patch.object(C._safety, "record_ledger") as rl, redirect_stdout(io.StringIO()):
+            ok = C._herd_policy(cur, "live", 135, REACH_ROW["proposed_action"], True, ALLOWED)
+        self.assertTrue(ok)
+        sm.send_mail.assert_called_once()
+        self.assertEqual(rl.call_args.kwargs["source"], "herd-policy")
+
+    def test_herd_policy_skips_denied_and_non_herd(self):
+        with redirect_stdout(io.StringIO()):
+            self.assertFalse(C._herd_policy(_reach_cur(), "live", 1, REACH_ROW["proposed_action"], True, DENIED))
+            self.assertFalse(C._herd_policy(_reach_cur(email=None), "live", 1, REACH_ROW["proposed_action"], True, ALLOWED))
+            self.assertFalse(C._herd_policy(_reach_cur(), "live", 1, "restart nova-soil-monitor", True, ALLOWED))
+
+    def test_allowed_non_red_line_stays_for_second_key(self):
+        cur = _dispose_cur([(5, "growth", "draft a status note for RsyncGUI", "", ALLOWED)])
+        self.assertEqual(_dispose(cur), 0)
+
+    def test_off_mode_disposes_nothing(self):
+        cur = _dispose_cur([(6, "growth", "x", "", DENIED)])
+        self.assertEqual(_dispose(cur, mode="off"), 0)
+        self.assertFalse(cur.sql)
+
+
+class TestOwnCustomerFrame(unittest.TestCase):
+    def test_dispose_mode_is_on_the_cli(self):
+        r = subprocess.run([sys.executable, str(SCRIPT), "--help"], cwd=SCRIPTS, capture_output=True,
+                           text=True, timeout=60, env={**os.environ, "NOVA_GUARDS_NO_SLACK": "1"})
+        self.assertIn("dispose", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

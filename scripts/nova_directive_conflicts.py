@@ -7,6 +7,10 @@ rule that requires the same thing, sharing subject words. Each candidate goes to
 detector never edits a rule or chooses between them.
 
 Usage: nova_directive_conflicts.py [--dry-run] [--notify]
+
+MERGED 2026-10-15 (consolidation item #10; oversight merge approved by Claude 2026-10-15) into
+nova_directive_conflict.py --review --keyword. Thin wrapper; candidates() and the families stay here.
+Candidates now land in the shared directive_conflicts ledger (kind='review') instead of only stdout.
 Written by Jordan Koch (via Claude).
 """
 import argparse
@@ -71,27 +75,12 @@ def load_rules(conn) -> list:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--notify", action="store_true", help="post the candidates to the event bus")
+    ap.add_argument("--notify", action="store_true", help="kept for old callers; the ledger surfaces each conflict")
     a = ap.parse_args(argv)
-    import psycopg2
-    conn = _nova_dsn.pg_connect()
-    try:
-        found = candidates(load_rules(conn))
-    finally:
-        conn.close()
-    if not found:
-        print("no candidate conflicts")
-        return 0
-    for family, na, nb, shared in found:
-        print(f"[{family}] {na}  <->  {nb}   shared: {', '.join(shared)}")
-    if a.notify and not a.dry_run:
-        import nova_notify
-        nova_notify.notify(
-            f"{len(found)} candidate rule conflict(s) for review",
-            "\n".join(f"{f}: {x} <-> {y}" for f, x, y, _ in found),
-            level="info", category="governance", source="nova_directive_conflicts",
-            dedup_key="directive-conflicts-" + "|".join(sorted(f"{x}{y}" for _, x, y, _ in found)))
-    return 0
+    print("[directive-conflicts] merged into nova_directive_conflict.py --review --keyword on 2026-10-15; delegating",
+          flush=True)
+    import nova_directive_conflict as DC
+    return DC.main(["--review", "--keyword"] + (["--dry-run"] if a.dry_run else [])) or 0
 
 
 if __name__ == "__main__":

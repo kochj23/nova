@@ -82,7 +82,13 @@ class Security(unittest.TestCase):
             self.assertNotRegex(SRC, verb)
         writes = re.findall(r"(INSERT INTO|UPDATE)\s+([\w.]+)", SRC)
         self.assertTrue(writes)
-        self.assertTrue(all(t == "comet_tail" for _, t in writes), writes)
+        # #55 (2026-10-15): change linking records its own rows and the outcome columns on proposals
+        self.assertTrue(all(t in ("comet_tail", "change_outcomes", "coagency_proposals", "SET") for _, t in writes),
+                        writes)
+        i = SRC.index("UPDATE coagency_proposals SET")
+        stmt = SRC[i:SRC.index("WHERE id=%s", i)]
+        cols = re.findall(r"(\w+)=", stmt)
+        self.assertEqual(cols, ["change_class", "outcome", "outcome_incident_id", "outcome_at"])
 
     def test_ddl_goes_through_safe_ddl(self):
         self.assertIn("nova_pg_schema.safe_ddl(cur, SCHEMA)", SRC)
@@ -359,6 +365,64 @@ class Frame(unittest.TestCase):
             self.assertIn(col, SRC)
         for flag in ("--scheduled", "--dry-run", "--window", "--report", "--since"):
             self.assertIn(flag, SRC)
+
+
+class TestChangeLinking(unittest.TestCase):
+    """#55 (Little Mister, 2026-10-15): changes -> incidents within 24h -> monthly CFR."""
+    T = datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc)
+
+    def _commit(self, files=("scripts/nova_prober.py",), title="prober: retry"):
+        return {"kind": "commit", "at": self.T, "title": title, "files": list(files), "target": ""}
+
+    def test_relates_only_on_a_component_match(self):
+        inc = {"source": "nova_prober.py", "title": "PROBE FAIL: x", "host": "nova-core", "category": "probe"}
+        self.assertTrue(ct.change_relates(self._commit(), inc))
+        self.assertFalse(ct.change_relates(self._commit(files=["scripts/nova_gateway.py"], title="nova-core probe"), inc))
+        sched = {"source": "nova_scheduler.py", "title": "[192.168.1.6] nova_speaks_sweep — Timed out"}
+        self.assertTrue(ct.change_relates(self._commit(files=["scripts/nova_speaks_sweep.py"]), sched))
+        self.assertFalse(ct.change_relates(self._commit(files=["scripts/download.py"]),
+                                           {"source": "x", "title": "yt_liked_download failed"}))
+        self.assertFalse(ct.change_relates(self._commit(files=["scripts/tests/test_nova_prober.py"]), inc))
+
+    def test_proposal_components_from_target_and_text(self):
+        p = {"kind": "proposal", "title": "tune nova_llm_ping backoff", "target": "", "files": []}
+        self.assertTrue(ct.change_relates(p, {"source": "nova_llm_ping", "title": "LLM DOWN"}))
+
+    def test_outcomes(self):
+        inc = [{"id": 9, "opened_at": self.T + timedelta(hours=3), "source": "nova_prober.py", "title": "x"}]
+        now = self.T + timedelta(days=2)
+        self.assertEqual(ct.change_outcome(self._commit(), inc, now), ("failed", 9))
+        late = [dict(inc[0], opened_at=self.T + timedelta(hours=30))]
+        self.assertEqual(ct.change_outcome(self._commit(), late, now), ("success", None))
+        self.assertEqual(ct.change_outcome(self._commit(), [], self.T + timedelta(hours=1)), ("pending", None))
+        self.assertEqual(ct.change_outcome(self._commit(), inc, now, reverted=True), ("rolled_back", None))
+        before = [dict(inc[0], opened_at=self.T - timedelta(hours=1))]
+        self.assertEqual(ct.change_outcome(self._commit(), before, now), ("success", None))
+
+    def test_monthly_cfr_excludes_pending(self):
+        rows = [("2026-10", "success")] * 8 + [("2026-10", "failed"), ("2026-10", "rolled_back"),
+                                               ("2026-10", "pending"), ("2026-09", "success")]
+        m = ct.monthly_cfr(rows)
+        self.assertEqual(m[0], {"month": "2026-10", "changes": 10, "failed": 2, "cfr_pct": 20.0})
+        self.assertEqual(m[1]["cfr_pct"], 0.0)
+        self.assertEqual(ct.monthly_cfr([]), [])
+
+    def test_gather_changes_marks_reverts_and_classes(self):
+        commits = [{"sha": "aaa111", "at": self.T, "subject": 'Revert "feat: x"', "files": []},
+                   {"sha": "bbb222", "at": self.T, "subject": "feat: x", "files": ["scripts/nova_x.py"]}]
+
+        class C:
+            def execute(self, *a): pass
+            def fetchone(self): return (False,)
+            def fetchall(self): return []
+        out = ct.gather_changes(C(), self.T - timedelta(days=1), commits)
+        by = {c["title"]: c for c in out}
+        self.assertTrue(by["feat: x"]["reverted"])
+        self.assertEqual(by['Revert "feat: x"']["class"], "emergency")
+        self.assertEqual(by["feat: x"]["class"], "normal")
+
+    def test_cli_has_changes_mode(self):
+        self.assertIn("--changes", SRC)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,9 @@ per dial); nova_voice renders them into every system prompt (cached 60s).
   nova_dials.py set profanity off
   nova_dials.py reset [dial]      # drop the row(s) -> back to the default
 
+Every set / reset / rejected value also writes one guard_decisions row (nova_guard_log, plan item
+#27, 2026-10-15; fire-and-forget, never blocks the change).
+
 Written by Jordan Koch.
 """
 import json
@@ -19,6 +22,23 @@ import nova_voice
 import nova_dsn as _nova_dsn  # noqa: E402
 OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 SERVICE = "nova_dials"
+
+
+def _glog(decision, subject=None, **detail):
+    """One guard_decisions row (item #27). Never raises, never blocks, never alters the verdict."""
+    try:
+        import nova_guard_log
+        nova_guard_log.log("dials", decision, subject, detail)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _gflush():
+    try:
+        import nova_guard_log
+        nova_guard_log.flush()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _connect(attempts=3):
@@ -70,6 +90,7 @@ def set_dial(name, value, by="nova_dials.py"):
                     "VALUES (%s, %s, %s::jsonb, now(), %s) ON CONFLICT (service, key) DO UPDATE "
                     "SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by",
                     (SERVICE, name, json.dumps(value), by))
+    _glog("set", name, value=value, by=by)
 
 
 def reset(name=None):
@@ -78,6 +99,7 @@ def reset(name=None):
             cur.execute("DELETE FROM service_config WHERE service = %s AND key = %s", (SERVICE, name))
         else:
             cur.execute("DELETE FROM service_config WHERE service = %s", (SERVICE,))
+    _glog("reset", name or "all")
 
 
 def main(argv=None):
@@ -88,13 +110,17 @@ def main(argv=None):
         try:
             v = parse_set(a[1], a[2])
         except ValueError as e:
+            _glog("rejected", str(a[1])[:40], reason=str(e))
+            _gflush()
             print(f"error: {e}", file=sys.stderr); return 2
         set_dial(a[1], v)
+        _gflush()
         print(show()); return 0
     if a[0] == "reset" and len(a) <= 2:
         if len(a) == 2 and a[1] not in nova_voice.DIAL_DEFAULTS:
             print(f"error: unknown dial {a[1]!r}", file=sys.stderr); return 2
         reset(a[1] if len(a) == 2 else None)
+        _gflush()
         print(show()); return 0
     if a[0] == "--selftest":
         assert parse_set("humor", "60") == 60 and parse_set("profanity", "off") is False

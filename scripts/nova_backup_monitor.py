@@ -11,8 +11,16 @@ This monitor reads that table and makes the backup *observable*:
   - DIGEST: when all jobs are healthy, post a quiet digest to #nova-info.
   - FAILURE: surface the most recent run's rc if it failed.
 
+  - MISSED NIGHT (Little Mister, 2026-10-15, #34): the Postgres dumps and the restore drill are
+    scheduler tasks, not Synology jobs, so telemetry.backup_runs never saw them — a skipped or
+    failed 02:00 pg_backup was invisible here. check_nightly() reads scheduler_runs for each
+    NIGHTLY task's last SUCCESS and alarms once a night is missed (warning past the limit,
+    critical past 2x).
+
 PG-only (no filesystem access needed). Routes via nova_notify; never raises.
-Restore-verification lives in the agent's weekly full run (it has src+dest access).
+Restore-verification lives in the agent's weekly full run (it has src+dest access) and in
+nova_restore_drill.py (weekly nova_ops full restore + nova_memories data-only restore).
+Written by Jordan Koch (via Claude).
 """
 import sys
 import time
@@ -33,6 +41,14 @@ SOURCE = "nova-backup-monitor"
 JOBS = {
     "nova-backup:nas": 36,        # nightly incremental: stale after 36h
     "nova-backup:external": 36,
+}
+
+
+# scheduler task id -> max hours since its last SUCCESSFUL run (one missed night/week = alarm)
+NIGHTLY = {
+    "pg_backup": 26,              # nightly 02:00 pg_dump of every DB (runs ~2.5h)
+    "studio_state_backup": 26,    # nightly 03:30 Signal/HA/HomeKit state -> NAS
+    "restore_drill": 8 * 24 + 2,  # weekly Sun 06:30 restore drill (+1 day grace)
 }
 
 
@@ -113,5 +129,34 @@ def check():
     return issues
 
 
+def check_nightly():
+    """Missed-night alarm for scheduler-run backup tasks. -> list of (task, msg, level)."""
+    conn = _connect()
+    conn.autocommit = True
+    issues = []
+    now_ms = time.time() * 1000
+    with conn.cursor() as cur:
+        for task, max_age_h in NIGHTLY.items():
+            cur.execute("SELECT max(ended_at) FILTER (WHERE status = 'success'), count(*) "
+                        "FROM scheduler_runs WHERE task_id = %s", (task,))
+            last, runs = cur.fetchone()
+            if not runs:
+                print(f"[backup-monitor] {task}: not scheduled yet (no runs) — skipped")
+                continue
+            if last is None:
+                issues.append((task, "no successful run ever recorded", "warning"))
+                continue
+            age_h = (now_ms - float(last)) / 3_600_000
+            if age_h > max_age_h:
+                level = "critical" if age_h > max_age_h * 2 else "warning"
+                issues.append((task, f"last success {age_h:.1f}h ago (limit {max_age_h}h) — missed night", level))
+    conn.close()
+    for task, msg, level in issues:
+        emit(f"Backup missed: {task}", msg, level, dedup_key=f"backup-missed:{task}")
+    return issues
+
+
 if __name__ == "__main__":
-    sys.exit(1 if check() else 0)
+    _issues = check()
+    _missed = check_nightly()
+    sys.exit(1 if (_issues or _missed) else 0)

@@ -216,8 +216,26 @@ class TestIntegration(unittest.TestCase):
         self.assertIn("meaning unchanged", out)
 
     def test_memory_server_down_raises_for_the_scheduler(self):
-        with self.assertRaises(OSError):
-            _run([], _Mem(), _Ops(), fail_remember=True)
+        # merged 2026-10-15: run() still raises; via memory_anchor's 'meaning' section the scheduler sees exit 1
+        rc, posted, _ = _run([], _Mem(), _Ops(), fail_remember=True)
+        self.assertEqual((rc, posted), (1, []))
+        ps = [patch.object(psycopg2, "connect", lambda dsn, **k: _Mem() if "nova_memories" in dsn else _Ops()),
+              patch.object(wm.ec, "remember", lambda *a, **k: (_ for _ in ()).throw(OSError("down"))),
+              patch.object(wm.ec, "_stamp", dict)]
+        for p in ps:
+            p.start()
+        try:
+            with self.assertRaises(OSError), redirect_stdout(io.StringIO()):
+                wm.run(False)
+        finally:
+            for p in reversed(ps):
+                p.stop()
+
+    def test_wrapper_delegates_to_memory_anchor_meaning(self):
+        import nova_memory_anchor as anchor
+        with patch.object(anchor, "main", return_value=0) as m, redirect_stdout(io.StringIO()):
+            self.assertEqual(wm.main(["--dry-run"]), 0)
+        m.assert_called_once_with(["--meaning", "--dry-run"])
 
 
 class TestFunctional(unittest.TestCase):

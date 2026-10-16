@@ -181,7 +181,7 @@ class TestRetry(unittest.TestCase):
         ap.nova_config.post_both = MagicMock(side_effect=RuntimeError("slack 500"))
         ap.nj.call_openrouter = MagicMock(side_effect=RuntimeError("openrouter 502"))
         with redirect_stdout(io.StringIO()) as out:
-            self.assertIsNone(ap.main())
+            self.assertIsNone(ap.publish())
         self.assertEqual(ap.nova_config.post_both.call_count, 1)
         self.assertEqual(ap.nj.call_openrouter.call_count, 1)
         ap.nj.publish_hugo.assert_not_called()
@@ -269,7 +269,7 @@ class TestFunctional(unittest.TestCase):
         _reset_stubs()
         ap.generate_image = MagicMock(return_value="/tmp/x.png")
         with redirect_stdout(io.StringIO()) as out:
-            ap.main()
+            ap.publish()
         msg, kw = ap.nova_config.post_both.call_args[0][0], ap.nova_config.post_both.call_args[1]
         self.assertTrue(msg.startswith("*Alert Patterns — 14-day rolling*"))
         self.assertEqual(kw, {"slack_channel": "C_ALERTS", "discord_channel": None})
@@ -285,7 +285,7 @@ class TestFunctional(unittest.TestCase):
         _reset_stubs()
         ap.generate_image = MagicMock(side_effect=RuntimeError("swarm down"))
         with redirect_stdout(io.StringIO()) as out:
-            ap.main()
+            ap.publish()
         self.assertIsNone(ap.nj.publish_hugo.call_args[1]["image_path"])
         self.assertIn("image gen failed: swarm down", out.getvalue())
 
@@ -294,10 +294,43 @@ class TestFunctional(unittest.TestCase):
         _reset_stubs()
         ap.nj.publish_hugo = MagicMock(side_effect=RuntimeError("hugo"))
         with redirect_stdout(io.StringIO()) as out:
-            ap.main()
+            ap.publish()
         ap.nj.git_push.assert_not_called()
         self.assertIn("article publish failed: hugo", out.getvalue())
         self.assertIn("done", out.getvalue())
+
+
+class TestMerged(unittest.TestCase):
+    """Consolidation #14 (2026-10-15): Morse Horn is the core, this is its render/Slack mode."""
+
+    def test_main_is_a_thin_wrapper_for_morse_horn_patterns(self):
+        fake = types.ModuleType("nova_morse_horn"); fake.main = MagicMock(return_value=0)
+        with _stubbed({"nova_morse_horn": fake}), redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(ap.main(), 0)
+        self.assertEqual(fake.main.call_args[0][0][0], "--patterns")
+        self.assertIn("merged into nova_morse_horn.py --patterns", out.getvalue())
+
+    def test_demands_block_in_slack_but_not_counted_as_signatures(self):
+        dm = [{"id": 7, "demand": "wants more disk", "count_7d": 40, "source": "alerts", "demand_by": "rule"}]
+        s = ap.render_slack(_p(demands=dm))
+        self.assertIn("The Morse Horn", s)
+        self.assertIn("#7 wants more disk — 40× (alerts)", s)
+        self.assertEqual(s.count("•"), 2)
+
+    def test_public_brief_only_carries_rule_phrased_demands(self):
+        dm = [{"demand": "wants more disk", "demand_by": "rule"},
+              {"demand": "wants host nova-core3 back", "demand_by": "model"}]
+        b = ap._sanitized_brief(_p(demands=dm))
+        self.assertIn("wants more disk", b)
+        self.assertNotIn("nova-core3", b)
+
+    def test_publish_passes_demands_and_dry_run_posts_nothing(self):
+        _use(_Conn()); _reset_stubs()
+        with redirect_stdout(io.StringIO()) as out:
+            p = ap.publish([{"id": 1, "demand": "wants memory", "count_7d": 9, "source": "syslog"}], dry_run=True)
+        self.assertEqual(p["demands"][0]["demand"], "wants memory")
+        ap.nova_config.post_both.assert_not_called(); ap.nj.publish_hugo.assert_not_called()
+        self.assertIn("wants memory", out.getvalue())
 
 
 class TestFrame(unittest.TestCase):

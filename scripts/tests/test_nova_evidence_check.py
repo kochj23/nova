@@ -4,9 +4,15 @@ Integration, Functional, Frame) plus the incident #3675 privacy/regression/docs 
 Written by Jordan Koch (via Claude)."""
 import importlib.util
 import re
+import io
+import os
+import subprocess
+import types
 import sys
 import time
 import unittest
+from unittest.mock import MagicMock
+from contextlib import redirect_stdout
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
@@ -252,6 +258,43 @@ class TestFrame(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.strip(), "")
 
+
+
+class TestMergedModeAbsence(unittest.TestCase):
+    """Consolidation item #12 (2026-10-15): Tahiti Check runs as `nova_evidence_check.py --absence`; logic stays in nova_tahiti_check."""
+
+    def _with_fake(self, rc=0):
+        fake = types.SimpleNamespace(main=MagicMock(return_value=rc))
+        had, prev = "nova_tahiti_check" in sys.modules, sys.modules.get("nova_tahiti_check")
+        sys.modules["nova_tahiti_check"] = fake
+        self.addCleanup(lambda: sys.modules.__setitem__("nova_tahiti_check", prev) if had else sys.modules.pop("nova_tahiti_check", None))
+        return fake
+
+    def test_mode_forwards_remaining_args(self):
+        fake = self._with_fake(rc=0)
+        with redirect_stdout(io.StringIO()):
+            rc = ec.main(["--absence", "--scheduled"])
+        self.assertEqual(rc, 0)
+        fake.main.assert_called_once_with(["--scheduled"])
+
+    def test_mode_propagates_exit_code(self):
+        fake = self._with_fake(rc=2)
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(ec.main(["--dry-run", "--absence"]), 2)
+        fake.main.assert_called_once_with(["--dry-run"])
+
+    def test_mode_selftest_subprocess(self):
+        r = subprocess.run([sys.executable, str(SCRIPTS / "nova_evidence_check.py"), "--absence", "--selftest"],
+                           capture_output=True, text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("selftest ok", r.stdout)
+        self.assertIn("Tahiti Check", r.stdout + r.stderr)
+
+    def test_old_script_still_runnable(self):
+        r = subprocess.run([sys.executable, str(SCRIPTS / "nova_tahiti_check.py"), "--selftest"],
+                           capture_output=True, text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("MERGED 2026-10-15", (SCRIPTS / "nova_tahiti_check.py").read_text())
 
 if __name__ == "__main__":
     unittest.main()

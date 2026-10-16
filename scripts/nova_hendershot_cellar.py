@@ -37,6 +37,9 @@ Table: cellar_inventory (PK kind, holder, capability)
 service_config: hendershot_cellar/latest (held, dormant, unknown, revoked_since_last_month),
                 hendershot_cellar/dormant_days (default 30)
 Schedule: monthly, the 2nd at 08:00 (digest notify, info).
+
+MERGED 2026-10-15 (consolidation #11) into nova_capability_ledger.py as `--dormant`: logic and table
+stay here; main() is a thin wrapper. TMA-1 decoys are dropped in gather() and inventory().
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -565,7 +568,8 @@ def inventory(cur, ctx: dict) -> tuple:
             rows.append(_row("gateway_tool", "nova-gateway", tool + ("" if tool in ro else " [acts]"), lu,
                              f"gateway_traces last call {lu:%Y-%m-%d}" if lu else "no call in gateway_traces",
                              gstart))
-    return rows, scopes, unknown
+    import nova_capability_ledger as CL   # belt and braces: no decoy row is ever proposed or recorded
+    return CL.drop_decoys(rows, key=lambda r: (r["holder"], r["capability"])), scopes, unknown
 
 
 # ── classification (pure) ───────────────────────────────────────────────────
@@ -631,22 +635,25 @@ def ensure_schema(cur) -> None:
 
 
 def fleet_secret_names(cur) -> dict | None:
-    """{name: updated_at} from the fleet store. The ciphertext column is never selected."""
+    """{name: updated_at} from the fleet store. The ciphertext column is never selected.
+    TMA-1 decoy names are dropped (callers: gather() here and in nova_goblin_map)."""
+    import nova_capability_ledger as CL
     try:
         cur.execute("SELECT name, updated_at FROM nova.secrets ORDER BY name")
-        return dict(cur.fetchall())
+        return CL.drop_decoys(dict(cur.fetchall()))
     except Exception as e:  # noqa: BLE001 — unreadable store = unknown, not a crash
         log(f"fleet secret names unreadable: {str(e).splitlines()[0]}")
         return None
 
 
 def gather(cur, _sleep=None) -> dict:
-    """Every evidence source, each fail-open (None = could not be read)."""
+    """Every evidence source, each fail-open (None = could not be read). TMA-1 decoys excluded."""
+    import nova_capability_ledger as CL
     now = NOW()
     probes = probe_fleet(cur, _sleep=_sleep)
     index = script_index()
     fleet = fleet_secret_names(cur)
-    kc = keychain_names() if sys.platform == "darwin" else None
+    kc = CL.drop_decoys(keychain_names() if sys.platform == "darwin" else None)
     names = set(fleet or {}) | set(kc or {})
     runs, runs_since = script_runs(cur)
     cc = claude_config()
@@ -666,8 +673,8 @@ def gather(cur, _sleep=None) -> dict:
         "threshold_names": {r[0] for r in _q(cur, "SELECT ident FROM threshold_ledger WHERE kind='slack_token'")},
         "ssh_keys": _q(cur, "SELECT host, fingerprint, label, first_seen FROM threshold_ledger WHERE kind='ssh_key' "
                             "AND last_seen > now() - interval '8 days'"),
-        "config_tokens": [r for r in _q(cur, "SELECT service, key, updated_at FROM service_config")
-                          if SECRET_KEY_RE.search(r[1])],
+        "config_tokens": CL.drop_decoys([r for r in _q(cur, "SELECT service, key, updated_at FROM service_config")
+                                         if SECRET_KEY_RE.search(r[1])], key=lambda r: (r[0], r[1])),
         "ha_auth": ha_storage(ha_config_dir(cur), "auth"), "claude": cc,
         "transcript_use": tu, "transcripts_since": tstart, "gateway_registry": gateway_tools(),
         "gateway_use": (gw, gstart[0][0] if gstart and gstart[0][0] else None),
@@ -797,14 +804,12 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
-    if a.dry_run:
-        run(dry=True)
-        return 0
-    if a.scheduled:
-        run(dry=False)
-        return 0
-    if a.report:
-        return report()
+    if a.dry_run or a.scheduled or a.report:   # merged 2026-10-15 (#11): nova_capability_ledger.py --dormant
+        import nova_capability_ledger as CL
+        log(f"merged into nova_capability_ledger.py --dormant on {CL.MERGED_ON}; delegating")
+        if a.dry_run or a.scheduled:
+            return CL.main(["--dormant"] + (["--dry-run"] if a.dry_run else []))
+        return CL.main(["--dormant", "--show"])
     ap.print_help()
     return 0
 

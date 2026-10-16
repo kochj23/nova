@@ -61,7 +61,8 @@ def _results():
     def c(b, r, wd=()):
         return mtm._class(b, r, [{"item": f"x{i}", "why": "y"} for i in wd])
     return {"beliefs": c(819, 0, range(5)), "feature_wishes": c(28, 26, [42, 43]), "organs": c(90, 66, range(3)),
-            "attention": c(720, 33.3, [1]), "preoccupations": c(43, 21, range(4)), "skills": c(31, 23, range(2))}
+            "attention": c(720, 33.3, [1]), "preoccupations": c(43, 21, range(4)), "skills": c(31, 23, range(2)),
+            "unread_tables": c(213, 164, range(2))}
 
 
 class TestSecurity(unittest.TestCase):
@@ -103,6 +104,16 @@ class TestPerformance(unittest.TestCase):
         self.assertLess(time.monotonic() - t, 5.0)
 
 
+    def test_table_readers_over_900_scripts(self):
+        texts = {f"nova_s{i}.py": f"CREATE TABLE IF NOT EXISTS t{i} (a int);\nSELECT a FROM t{(i + 1) % 900}\n" * 20
+                 for i in range(900)}
+        t = time.monotonic()
+        rd = mtm.table_readers(texts)
+        self.assertLess(time.monotonic() - t, 5.0)
+        self.assertEqual(len(rd), 900)
+        self.assertTrue(all(r["readers"] for r in rd.values()))
+
+
 class TestRetry(unittest.TestCase):
     # RETRY GAP: repo_files / git_log_text / memory_written — no retry; they fail open to a safe default.
     def test_repo_files_falls_back_when_git_missing(self):
@@ -134,7 +145,74 @@ class TestRetry(unittest.TestCase):
             self.assertEqual(mtm.main(["--selftest"]), 0)
 
 
-class TestUnit(unittest.TestCase):
+class UnreadTablesCases:
+    """Item #24 (2026-10-15): the 30-day 'still unread' retirement signal."""
+
+    def test_readers_exclude_writers_and_the_ledgers_themselves(self):
+        texts = {"nova_w.py": "CREATE TABLE IF NOT EXISTS w_t (a int); INSERT INTO w_t VALUES (1); SELECT a FROM w_t",
+                 "nova_mark_to_market.py": "SELECT * FROM w_t",
+                 "nova_flop_slate.py": "CREATE TABLE IF NOT EXISTS flop_slate (a int)",
+                 "nova_x.py": "from nova_w import thing\n",
+                 "nova_y.py": "q = 'SELECT 1 FROM public.w_t JOIN other ON true'"}
+        rd = mtm.table_readers(texts)
+        self.assertEqual(rd["w_t"]["writers"], ["nova_w.py"])
+        self.assertEqual(rd["w_t"]["readers"], ["nova_x.py", "nova_y.py"])
+        self.assertNotIn("flop_slate", rd)           # the measuring ledgers' own books are skipped
+
+    def test_import_only_counts_when_writer_exposes_a_read(self):
+        rd = mtm.table_readers({"nova_w.py": "CREATE TABLE IF NOT EXISTS w_t (a int); INSERT INTO w_t VALUES (1)",
+                                "nova_x.py": "import nova_w\n"})
+        self.assertEqual(rd["w_t"]["readers"], [])
+
+    def test_verdicts_carry_first_flag_forward(self):
+        first, still = mtm.unread_verdicts(["a", "b"], {"a": "2026-08", "gone": "2026-09"}, date(2026, 10, 1))
+        self.assertEqual(first, {"a": "2026-08", "b": "2026-10"})
+        self.assertEqual(still, ["a"])
+        self.assertEqual(mtm.unread_verdicts([], {}, date(2026, 10, 1)), ({}, []))
+
+    def test_measure_unread_flags_retirement_signal(self):
+        texts = {"nova_w.py": "CREATE TABLE IF NOT EXISTS w_t (a int)",
+                 "nova_v.py": "CREATE TABLE IF NOT EXISTS v_t (a int)",
+                 "nova_r.py": "CREATE TABLE IF NOT EXISTS r_t (a int)", "nova_c.py": "SELECT 1 FROM r_t"}
+        oc = FakeCursor([("to_regclass('public.mark_to_market')", (True,)),
+                         ("class = 'unread_tables'", ({"unread": {"w_t": "2026-09"}},))])
+        fresh = {"w_t": True, "v_t": True}
+        with mock.patch.object(mtm, "table_fresh", side_effect=lambda c, t, a, b: fresh.get(t, False)) as tf:
+            r = mtm.measure_unread(oc, texts, NOW - timedelta(days=30), NOW, month=date(2026, 10, 1))
+        self.assertEqual({c.args[1] for c in tf.call_args_list}, {"w_t", "v_t"})   # readers never probed
+        self.assertEqual((r["booked"], r["realised"]), (3, 1))
+        self.assertEqual(r["detail"]["retirement_signals"], ["w_t"])
+        self.assertEqual(r["detail"]["unread"], {"w_t": "2026-09", "v_t": "2026-10"})
+        self.assertIn("RETIREMENT SIGNAL", r["writedowns"][0]["why"])
+        self.assertEqual(r["writedowns"][0]["item"], "table w_t")
+
+    def test_probe_budget_counts_unknown(self):
+        texts = {"nova_w.py": "CREATE TABLE IF NOT EXISTS w_t (a int)"}
+        oc = FakeCursor([("to_regclass('public.mark_to_market')", (False,))])
+        r = mtm.measure_unread(oc, texts, NOW - timedelta(days=30), NOW, budget_s=0)
+        self.assertEqual((r["detail"]["unknown"], r["writedowns"]), (1, []))
+
+    def test_measure_survives_unread_failure(self):
+        with mock.patch.object(mtm, "measure_unread", side_effect=RuntimeError("x")), \
+                mock.patch.multiple(mtm, load_scheduler=mock.DEFAULT, script_texts=mock.DEFAULT, repo_files=mock.DEFAULT,
+                                    load_wishes=mock.DEFAULT, organ_inventory=mock.DEFAULT, measure_beliefs=mock.DEFAULT,
+                                    measure_wishes=mock.DEFAULT, measure_organs=mock.DEFAULT,
+                                    measure_attention=mock.DEFAULT, measure_preoccupations=mock.DEFAULT,
+                                    measure_skills=mock.DEFAULT, git_log_text=mock.DEFAULT) as m, \
+                mock.patch("sys.stderr", new=io.StringIO()):
+            m["script_texts"].return_value, m["repo_files"].return_value = {}, set()
+            m["measure_wishes"].return_value = m["measure_organs"].return_value = ({}, {})
+            res = mtm.measure(FakeCursor(), FakeCursor(), NOW)
+        self.assertNotIn("unread_tables", res)
+        self.assertIn("skills", res)
+
+    def test_have_month_ignores_the_unread_row(self):
+        oc = FakeCursor([("to_regclass", (True,)), ("count(*) FROM mark_to_market", (6,))])
+        self.assertTrue(mtm.have_month(oc, date(2026, 10, 1)))
+        self.assertIn("class <> 'unread_tables'", oc.q[-1])
+
+
+class TestUnit(UnreadTablesCases, unittest.TestCase):
     def test_norm(self):
         self.assertEqual(mtm.norm("nova_comet_tail.py"), "comet_tail")
         self.assertEqual(mtm.norm("nova-core-liveness"), "core_liveness")
@@ -258,6 +336,7 @@ class TestFunctional(unittest.TestCase):
         conn.cursor.return_value = oc
         with mock.patch.object(mtm, "connect", return_value=conn), \
                 mock.patch.object(mtm, "measure", side_effect=measure_side, return_value=_results()), \
+                mock.patch.object(mtm, "_slate", return_value=0) as self.slate, \
                 mock.patch("nova_pg_schema.safe_ddl") as ddl, \
                 mock.patch("nova_notify.notify", return_value=True) as note, \
                 redirect_stdout(io.StringIO()) as out:
@@ -274,6 +353,26 @@ class TestFunctional(unittest.TestCase):
         note.assert_called_once()
         self.assertEqual(note.call_args.kwargs["category"], "mark_to_market")
         self.assertIn("beliefs: 0 of 819 realised = 0%", note.call_args.kwargs["body"])
+
+    def test_scheduled_also_runs_the_flop_slate_step(self):
+        self._run(["--scheduled"])
+        self.slate.assert_called_once_with(["--scheduled"])
+
+    def test_slate_step_runs_even_when_marking_fails(self):
+        with self.assertRaises(RuntimeError):
+            self._run(["--scheduled"], measure_side=RuntimeError("pg gone"))
+        self.slate.assert_called_once_with(["--scheduled"])
+
+    def test_slate_mode_dispatches_to_flop_slate(self):
+        fake = mock.Mock()
+        fake.run_slate.return_value = 0
+        with mock.patch.dict(sys.modules, {"nova_flop_slate": fake}):
+            self.assertEqual(mtm.main(["--slate", "--report", "2"]), 0)
+        fake.run_slate.assert_called_once_with(["--report", "2"])
+
+    def test_report_does_not_run_slate(self):
+        self._run(["--report", "2"])
+        self.slate.assert_not_called()
 
     def test_dry_run_writes_and_notifies_nothing(self):
         rc, oc, ddl, note, out = self._run(["--dry-run"])
@@ -304,6 +403,7 @@ class TestFrame(unittest.TestCase):
         r = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0)
         self.assertIn("--scheduled", r.stdout)
+        self.assertIn("--slate", r.stdout)
         self.assertIn('if __name__ == "__main__":', SRC)
 
     def test_docstring_conventions(self):

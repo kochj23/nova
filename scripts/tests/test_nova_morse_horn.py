@@ -226,5 +226,36 @@ class Frame(unittest.TestCase):
         self.assertTrue(re.search(r"if dry:.*?conn\.rollback\(\)\s+return res", SRC, re.S))
 
 
+
+class Patterns(unittest.TestCase):
+    """Consolidation #14 (2026-10-15): alert_patterns is the render/Slack mode of the Morse Horn."""
+
+    def test_patterns_flag_present(self):
+        self.assertIn('"--patterns"', SRC)
+
+    def test_open_demands_fails_open(self):
+        with mock.patch("psycopg2.connect", side_effect=RuntimeError("pg down")):
+            self.assertEqual(mh.open_demands(), [])
+
+    def test_open_demands_reads_open_rows(self):
+        cur = mock.MagicMock()
+        cur.fetchone.return_value = (True,)
+        cur.fetchall.return_value = [(3, "alerts", 12, "wants more disk", "rule")]
+        conn = mock.MagicMock(); conn.cursor.return_value = cur
+        with mock.patch("psycopg2.connect", return_value=conn):
+            d = mh.open_demands(5)
+        self.assertEqual(d, [{"id": 3, "source": "alerts", "count_7d": 12, "demand": "wants more disk", "demand_by": "rule"}])
+        self.assertIn("status = 'open'", cur.execute.call_args_list[-1][0][0])
+        conn.close.assert_called_once()
+
+    def test_patterns_mode_hands_core_demands_to_renderer(self):
+        import types
+        rend = types.ModuleType("nova_alert_patterns"); rend.publish = mock.MagicMock()
+        dm = [{"id": 1, "demand": "wants memory"}]
+        with mock.patch.dict(sys.modules, {"nova_alert_patterns": rend}), \
+                mock.patch.object(mh, "open_demands", return_value=dm):
+            self.assertEqual(mh.main(["--patterns", "--dry-run"]), 0)
+        rend.publish.assert_called_once_with(dm, dry_run=True)
+
 if __name__ == "__main__":
     unittest.main()

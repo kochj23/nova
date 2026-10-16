@@ -301,5 +301,98 @@ class TestFrame(unittest.TestCase):
         self.assertIn("--daily", r.stdout)
 
 
+
+class TestMergedModeFlaky(unittest.TestCase):
+    """Consolidation item #12 (2026-10-15): Take Four runs as `nova_task_sentinel.py --flaky`; logic stays in nova_take_four."""
+
+    def _with_fake(self, rc=0):
+        fake = types.SimpleNamespace(main=MagicMock(return_value=rc))
+        had, prev = "nova_take_four" in sys.modules, sys.modules.get("nova_take_four")
+        sys.modules["nova_take_four"] = fake
+        self.addCleanup(lambda: sys.modules.__setitem__("nova_take_four", prev) if had else sys.modules.pop("nova_take_four", None))
+        return fake
+
+    def test_mode_forwards_remaining_args(self):
+        fake = self._with_fake(rc=0)
+        with redirect_stdout(io.StringIO()):
+            rc = ts.main(["--flaky", "--scheduled"])
+        self.assertEqual(rc, 0)
+        fake.main.assert_called_once_with(["--scheduled"])
+
+    def test_mode_propagates_exit_code(self):
+        fake = self._with_fake(rc=2)
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(ts.main(["--dry-run", "--flaky"]), 2)
+        fake.main.assert_called_once_with(["--dry-run"])
+
+    def test_mode_selftest_subprocess(self):
+        r = subprocess.run([sys.executable, str(SCRIPTS / "nova_task_sentinel.py"), "--flaky", "--selftest"],
+                           capture_output=True, text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("selftest ok", r.stdout)
+        self.assertIn("Take Four", r.stdout + r.stderr)
+
+    def test_old_script_still_runnable(self):
+        r = subprocess.run([sys.executable, str(SCRIPTS / "nova_take_four.py"), "--selftest"],
+                           capture_output=True, text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("MERGED 2026-10-15", (SCRIPTS / "nova_take_four.py").read_text())
+
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── #46(a) Chanos filter: the sentinel's heartbeat is earned, never a literal 'up' ──
+def _hb(conn):
+    return [p for s, p in conn.cur.stmts if "INSERT INTO health_checks" in s][0]
+
+
+class TestHeartbeatEarned(unittest.TestCase):
+    def test_unit_status_table(self):
+        self.assertEqual(ts.heartbeat_status(5, 60, True, 0), "up")
+        self.assertEqual(ts.heartbeat_status(5, 60, False, 0), "degraded")
+        self.assertEqual(ts.heartbeat_status(0, None, True, 0), "down")
+        self.assertEqual(ts.heartbeat_status(5, ts.BLIND_S + 1, True, 0), "down")
+        self.assertEqual(ts.heartbeat_status(5, 60, True, 1), "down")
+
+    def test_security_status_is_a_parameter(self):
+        hb = SRC.split("def _heartbeat(")[1].split("\ndef ")[0]
+        self.assertNotIn('("up",', hb)
+
+    def test_functional_empty_scheduler_runs_is_down(self):
+        _, conn = _sweep([], configured={"t1": "every 1h"})
+        st, note = _hb(conn)
+        self.assertEqual(st, "down"); self.assertIn("no scheduler_runs", note)
+
+    def test_functional_stale_runs_are_down(self):
+        rows = [(t, s - 3 * H, st, e) for t, s, st, e in _rows("t1", ["success"] * 5)]
+        _, conn = _sweep(rows, configured={"t1": "every 1h"})
+        self.assertEqual(_hb(conn)[0], "down")
+
+    def test_retry_undelivered_page_is_down(self):
+        conn = _Conn(_rows("dead", ["failure"] * 7))
+        with patch.object(ts, "load_configured_tasks", return_value={"dead": "every 1h"}), \
+                patch.dict(sys.modules, {"nova_notify": types.SimpleNamespace(notify=MagicMock(return_value=False))}):
+            ts.run_once(conn)
+        st, note = _hb(conn)
+        self.assertEqual(st, "down"); self.assertIn("not delivered", note)
+
+    def test_integration_five_straight_failures_escalate_and_sentinel_stays_up(self):
+        # the Chanos injection: a scratch task with straight failures -> escalation; the sentinel itself is fine
+        out, conn = _sweep(_rows("scratch", ["failure"] * 6), configured={"scratch": "every 1h"})
+        self.assertEqual(out[0][1]["state"], "critical")
+        self.assertEqual(NOTIFY.call_args.kwargs["level"], "critical")
+        self.assertEqual(_hb(conn)[0], "up")
+
+    def test_unit_config_load_failure_is_degraded(self):
+        _, conn = _sweep(_rows("t1", ["success"] * 5), configured={})
+        self.assertEqual(_hb(conn)[0], "degraded")
+
+    def test_performance_status_fast(self):
+        t = time.perf_counter()
+        for i in range(100000):
+            ts.heartbeat_status(i, i, True, 0)
+        self.assertLess(time.perf_counter() - t, 1.0)
+
+    def test_frame_docstring_mentions_earned_heartbeat(self):
+        self.assertIn("heartbeat_status()", SRC.split('"""')[1])

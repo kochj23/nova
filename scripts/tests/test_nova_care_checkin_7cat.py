@@ -63,11 +63,12 @@ class TestSecurity(unittest.TestCase):
         self.assertNotRegex(SRC, r'execute\(\s*f["\']')
         self.assertNotRegex(SRC, r'execute\([^)]*%\s*\(')
         self.assertIn('CHANNEL = "C0AMNQ5GX70"', SRC)
+        self.assertNotIn("chat.postMessage", SRC)            # she no longer asks him anything
 
     def test_reply_text_stored_as_param_not_sql(self):
         ops = _Cur(fetchall=[[(5, date(2026, 10, 4), [{"text": "a"}], "C", "1.2")]])
         evil = "1 yes'); DROP TABLE nova_care_checkins;--"
-        with mock.patch.object(cc, "remember", return_value="m1"):
+        with mock.patch.object(cc, "remember", return_value="m1"), mock.patch.object(cc, "_schema"):
             _run(cc.harvest, False, ops=ops, nsa=_nsa(answer=(evil, None)))
         upd = [s for s in ops.sql if s[0].startswith("UPDATE")][0]
         self.assertNotIn("DROP", upd[0])
@@ -94,10 +95,35 @@ class TestPerformance(unittest.TestCase):
         cc.parse_reply("1 yes " * 50_000, 4)
         self.assertLess(time.perf_counter() - t, 2.0)
 
+    def test_scores_stored_as_params(self):
+        ops = _Cur(fetchone=[None])
+        _ask(ops)
+        ins = [(s, p) for s, p in ops.sql if s.startswith("INSERT")][0]
+        self.assertNotIn("R7", ins[0])
+
     def test_gather_is_capped(self):
         ops = _Cur(fetchall=[[("a", "warning", 9), ("b", "critical", 3)]], fetchone=[("t", "m")])
         mem = _Cur(fetchall=[[("s", "x")] * 1000])
         self.assertLessEqual(len(cc.gather(ops, mem)), cc.MAX_ITEMS)
+
+
+def _rater(scores=None, boom=None):
+    m = types.ModuleType("nova_rater")
+    import nova_rater as real
+    m.render_line, m.parse_jordan_scores = real.render_line, real.parse_jordan_scores
+    if boom:
+        m.assess = mock.MagicMock(side_effect=boom)
+    else:
+        m.assess = mock.MagicMock(return_value={"days": 7, "scores": scores or {"R": 7, "A": 5, "T": 9, "E": 5, "S": 8},
+                                                "indicators": {"latency": {"value": 1.0}}, "not_instrumented": []})
+    return m
+
+
+def _ask(ops, mem=None, today=date(2026, 10, 12), dry=False, rater=None, force=False):
+    with mock.patch.dict(sys.modules, {"nova_rater": rater or _rater()}), \
+         mock.patch.object(cc, "_schema"), mock.patch.object(cc, "record_error_psql") as rec:
+        rc, out = _run(cc.ask, dry, force, today, ops=ops, mem=mem if mem is not None else _Cur())
+    return rc, out, rec
 
 
 class TestRetry(unittest.TestCase):
@@ -117,33 +143,55 @@ class TestRetry(unittest.TestCase):
         self.assertEqual(u.call_count, 3)
         self.assertIn("remember failed", out.getvalue())
 
-    def test_slack_post_retried_on_transient_then_recorded(self):
-        ops = _Cur(fetchall=[[("a", "warning", 2)]], fetchone=[None, None])
-        nsa = _nsa(post=[OSError("timeout"), {"ok": False, "error": "ratelimited"}, {"ok": True, "ts": "9.9"}])
-        rc, _ = _run(cc.ask, False, ops=ops, mem=_Cur(), nsa=nsa)
-        self.assertEqual(rc, 0)
-        self.assertEqual(nsa.slack.call_count, 3)
-        self.assertTrue(any(s.startswith("INSERT INTO nova_care_checkins") for s, _ in ops.sql))
-
-    def test_slack_permanent_error_not_retried(self):
-        ops = _Cur(fetchall=[[("a", "warning", 2)]], fetchone=[None, None])
-        nsa = _nsa(post={"ok": False, "error": "channel_not_found"})
-        rc, out = _run(cc.ask, False, ops=ops, mem=_Cur(), nsa=nsa)
+    def test_failed_assessment_still_writes_row_with_error(self):
+        ops = _Cur(fetchone=[None])
+        rc, out, _ = _ask(ops, rater=_rater(boom=RuntimeError("slo table locked")))
         self.assertEqual(rc, 1)
-        self.assertEqual(nsa.slack.call_count, 1)
-        self.assertIn("post failed: channel_not_found", out)
-        self.assertFalse(any(s.startswith("INSERT") for s, _ in ops.sql))
+        ins = [(s, p) for s, p in ops.sql if s.startswith("INSERT INTO nova_care_checkins")]
+        self.assertEqual(len(ins), 1)
+        self.assertIn("error", ins[0][0])
+        self.assertIn("slo table locked", ins[0][1][1])
 
-    def test_slack_exhausted_returns_1_no_row(self):
-        ops = _Cur(fetchall=[[("a", "warning", 2)]], fetchone=[None, None])
-        nsa = _nsa(post=[OSError("x")] * 3)
-        rc, out = _run(cc.ask, False, ops=ops, mem=_Cur(), nsa=nsa)
+    def test_ops_db_down_records_via_psql(self):
+        with mock.patch.object(cc, "record_error_psql") as rec:
+            rc, out = _run(cc.ask, False, False, date(2026, 10, 12), ops=RuntimeError("pg down"))
         self.assertEqual(rc, 1)
-        self.assertFalse(any(s.startswith("INSERT") for s, _ in ops.sql))
+        rec.assert_called_once()
+        self.assertIn("pg down", rec.call_args[0][1])
 
-    def test_memories_db_down_still_asks(self):
+    def test_missing_driver_reexecs_pinned_interpreter_once(self):
+        ex = mock.MagicMock()
+        real_import = __import__
+
+        def imp(name, *a, **k):
+            if name == "psycopg2":
+                raise ImportError("No module named 'psycopg2'")
+            return real_import(name, *a, **k)
+        with mock.patch("builtins.__import__", side_effect=imp), \
+             mock.patch.dict(os.environ, {"NOVA_PYTHON": "/bin/sh", "NOVA_CARE_REEXEC": ""}), \
+             redirect_stdout(io.StringIO()):
+            ok = cc.ensure_driver([], _exec=ex, _record=mock.MagicMock())
+        self.assertFalse(ok)
+        ex.assert_called_once()
+        self.assertEqual(ex.call_args[0][0], "/bin/sh")
+
+    def test_missing_driver_no_loop_records_error(self):
+        ex, rec = mock.MagicMock(), mock.MagicMock()
+        real_import = __import__
+
+        def imp(name, *a, **k):
+            if name == "psycopg2":
+                raise ImportError("gone")
+            return real_import(name, *a, **k)
+        with mock.patch("builtins.__import__", side_effect=imp), \
+             mock.patch.dict(os.environ, {"NOVA_CARE_REEXEC": "1"}), redirect_stdout(io.StringIO()):
+            self.assertFalse(cc.ensure_driver([], _exec=ex, _record=rec))
+        ex.assert_not_called()
+        rec.assert_called_once()
+
+    def test_memories_db_down_still_assesses(self):
         ops = _Cur(fetchall=[[("a", "warning", 2)]], fetchone=[None, None])
-        rc, out = _run(cc.ask, True, ops=ops, mem=RuntimeError("mem pg down"))
+        rc, out, _ = _ask(ops, mem=RuntimeError("mem pg down"))
         self.assertEqual(rc, 0)
         self.assertIn("gathering without articles", out)
 
@@ -160,6 +208,21 @@ class TestUnit(unittest.TestCase):
             self.assertEqual(cc.week_of(date(2026, 10, d)), date(2026, 10, 4))
         self.assertEqual(cc.week_of(date(2026, 10, 11)), date(2026, 10, 11))
 
+    def test_due_sun_to_wed_until_assessed(self):
+        for d, want in ((11, True), (12, True), (13, True), (14, True), (15, False), (16, False), (17, False)):
+            self.assertEqual(cc.due(date(2026, 10, d), False), want, d)
+        self.assertFalse(cc.due(date(2026, 10, 12), True))
+        self.assertTrue(cc.due(date(2026, 10, 16), True, force=True))
+
+    def test_volunteered_scores_only_from_humans(self):
+        msgs = [{"user": "U049EPC2W", "text": "R6 A5 T4 E6 S3", "ts": "1760300000.1"},
+                {"user": "UBOT", "text": "R1 A1 T1 E1 S1", "ts": "1760300000.2"},
+                {"user": "U049EPC2W", "bot_id": "B1", "text": "R2 A2 T2 E2 S2", "ts": "1760300000.3"},
+                {"user": "U049EPC2W", "text": "lunch at 6", "ts": "1760300000.4"}]
+        got = cc.volunteered_scores(msgs, {"U049EPC2W"})
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0][1], {"R": 6, "A": 5, "T": 4, "E": 6, "S": 3})
+
     def test_summarize_caps_reply(self):
         s = cc.summarize(date(2026, 10, 11), [{"text": "a"}], "z" * 2000, {})
         self.assertIn("a -> no verdict", s)
@@ -167,57 +230,59 @@ class TestUnit(unittest.TestCase):
 
 
 class TestIntegration(unittest.TestCase):
-    def test_ask_is_idempotent_per_week(self):
-        ops = _Cur(fetchone=[(1,)])
-        nsa = _nsa()
-        rc, out = _run(cc.ask, False, ops=ops, mem=_Cur(), nsa=nsa)
+    def test_assess_is_idempotent_per_week(self):
+        rater = _rater()
+        rc, out, _ = _ask(_Cur(fetchone=[(True,)]), rater=rater)
         self.assertEqual(rc, 0)
-        nsa.slack.assert_not_called()
-        self.assertIn("already asked", out)
+        rater.assess.assert_not_called()
+        self.assertIn("already assessed", out)
 
-    def test_harvest_skips_unanswered(self):
+    def test_thursday_does_not_assess(self):
+        rater = _rater()
+        rc, out, _ = _ask(_Cur(fetchone=[None]), today=date(2026, 10, 15), rater=rater)
+        rater.assess.assert_not_called()
+        self.assertIn("outside the Sun-Wed window", out)
+
+    def test_harvest_skips_unanswered_and_captures_volunteered(self):
         ops = _Cur(fetchall=[[(5, date(2026, 10, 4), [{"text": "a"}], "C", "1.2")]])
-        with mock.patch.object(cc, "remember") as rem:
-            rc, out = _run(cc.harvest, False, ops=ops, nsa=_nsa(answer=(None, None)))
+        nsa = _nsa(answer=(None, None), post={"ok": True, "messages": [
+            {"user": "U049EPC2W", "text": "R6 A5 T4 E6 S3", "ts": "1760300000.1"}]})
+        nsa.HUMANS = {"U049EPC2W"}
+        with mock.patch.object(cc, "remember") as rem, mock.patch.object(cc, "_schema"):
+            rc, out = _run(cc.harvest, False, ops=ops, nsa=nsa)
         rem.assert_not_called()
+        ins = [p for s, p in ops.sql if s.startswith("INSERT") and "jordan_scores" in s]
+        self.assertEqual(json.loads(ins[0][1]), {"R": 6, "A": 5, "T": 4, "E": 6, "S": 3})
         self.assertIn("harvested 0", out)
 
 
 class TestFunctional(unittest.TestCase):
-    def test_ask_golden_path(self):
+    def test_assess_golden_path_posts_nothing(self):
         ops = _Cur(fetchall=[[("Disk low", "warning", 4)]], fetchone=[None, ("rail", "found it")])
-        mem = _Cur(fetchall=[[("local", "Watchman")]])
         nsa = _nsa()
-        rc, _ = _run(cc.ask, False, ops=ops, mem=mem, nsa=nsa)
+        with mock.patch.dict(sys.modules, {"nova_slack_answers": nsa}):
+            rc, out, _ = _ask(ops, mem=_Cur(fetchall=[[("local", "Watchman")]]))
         self.assertEqual(rc, 0)
-        kw = nsa.slack.call_args[1]
-        self.assertEqual(kw["channel"], cc.CHANNEL)
-        self.assertIn("1. warning alert", kw["text"])
+        nsa.slack.assert_not_called()
         ins = [p for s, p in ops.sql if s.startswith("INSERT")][0]
-        self.assertEqual(ins[-1], "111.2")
+        self.assertEqual(ins[0], date(2026, 10, 11))
+        self.assertEqual(json.loads(ins[3]), {"R": 7, "A": 5, "T": 9, "E": 5, "S": 8})
+        self.assertIn("R7 A5 T9 E5 S8", ins[2])
 
     def test_harvest_golden_path(self):
         ops = _Cur(fetchall=[[(5, date(2026, 10, 4), [{"text": "a"}, {"text": "b"}], "C", "1.2")]])
-        with mock.patch.object(cc, "remember", return_value="mem9") as rem:
+        with mock.patch.object(cc, "remember", return_value="mem9") as rem, mock.patch.object(cc, "_schema"):
             rc, out = _run(cc.harvest, False, ops=ops, nsa=_nsa(answer=("1 yes 2 no", "yes")))
         self.assertEqual(rem.call_args[0][1]["verdicts"], {"1": "helped", "2": "noise"})
         upd = [p for s, p in ops.sql if s.startswith("UPDATE")][0]
         self.assertEqual(upd[2:], ("mem9", 5))
         self.assertIn("harvested 1", out)
 
-    def test_dry_run_sends_and_writes_nothing(self):
+    def test_dry_run_writes_nothing(self):
         ops = _Cur(fetchall=[[("a", "warning", 2)]], fetchone=[None])
-        nsa = _nsa()
-        rc, out = _run(cc.ask, True, ops=ops, mem=_Cur(), nsa=nsa)
-        nsa.slack.assert_not_called()
-        self.assertFalse(any(s.startswith(("INSERT", "CREATE")) for s, _ in ops.sql))
-        self.assertIn("Little Mister", out)
-
-    def test_nothing_happened_no_post(self):
-        nsa = _nsa()
-        rc, out = _run(cc.ask, False, ops=_Cur(fetchone=[None, None]), mem=_Cur(), nsa=nsa)
-        nsa.slack.assert_not_called()
-        self.assertIn("no check-in", out)
+        rc, out, _ = _ask(ops, dry=True)
+        self.assertFalse(any(s.startswith(("INSERT", "CREATE", "UPDATE")) for s, _ in ops.sql))
+        self.assertIn("Self-assessment", out)
 
 
 class TestFrame(unittest.TestCase):

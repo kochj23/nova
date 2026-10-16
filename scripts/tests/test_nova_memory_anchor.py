@@ -125,9 +125,13 @@ def _main(cur, argv=("nova_memory_anchor.py",), remember=None, weigh_remember=No
     out = io.StringIO()
     with patch.object(ma.psycopg2, "connect", return_value=_Conn(cur)), patch.object(ma, "remember", remember), \
          patch.object(ma.wom, "remember", _main.weigh), patch.object(ma.wom, "_stamp", dict), \
-         patch.object(sys, "argv", list(argv)), redirect_stdout(out):
+         patch.object(sys, "argv", list(argv)), patch.object(ma, "meaning_pass", _main.meaning), \
+         redirect_stdout(out):
         rc = ma.main()
     return rc, remember, out.getvalue()
+
+
+_main.meaning = MagicMock(return_value=0)   # the 'meaning' section is tested on its own below
 
 
 def _state_rows(cur, service):
@@ -293,6 +297,47 @@ class TestFunctional(unittest.TestCase):
         rc, remember, out = _main(cur, ["x", "--report"])
         self.assertIn("1 anchor(s) held", out); self.assertEqual(cur.ran("FROM preoccupations"), [])
         _main.weigh.assert_not_called()
+
+
+class TestWeightOfMeaningMerged(unittest.TestCase):
+    """Consolidation #18 (2026-10-15): Weight of Meaning runs as the 'meaning' section."""
+
+    def test_default_pass_runs_meaning_after_anchoring(self):
+        _main.meaning.reset_mock()
+        rc, remember, _ = _main(_cur(preoccs=[HEAVY]))
+        self.assertEqual(rc, 0)
+        _main.meaning.assert_called_once_with(False)
+        remember.assert_called_once()
+
+    def test_weight_and_report_skip_meaning(self):
+        for argv in (["x", "--weight"], ["x", "--report"]):
+            _main.meaning.reset_mock()
+            _main(_cur(preoccs=[HEAVY]), argv)
+            _main.meaning.assert_not_called()
+
+    def test_meaning_mode_runs_only_meaning(self):
+        with patch.object(ma, "meaning_pass", return_value=0) as mp, patch.object(ma, "_anchor") as an:
+            self.assertEqual(ma.main(["--meaning", "--dry-run"]), 0)
+        mp.assert_called_once_with(True); an.assert_not_called()
+
+    def test_meaning_failure_never_stops_anchoring_and_exits_1(self):
+        import nova_weight_of_meaning as wm
+        with patch.object(wm, "run", side_effect=OSError("memory server down")), redirect_stdout(io.StringIO()) as o:
+            self.assertEqual(ma.meaning_pass(False), 1)
+        self.assertIn("meaning section failed", o.getvalue())
+        _main.meaning.side_effect = None
+        _main.meaning.return_value = 1
+        try:
+            rc, remember, _ = _main(_cur(preoccs=[HEAVY]))
+        finally:
+            _main.meaning.return_value = 0
+        self.assertEqual(rc, 1); remember.assert_called_once()
+
+    def test_meaning_pass_delegates_to_weight_of_meaning_run(self):
+        import nova_weight_of_meaning as wm
+        with patch.object(wm, "run", return_value=0) as r:
+            self.assertEqual(ma.meaning_pass(True), 0)
+        r.assert_called_once_with(True)
 
 
 class TestWeightOfMemoryMerged(unittest.TestCase):

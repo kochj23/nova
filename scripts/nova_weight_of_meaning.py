@@ -26,7 +26,12 @@ changes (unchanged: re-stated at most weekly), high-water in service_config (nov
 high_water) and the latest findings in nova_weight_of_meaning/latest. Never edits, prunes, boosts or
 re-ranks a memory. Fail-open. Conventions mirror nova_weight_of_memory.py / nova_quiet_sensor.py.
 
-  nova_weight_of_meaning.py            # real (scheduler-core, every 6 h; writes on change)
+MERGED 2026-10-15 (consolidation #18): this reading now runs as the 'meaning' section of
+nova_memory_anchor.py (same 6-hourly pass, after the anchoring); `nova_memory_anchor.py --meaning`
+runs it alone. The logic, source='weight_of_meaning', its high-water and latest keys stay here
+(run()); main() is a thin wrapper for old invocations.
+
+  nova_weight_of_meaning.py            # == nova_memory_anchor.py --meaning
   nova_weight_of_meaning.py --dry-run  # print the reading, write nothing
   nova_weight_of_meaning.py --selftest # pure-logic assertions, no DB, no memory
 
@@ -176,11 +181,22 @@ def gather(cur):
     return c or [], o or [], a or []
 
 
+MERGED_ON = "2026-10-15"
+
+
 def main(argv=None):
+    """Merged into nova_memory_anchor.py (the 'meaning' section) on 2026-10-15: thin wrapper."""
     ap = argparse.ArgumentParser(description="Nova's weight of meaning (wish #77) — what she logged vs what "
                                              "she was called back to; every line cited")
     ap.add_argument("--dry-run", action="store_true", help="print the reading, write nothing")
     args = ap.parse_args(argv)
+    log(f"merged into nova_memory_anchor.py on {MERGED_ON} — running its 'meaning' section")
+    import nova_memory_anchor as anchor
+    return anchor.main(["--meaning"] + (["--dry-run"] if args.dry_run else []))
+
+
+def run(dry_run=False):
+    """The reading itself (was main()): called by nova_memory_anchor's 'meaning' section."""
     try:
         mconn = psycopg2.connect(MEM_DSN, connect_timeout=5)
     except Exception as e:  # noqa: BLE001
@@ -195,7 +211,7 @@ def main(argv=None):
     log(f"{len(c)} called, {len(u)} uncalled source(s), {len(sh['loud'])} loud source(s)")
     text = meaning_text(fs, today)
     sig = meaning_sig(c, u, sh)
-    if args.dry_run:
+    if dry_run:
         print(text); return 0
     try:
         conn = psycopg2.connect(OPS_DSN, connect_timeout=5)

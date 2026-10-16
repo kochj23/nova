@@ -19,6 +19,7 @@ import re
 import subprocess
 import urllib.request
 import urllib.parse
+import urllib.error
 from datetime import datetime, date, timedelta
 from pathlib import Path
 import nova_config
@@ -81,34 +82,59 @@ def log(msg):
 
 # ── 2. GitHub Digest ──────────────────────────────────────────────────────────
 
+GITHUB_TOKEN_ITEM = "github-token"   # 1Password vault "Nova" item title / nova.secrets name / Keychain service
+
+
 def _github_token():
-    """Best-effort GitHub token: env -> nova.secrets 'github-token' -> `gh auth token`.
-    None is fine — the REST calls below work unauthenticated (public activity only)."""
+    """Best-effort GitHub token, picked up automatically as soon as one exists anywhere:
+    env (GH_TOKEN/GITHUB_TOKEN) -> 1Password vault "Nova" item 'github-token' (password field),
+    falling back to its hourly mirror in nova.secrets -> macOS Keychain service 'github-token'
+    -> `gh auth token`. None is fine — the REST calls work unauthenticated (public activity only)."""
     import os, shutil
     tok = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if tok:
         return tok
     try:
         import nova_secrets
-        tok = nova_secrets.get_secret("github-token")
+        tok = nova_secrets.vault_secret(GITHUB_TOKEN_ITEM)
         if tok:
             return tok
-    except BaseException:  # get_secret may sys.exit when the store is unreachable
+    except BaseException:  # KeyError when absent; _env may sys.exit when the store is unreachable
+        pass
+    try:
+        import nova_secrets
+        tok = nova_secrets._keychain(GITHUB_TOKEN_ITEM)
+        if tok:
+            return tok
+    except BaseException:
         pass
     gh = shutil.which("gh") or ("/opt/homebrew/bin/gh" if Path("/opt/homebrew/bin/gh").exists() else None)
     if gh:
-        r = subprocess.run([gh, "auth", "token"], capture_output=True, text=True, timeout=15)
-        if r.returncode == 0 and r.stdout.strip():
-            return r.stdout.strip()
+        try:
+            r = subprocess.run([gh, "auth", "token"], capture_output=True, text=True, timeout=15)
+            if r.returncode == 0 and r.stdout.strip():
+                return r.stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            pass
     return None
 
 
 def _github_api(path, token):
-    req = urllib.request.Request("https://api.github.com" + path, headers={
-        "Accept": "application/vnd.github+json", "User-Agent": "nova-nightly-report",
-        **({"Authorization": f"Bearer {token}"} if token else {})})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read())
+    """GET api.github.com. A rejected token (401: expired/revoked) degrades to public-only
+    instead of failing the digest."""
+    def _get(tok):
+        req = urllib.request.Request("https://api.github.com" + path, headers={
+            "Accept": "application/vnd.github+json", "User-Agent": "nova-nightly-report",
+            **({"Authorization": f"Bearer {tok}"} if tok else {})})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read())
+    try:
+        return _get(token)
+    except urllib.error.HTTPError as e:
+        if token and e.code == 401:
+            log("GitHub token rejected (401) — falling back to public-only")
+            return _get(None)
+        raise
 
 
 def github_digest():

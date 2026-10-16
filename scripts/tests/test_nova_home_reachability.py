@@ -48,3 +48,15 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             fn()
     print("ok")
+
+
+def test_dark_rooms_go_to_the_daily_rollup_not_the_bus():
+    """#22 (Little Mister, 2026-10-15): one roll-up row per dark room per day; no per-event notify."""
+    seen = []
+    res = {"verdict": "segment", "dark_rooms": ["Garage", "Patio"], "text": "check the AP"}
+    n = H.record_dark_rooms(res, record=lambda *a, **k: seen.append(a) or True)
+    assert n == 2
+    assert [a[1] for a in seen] == ["homekit-dark-Garage", "homekit-dark-Patio"]   # stable per-room key
+    assert all(a[0] == "nova_home_reachability" and a[3] == "warning" for a in seen)
+    src = (Path(H.__file__)).read_text()
+    assert "nova_notify" not in src

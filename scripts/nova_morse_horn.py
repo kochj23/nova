@@ -28,7 +28,13 @@ Measures: % of last week's alert volume (telemetry.events warning+critical) expl
 demands; demands answered this month vs last month.
 Weekly digest via nova_notify (info, category morse_horn, deduped per ISO week).
 
-CLI: --scheduled (collect, store, digest) | --dry-run (print, write nothing, post nothing)
+--patterns (merged 2026-10-15, consolidation #14; was nova_alert_patterns.py, Sun 08:30 on the Studio):
+the render/Slack mode. Reads the open demands above (the core) and hands them to
+nova_alert_patterns.publish(), which still runs every 14-day pattern check (chronic signatures,
+volume trend, incidents, red/blue/purple, new devices, rogue APs), posts full detail to #nova-alerts
+and publishes the sanitized /operations article. --patterns --dry-run prints, posts nothing.
+
+CLI: --scheduled (collect, store, digest) | --patterns [--dry-run] | --dry-run (print, write nothing, post nothing)
      --report (print stored state) | --answer ID | --ignore ID | --no-model | --top N | --selftest
 Written by Jordan Koch (via Claude).
 """
@@ -572,6 +578,38 @@ def report() -> int:
         conn.close()
 
 
+def open_demands(limit: int = 5) -> list:
+    """The core's current open demands, loudest first. Read-only; fail-open to []."""
+    try:
+        import psycopg2
+        import nova_dsn
+        conn = psycopg2.connect(nova_dsn.pg_dsn("nova_ops"), connect_timeout=10)
+    except Exception as e:  # noqa: BLE001
+        log(f"open_demands: connect failed: {e}")
+        return []
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT to_regclass('morse_horn') IS NOT NULL")
+        if not cur.fetchone()[0]:
+            return []
+        cur.execute("""SELECT id, source, count_7d, demand, demand_by FROM morse_horn
+                       WHERE status = 'open' ORDER BY count_7d DESC, id LIMIT %s""", (int(limit),))
+        return [dict(zip(("id", "source", "count_7d", "demand", "demand_by"), r)) for r in cur.fetchall()]
+    except Exception as e:  # noqa: BLE001
+        log(f"open_demands: query failed: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def run_patterns(dry: bool = False) -> int:
+    """--patterns: the weekly alert-patterns review, rendered from the Morse Horn's core."""
+    import nova_alert_patterns as renderer
+    log("--patterns: alert-pattern review (was nova_alert_patterns.py) over the Morse Horn demands")
+    renderer.publish(open_demands(), dry_run=dry)
+    return 0
+
+
 def selftest() -> int:
     ip = ".".join(["10", "0", "9", "9"])          # built, so no literal address lives in the source
     t = template(f"Scheduled task 'nas_localdiff' is FAILING on {ip} at 2026-10-14 21:41:14 (pid 4412)")
@@ -605,6 +643,8 @@ def main(argv=None) -> int:
     ap.add_argument("--scheduled", action="store_true", help="weekly: collect, store, post the digest")
     ap.add_argument("--dry-run", action="store_true", help="compute and print; write nothing, post nothing")
     ap.add_argument("--report", action="store_true", help="print the stored demands and weekly measures")
+    ap.add_argument("--patterns", action="store_true",
+                    help="weekly alert-pattern review (was nova_alert_patterns.py): #nova-alerts + /operations")
     ap.add_argument("--answer", type=int, metavar="ID", help="mark a demand answered")
     ap.add_argument("--ignore", type=int, metavar="ID", help="mark a demand ignored")
     ap.add_argument("--no-model", action="store_true", help="rules only; never call the local model")
@@ -619,6 +659,8 @@ def main(argv=None) -> int:
         return 0 if n else 1
     if a.report:
         return report()
+    if a.patterns:
+        return run_patterns(dry=a.dry_run)
     if not (a.scheduled or a.dry_run):
         ap.print_help()
         return 0

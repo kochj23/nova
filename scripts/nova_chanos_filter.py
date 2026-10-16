@@ -39,6 +39,10 @@ CLI:   --scheduled   daily: compute, upsert this month's rows, notify on new unp
 Table: chanos_filter (month, series) one row per series per month, refreshed by each run.
 Schedule: scheduler-core, daily 04:50, timeout 300, overlap skip.
 Written by Jordan Koch (via Claude).
+
+MERGED 2026-10-15 (consolidation item #12): scheduled as `nova_output_drift.py --never-red --scheduled`, which
+forwards its remaining args to main() here. The logic, flags and table stay in this module, and
+this script stays runnable directly with the same flags.
 """
 from __future__ import annotations
 

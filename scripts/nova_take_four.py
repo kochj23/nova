@@ -42,6 +42,10 @@ CLI:   --scheduled     the daily run (write rows, Buick 8, Monday digest)
 Table: take_four (task_id, week, runs, recovered, share, top_first_take_errors jsonb, status, ...)
 Schedule: scheduler-core, daily 07:20, timeout 300, overlap skip.
 Written by Jordan Koch (via Claude).
+
+MERGED 2026-10-15 (consolidation item #12): scheduled as `nova_task_sentinel.py --flaky --scheduled`, which
+forwards its remaining args to main() here. The logic, flags and table stay in this module, and
+this script stays runnable directly with the same flags.
 """
 from __future__ import annotations
 

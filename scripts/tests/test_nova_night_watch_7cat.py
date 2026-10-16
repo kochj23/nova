@@ -302,5 +302,35 @@ class TestPDB(unittest.TestCase):
         self.assertEqual(wb.latest_turnover.call_args.args[1:], ("0630", 6))
 
 
+class TestMergedIntoMorningBrief(unittest.TestCase):
+    """Consolidation #17 (2026-10-15): section() feeds the 07:00 brief and never posts."""
+
+    def test_section_composes_without_posting(self):
+        conn = mock.MagicMock()
+        post = mock.MagicMock()
+        with mock.patch.object(W, "connect", return_value=conn), \
+                mock.patch.object(N, "gather", return_value=g()), \
+                mock.patch.object(N, "compose_pdb", return_value="*PDB for Little Mister*") as cp, \
+                mock.patch.object(W, "post_slack", post):
+            self.assertEqual(N.section(date(2026, 10, 8)), "*PDB for Little Mister*")
+        post.assert_not_called()
+        conn.close.assert_called_once()
+        self.assertEqual(cp.call_args.args[2:], (START, END))
+
+    def test_section_classic(self):
+        with mock.patch.object(W, "connect", return_value=mock.MagicMock()), \
+                mock.patch.object(N, "gather", return_value=g()):
+            self.assertIn("quiet night", N.section(date(2026, 10, 8), classic=True))
+
+    def test_standalone_still_posts_slack_only(self):
+        rc, post, pb, pd, _ = run_main([], [True])
+        self.assertEqual(rc, 0)
+        post.assert_called_once()
+        pb.assert_not_called(); pd.assert_not_called()
+
+    def test_morning_brief_imports_section(self):
+        self.assertIn("NW.section()", (SCRIPTS / "nova_morning_brief.py").read_text())
+
+
 if __name__ == "__main__":
     unittest.main()

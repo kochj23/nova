@@ -37,7 +37,10 @@ CLI:      --run [--day YYYY-MM-DD] [--dry-run]   --show   --selftest
 Table:    crain_square_residuals; feeds source_outcomes (CARDINAL) via record_outcome
 Config:   service_config crain_square/motion_pairs  {"<binary_sensor>": ["<camera>", ...]}
           service_config crain_square/temp_pairs    [["room","source","room","source"], ...]
-Schedule: daily 05:30 (before CARDINAL at 05:50): `nova_crain_square.py --run`
+Schedule: daily 05:30 (before CARDINAL at 05:50): `nova_cardinal.py --invariants`
+MERGED 2026-10-15 (consolidation #18): CARDINAL grades each source alone, Crain's Square the house as
+a whole; it now runs as `nova_cardinal.py --invariants`. Logic and table stay here (run/show/selftest);
+`--run` is a thin wrapper that delegates.
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -308,6 +311,9 @@ def selftest() -> int:
     return 0
 
 
+MERGED_ON = "2026-10-15"
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--run", action="store_true", help="compute yesterday's residuals, write, feed CARDINAL")
@@ -319,8 +325,10 @@ def main(argv=None) -> int:
     if a.selftest:
         return selftest()
     if a.run:
-        run(a.day, dry=a.dry_run)
-        return 0
+        log(f"merged into nova_cardinal.py --invariants on {MERGED_ON}; delegating")
+        import nova_cardinal
+        return nova_cardinal.main(["--invariants"] + (["--day", a.day.isoformat()] if a.day else [])
+                                  + (["--dry-run"] if a.dry_run else []))
     if a.show:
         return show()
     ap.print_help()

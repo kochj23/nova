@@ -158,5 +158,72 @@ class TestVerdict(unittest.TestCase):
         self.assertTrue(set(d.FRESHNESS_TABLES) <= names)
 
 
+
+class TestMemoriesDataOnly(unittest.TestCase):
+    """#34 (Little Mister, 2026-10-15): the retired monthly test's data-only restore lives here now."""
+    STREAM = ["SET statement_timeout = 0;\n", "COPY public.memories (id, text, embedding) FROM stdin;\n",
+              "a\tx\\nmultiline-escaped\t[1,2]\n", "b\ty\t[3,4]\n", "\\.\n",
+              "COPY public.memories_archive (id) FROM stdin;\n", "z\n", "\\.\n"]
+
+    def test_counts_only_memories_rows(self):
+        self.assertEqual(d.count_copy_rows(self.STREAM), 2)
+
+    def test_empty_stream_is_zero(self):
+        self.assertEqual(d.count_copy_rows([]), 0)
+
+    def test_awk_twin_matches_python_counter(self):
+        import shutil
+        import subprocess
+        if not shutil.which("awk"):
+            self.skipTest("no awk")
+        r = subprocess.run(["awk", d.COPY_COUNT_AWK], input="".join(self.STREAM),
+                           capture_output=True, text=True, timeout=10)
+        self.assertEqual(r.stdout.strip(), "2")
+
+    def test_data_count_parses_and_fails_closed(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        with patch.object(d, "docker", return_value=SimpleNamespace(returncode=0, stdout="1650000\n", stderr="")):
+            self.assertEqual(d.memories_data_count("nova_memories_x"), (1650000, None))
+        with patch.object(d, "docker", return_value=SimpleNamespace(returncode=1, stdout="", stderr="boom")) as m:
+            self.assertEqual(d.memories_data_count("nova_memories_x"), (None, "boom"))
+        args = m.call_args[0]
+        self.assertIn("--data-only", " ".join(args))
+        self.assertIn(":ro", " ".join(args))          # dump mounted read-only
+
+    def test_band_is_the_old_ten_percent(self):
+        self.assertTrue(d.ratio_ok(1_000_000, 1_090_000, d.MEM_RATIO_LO, d.MEM_RATIO_HI))
+        self.assertFalse(d.ratio_ok(800_000, 1_000_000, d.MEM_RATIO_LO, d.MEM_RATIO_HI))
+
+
+class TestTierObjectives(unittest.TestCase):
+    """#35: measured RTA/RPA against Tier-0 targets (RTO 1h, RPO 15m)."""
+
+    def test_dump_only_misses_tier0_rpo(self):
+        o = d.tier_objectives(900, 900, 13 * H, None, 3600, 900)
+        self.assertEqual(o["rpa_source"], "dump")
+        self.assertTrue(o["rto_met"])
+        self.assertFalse(o["rpo_met"])
+
+    def test_wal_chain_meets_rpo(self):
+        o = d.tier_objectives(None, 1200, 13 * H, 120, 3600, 900)
+        self.assertEqual((o["rpa_s"], o["rpa_source"], o["rpo_met"]), (120, "wal", True))
+        self.assertEqual(o["rta_s"], 1200)     # no full estimate -> elapsed
+
+    def test_full_estimate_beats_partial_elapsed(self):
+        o = d.tier_objectives(7200, 600, 60, None, 3600, 900)
+        self.assertEqual(o["rta_s"], 7200)
+        self.assertFalse(o["rto_met"])
+
+    def test_unknowns_are_none_not_false(self):
+        o = d.tier_objectives(None, None, None, None, 3600, 900)
+        self.assertIsNone(o["rto_met"]); self.assertIsNone(o["rpo_met"])
+
+    def test_schema_adds_columns_lock_safely(self):
+        self.assertIn("ADD COLUMN IF NOT EXISTS rpo_met", d.SCHEMA_SQL)
+        import inspect
+        self.assertIn("safe_ddl", inspect.getsource(d.record))
+
+
 if __name__ == "__main__":
     unittest.main()

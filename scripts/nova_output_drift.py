@@ -10,7 +10,7 @@ producing an empty or unchanging result, and nothing noticed because the job was
 A mind that says nothing looks identical to a mind that has nothing to say — unless
 something hashes the saying.
 
-Probes, all read-only, each raising a state-change-deduped warning on the event bus:
+Probes, all read-only, each counted in the daily roll-up (nova_noise_rollup, 2026-10-15 #22):
   1. unchanged output — a communicator task whose last N stdout_tails normalise to the same
      hash (timestamps stripped, numbers KEPT: "posted 12 items" vs "posted 13 items" is change,
      "**Nothing**" five times is not).
@@ -28,7 +28,7 @@ Probes, all read-only, each raising a state-change-deduped warning on the event 
      scheduler_runs. One warning per distinct set of misses per day, dedup key
      'dead-mans-switch-recovery'. Read-only: it no longer re-runs the delivery script.
 
-  nova_output_drift.py              # run (raises warnings via nova_notify)
+  nova_output_drift.py              # run (findings -> daily roll-up; dead man's switch still notifies)
   nova_output_drift.py --dry-run    # print findings, notify nothing
   nova_output_drift.py --deliveries # only the missed-delivery check (the dead man's switch)
   nova_output_drift.py --selftest   # pure-logic assertions
@@ -246,6 +246,15 @@ def run_deliveries(cur, dry_run=False, notify=None):
 
 
 def main(argv=None):
+    # --never-red: The Chanos Filter (consolidation item #12, 2026-10-15) — additive; logic, table and
+    # notify stay in nova_chanos_filter.py, this only forwards the remaining args to its main().
+    _argv = list(sys.argv[1:] if argv is None else argv)
+    if "--never-red" in _argv:
+        import os
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import nova_chanos_filter
+        print("[output-drift --never-red] The Chanos Filter (merged 2026-10-15): running nova_chanos_filter", flush=True)
+        return nova_chanos_filter.main([a for a in _argv if a != "--never-red"])
     ap = argparse.ArgumentParser(description="Nova's constant-output detector")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--deliveries", action="store_true",
@@ -301,18 +310,12 @@ def main(argv=None):
             print(f"• [{lvl}] {title} ({host or '?'})\n    {body}")
         return 0
     if findings:
-        import nova_notify
-        # self-dedup on the bus: one event per key per day (the notifier dedups delivery, but the
-        # hourly run was still writing ~9 rows an hour into telemetry.events)
-        cur.execute("SELECT dedup_key FROM telemetry.events WHERE source='nova_output_drift' "
-                    "AND ts > now() - interval '24 hours'")
-        seen = {r[0] for r in cur.fetchall()}
+        # Little Mister, 2026-10-15 (#22): per-event notify off. Each finding is one roll-up row per
+        # key per day (nova_noise_rollup), sightings counted; the daily digest reports them.
+        # (164 of 172 graded output_drift alerts in 30 days were noise.)
+        from nova_noise_rollup import record
         for lvl, key, title, body, host in findings:
-            if key in seen:
-                continue
-            nova_notify.notify(title, body, level=lvl, category="output_drift",
-                               source="nova_output_drift", dedup_key=key,
-                               meta={"host": host} if host else None)   # host -> correlator opens an incident
+            record("nova_output_drift", key, title + (f" ({host})" if host else ""), lvl, body)
     return 0
 
 
@@ -345,7 +348,7 @@ def demo():
 
 
 if __name__ == "__main__":
-    if "--selftest" in sys.argv:
+    if "--selftest" in sys.argv and "--never-red" not in sys.argv:
         demo()
     else:
         sys.exit(main())

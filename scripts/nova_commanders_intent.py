@@ -466,9 +466,20 @@ def due_for_review(oc=None, horizon_days: int = 7) -> list:
             or (d["status"] == "active" and d.get("review_by") and d["review_by"] <= now + timedelta(days=horizon_days))]
 
 
+RED_LINE_BY = "claude-red-line"   # a Claude session deciding a red_line_decision queue item (2026-10-15)
+
+
+def _may_decide(by: str) -> bool:
+    """Jordan, or a Claude session deciding the red-line item Nova filed (Jordan 2026-10-15: grants of
+    authority to Nova are red-line decisions — Claude decides, escalating to him only if unsure).
+    Nova herself never confirms or retires a grant to herself."""
+    b = str(by).lower()
+    return b.startswith("jordan") or b.startswith(RED_LINE_BY)
+
+
 def confirm(oc, key: str, by: str, now: datetime | None = None) -> bool:
-    if not str(by).lower().startswith("jordan"):
-        raise PermissionError("only Jordan can confirm a standing order")
+    if not _may_decide(by):
+        raise PermissionError("only Jordan (or Claude deciding a red-line item) can confirm a standing order")
     now = now or _now()
     r = _row(oc, key)
     if not r or r["status"] in ("retired", "absent"):
@@ -479,8 +490,8 @@ def confirm(oc, key: str, by: str, now: datetime | None = None) -> bool:
 
 
 def retire(oc, key: str, by: str) -> bool:
-    if not str(by).lower().startswith("jordan"):
-        raise PermissionError("only Jordan can retire a standing order")
+    if not _may_decide(by):
+        raise PermissionError("only Jordan (or Claude deciding a red-line item) can retire a standing order")
     oc.execute("UPDATE commanders_intent SET status='retired', confirmed_by=%s WHERE key=%s", (by, key))
     return oc.rowcount > 0
 
@@ -539,38 +550,41 @@ def review(oc, dry: bool = False, now: datetime | None = None) -> dict:
     due = [d for d in due_for_review(oc) if d["status"] in ("stale", "lapsed") or d["is_grant"]] if not dry else []
     if dry:
         due = [{"key": k, "is_grant": True, "status": n} for k, _o, n in changed]
+    # 2026-10-15 (Jordan: "Her questions go back to her ... She shouldn't wait for me to answer"): no Slack
+    # ask. Restrictions never lapse, so a due restriction is hers to re-read: she keeps it in force and
+    # logs that. A due GRANT is authority to herself — a red line she never renews alone — so it goes to
+    # a Claude session as ONE claude_queue 'red_line_decision' per week; until decided, it lapses on its
+    # own schedule (the conservative branch).
     ref = _week_ref(now)
-    oc.execute("SELECT 1 FROM slack_prompts WHERE kind=%s AND ref_id=%s", (PROMPT_KIND, ref))
-    posted = False
-    text = reconfirm_text(due)
-    if text and not oc.fetchone():
-        gate_ok = True
-        try:
-            import nova_annie_rule
-            gate_ok = nova_annie_rule.check(text, oc)["ok"]
-        except Exception:  # noqa: BLE001
-            pass
-        tp = {"allowed": True}
-        if gate_ok:
+    rules = [d for d in due if not d.get("is_grant")]
+    grants = [d for d in due if d.get("is_grant")]
+    posted, routed = False, None
+    if not dry:
+        for d in rules:
+            oc.execute("INSERT INTO intent_reasoning_log (intent_key, circumstance, reading, decision, by) "
+                       "VALUES (%s,%s,%s,%s,'nova')",
+                       (d["key"], f"weekly review {ref}: restriction due ({d['status']})",
+                        "restrictions never lapse; loosening safety is not mine to do",
+                        "kept in force (no ask)"))
+        if grants:
             try:
-                import nova_turning_point
-                stakes = min(1.0, 0.65 + 0.05 * sum(1 for d in due if d["status"] == "lapsed"))
-                tp = nova_turning_point.decide(oc, PROMPT_KIND, stakes, text, ceiling="recommend", dry=dry)
-            except Exception:  # noqa: BLE001
-                tp = {"allowed": True}
-        if dry:
-            print(text)
-        elif gate_ok and tp.get("allowed"):
-            ts = _post(text)
-            if ts:
-                import nova_config
-                oc.execute("INSERT INTO slack_prompts (kind, ref_id, channel, ts) VALUES (%s,%s,%s,%s) "
-                           "ON CONFLICT DO NOTHING", (PROMPT_KIND, ref, nova_config.SLACK_CHAN, ts))
+                import nova_red_line as rl
+                keys = [d["key"] for d in grants]
+                routed = rl.route_to_claude(
+                    oc, f"standing-order grants due for reconfirmation ({ref}): {', '.join(keys)[:200]}",
+                    reconfirm_text(grants) + "\n\nDecide per key with: nova_commanders_intent.py --confirm KEY "
+                    f"--by {RED_LINE_BY} (or --retire KEY --by {RED_LINE_BY}). Undecided grants lapse "
+                    f"{GRACE_DAYS} days after review.", "commanders_intent", ref, ["grant_of_authority"])
+            except Exception as e:  # noqa: BLE001
+                log(f"red-line routing failed: {e}")
+            if routed:
                 oc.execute("INSERT INTO intent_reasoning_log (intent_key, circumstance, reading, decision, by) "
-                           "VALUES (%s,%s,%s,%s,'nova')", (f"reconfirm:{ref}", json.dumps([d["key"] for d in due]),
-                                                           "weekly review", "asked Jordan to reconfirm"))
-                posted = True
-    res = {"harvested": harvested, "changed": changed, "due": [d["key"] for d in due], "posted": posted}
+                           "VALUES (%s,%s,%s,%s,'nova')", (f"reconfirm:{ref}", json.dumps([d["key"] for d in grants]),
+                                                           "weekly review", f"asked Claude (claude_queue #{routed})"))
+    else:
+        print(reconfirm_text(due))
+    res = {"harvested": harvested, "changed": changed, "due": [d["key"] for d in due], "posted": posted,
+           "red_line_queue": routed}
     log(json.dumps(res, default=str))
     return res
 

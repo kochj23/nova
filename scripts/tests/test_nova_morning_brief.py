@@ -42,6 +42,8 @@ mb.urllib = types.SimpleNamespace(
 mb.subprocess = types.SimpleNamespace(run=MagicMock(side_effect=OSError("offline: subprocess stubbed")))
 mb.get_full_context = MagicMock(return_value={})
 mb._autonomy = None
+_REAL_GET_NIGHT_WATCH = mb.get_night_watch
+mb.get_night_watch = MagicMock(return_value=["*🌙 Night Watch (22:00-07:00):*", "*PDB* BLUF quiet night", ""])
 
 
 def _cm(body, status=200):
@@ -165,6 +167,43 @@ class TestFunctional(unittest.TestCase):
         body = call[1]["body"]
         self.assertIn("System alerts", body)
         self.assertNotIn("Clean overnight", body)
+
+
+class TestNightWatchSection(unittest.TestCase):
+    """Consolidation #17 (2026-10-15): the Night Watch PDB is a section of the 07:00 brief."""
+
+    def test_section_in_brief_body(self):
+        mb.notify.reset_mock()
+        with patch.object(mb, "get_weather", return_value="Clear"), \
+             patch.object(mb, "get_email_priorities", return_value=[]), \
+             patch.object(mb, "get_calendar_events", return_value=[]), \
+             patch.object(mb, "get_mail_summary", return_value={"total_unread": 0, "important": [], "noise_count": 0, "success": True}), \
+             patch.object(mb, "get_github_overnight", return_value=[]), \
+             patch.object(mb, "get_system_health", return_value=([], 1)), \
+             patch.object(mb, "get_autonomy_note", return_value=[]), \
+             patch.object(mb, "vector_remember"):
+            mb.main()
+        self.assertEqual(mb.notify.call_count, 1)                 # ONE post: no separate Night Watch post
+        self.assertIn("Night Watch", mb.notify.call_args[1]["body"])
+        self.assertIn("BLUF quiet night", mb.notify.call_args[1]["body"])
+
+    def test_uses_night_watch_section(self):
+        fake = types.SimpleNamespace(section=MagicMock(return_value="*PDB* all quiet"))
+        with patch.dict(sys.modules, {"nova_night_watch": fake}):
+            out = _REAL_GET_NIGHT_WATCH()
+        self.assertIn("*PDB* all quiet", out)
+        fake.section.assert_called_once_with()
+
+    def test_failure_is_one_line_not_a_crash(self):
+        fake = types.SimpleNamespace(section=MagicMock(side_effect=RuntimeError("pg down")))
+        with patch.dict(sys.modules, {"nova_night_watch": fake}):
+            out = _REAL_GET_NIGHT_WATCH()
+        self.assertTrue(any("unavailable" in l for l in out))
+
+    def test_empty_section_adds_nothing(self):
+        fake = types.SimpleNamespace(section=MagicMock(return_value="  "))
+        with patch.dict(sys.modules, {"nova_night_watch": fake}):
+            self.assertEqual(_REAL_GET_NIGHT_WATCH(), [])
 
 
 class TestFrame(unittest.TestCase):

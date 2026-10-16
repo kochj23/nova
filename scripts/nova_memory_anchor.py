@@ -32,7 +32,13 @@ source='weight_of_memory' memory, its own dedupe (nova_weight_of_memory/high_wat
 all through nova_weight_of_memory's own functions. nova_weight_of_memory.py remains as a thin wrapper
 for `--weight`. A weighing failure never stops the anchoring (exit 1 at the end).
 
-  nova_memory_anchor.py            # weigh + anchor/release (scheduler-core, every 6 h)
+WEIGHT OF MEANING (consolidation #18, 2026-10-15). Wish #77 runs here as the 'meaning' section,
+after the anchoring, on the same 6-hourly pass: nova_weight_of_meaning.run() unchanged (its own
+source='weight_of_meaning' memory, its own high-water and latest keys). A meaning failure never stops
+the anchoring (exit 1 at the end); nova_weight_of_meaning.py remains as a thin wrapper for `--meaning`.
+
+  nova_memory_anchor.py            # weigh + anchor/release + meaning (scheduler-core, every 6 h)
+  nova_memory_anchor.py --meaning  # the meaning section alone (what nova_weight_of_meaning.py runs)
   nova_memory_anchor.py --weight   # the weighing pass alone (what nova_weight_of_memory.py runs)
   nova_memory_anchor.py --dry-run  # print what would be weighed and held, write nothing
   nova_memory_anchor.py --report   # print the anchors she currently holds
@@ -224,12 +230,33 @@ def weigh_pass(cur, today, items, dry_run):
     wom.log(f"weighed a new heaviest set (sig {sig})")
 
 
+def meaning_pass(dry_run):
+    """Weight of Meaning (wish #77), merged here 2026-10-15 as the 'meaning' section. Fail-open: 0 ok, 1 failed."""
+    try:
+        import nova_weight_of_meaning as meaning
+        return int(meaning.run(dry_run) or 0)
+    except Exception as e:  # noqa: BLE001
+        log(f"meaning section failed ({type(e).__name__}: {e})")
+        return 1
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Nova's Memory Anchor — weighing what has gravity, holding what matters")
     ap.add_argument("--dry-run", action="store_true", help="print what would be weighed and held, write nothing")
     ap.add_argument("--report", action="store_true", help="print the anchors currently held")
     ap.add_argument("--weight", action="store_true", help="run only the weighing pass (Weight of Memory, wish #37)")
+    ap.add_argument("--meaning", action="store_true", help="run only the meaning section (Weight of Meaning, wish #77)")
     args = ap.parse_args(argv)
+    if args.meaning:
+        return meaning_pass(args.dry_run)
+    rc = _anchor(args)
+    if not (args.weight or args.report):
+        rc = max(rc or 0, meaning_pass(args.dry_run))
+    return rc
+
+
+def _anchor(args):
+    """Weigh + anchor/release (the pre-2026-10-15 main body)."""
     try:
         conn = psycopg2.connect(OPS_DSN, connect_timeout=5)
     except Exception as e:  # noqa: BLE001

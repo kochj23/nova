@@ -66,7 +66,7 @@ def _run_main(cur, active, urlopen=None):
             mock.patch.object(ask.sys, "platform", "darwin"), \
             mock.patch.object(ask.urllib.request, "urlopen", urlopen or post) as u, \
             mock.patch.object(sys, "argv", ["nova_ask_one.py"]), redirect_stdout(io.StringIO()) as out:
-        rc = ask.main()
+        rc = ask._legacy_post_main()   # retired morning post, mechanism still tested
     return rc, u, out.getvalue()
 
 
@@ -168,6 +168,59 @@ class TestFrame(unittest.TestCase):
     def test_api_present(self):
         for n in ("quiet_active", "slack_post", "_slack_post_once", "_pg_connect", "main"):
             self.assertTrue(callable(getattr(ask, n)), n)
+
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 2026-10-15 — no morning post; ONE optional question about Jordan in the 18:00 summary
+# ═════════════════════════════════════════════════════════════════════════════
+import time  # noqa: E402
+
+PREF = (9, "Jordan, do you prefer the hallway lights warmer at night?", "lights", None)
+DECIDE = (8, "Should I restart the printer for you tonight?", "bambu", None)
+TRIVIA = (7, "What is the role of disputation in scholastic thought?", "philosophy", None)
+
+
+class TestSummaryQuestion(unittest.TestCase):
+    def test_security_never_carries_a_decision_or_trivia(self):
+        self.assertIsNone(ask.pick_for_summary([DECIDE, TRIVIA]))
+        self.assertFalse(ask.is_about_jordan_preference("Do you want me to approve the reach?"))
+
+    def test_performance_pick_is_linear_and_fast(self):
+        rows = [TRIVIA] * 5000 + [PREF]
+        t = time.perf_counter()
+        self.assertEqual(ask.pick_for_summary(rows)[0], 9)
+        self.assertLess(time.perf_counter() - t, 1.0)
+
+    def test_retry_open_question_blocks_stacking(self):
+        cur = _Cur([("count(*) FROM slack_prompts", (1,)), ("FROM reflection_questions", [PREF])])
+        with mock.patch.object(ask, "quiet_active", return_value=False):
+            self.assertIsNone(ask.question_for_summary(cur))
+
+    def test_unit_preference_detector(self):
+        self.assertTrue(ask.is_about_jordan_preference(PREF[1]))
+        self.assertFalse(ask.is_about_jordan_preference("Nova, what did you like about it?"))
+
+    def test_integration_quiet_mode_carries_nothing(self):
+        cur = _Cur([("count(*) FROM slack_prompts", (0,)), ("FROM reflection_questions", [PREF])])
+        with mock.patch.object(ask, "quiet_active", return_value=True):
+            self.assertIsNone(ask.question_for_summary(cur))
+
+    def test_functional_main_no_longer_posts(self):
+        cur = _Cur([("count(*) FROM slack_prompts", (0,)), ("FROM reflection_questions", [PREF])])
+        conn = mock.MagicMock(); conn.cursor.return_value = cur
+        with mock.patch.object(ask, "_pg_connect", return_value=conn), \
+             mock.patch.object(ask, "quiet_active", return_value=False), \
+             mock.patch.object(ask, "slack_post") as sp, mock.patch.object(ask.sys, "argv", ["nova_ask_one.py"]), \
+             redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(ask.main(), 0)
+        sp.assert_not_called()
+        self.assertIn("Q#9 will ride the 18:00 summary", out.getvalue())
+        self.assertFalse([q for q, _ in cur.sql if "INSERT INTO slack_prompts" in q])
+
+    def test_frame_selftest_runs(self):
+        r = subprocess.run([sys.executable, str(SCRIPT), "--selftest"], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
 
 
 if __name__ == "__main__":

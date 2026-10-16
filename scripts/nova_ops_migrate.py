@@ -129,6 +129,14 @@ MIGRATIONS = [
             ADD COLUMN IF NOT EXISTS stdout_tail TEXT;
         """,
     ),
+    (
+        6,
+        "scheduler_runs: trigger (schedule|catch_up|manual) + sched_host (#26 catch-up re-runs)",
+        """
+        ALTER TABLE scheduler_runs ADD COLUMN IF NOT EXISTS "trigger" TEXT NOT NULL DEFAULT 'schedule';
+        ALTER TABLE scheduler_runs ADD COLUMN IF NOT EXISTS sched_host TEXT;
+        """,
+    ),
 ]
 
 

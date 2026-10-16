@@ -29,6 +29,8 @@ def _load():
 
 
 pr = _load()
+_REAL_CONFIG_MEMORY_URL = pr._config_memory_url
+pr._config_memory_url = lambda: None     # hermetic: no service_config read from the probe tests
 pr.notify = MagicMock()          # stub the outbound alert bus at module load
 
 
@@ -228,6 +230,37 @@ class TestFrame(unittest.TestCase):
                            capture_output=True, text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.strip(), "")
+
+
+class TestMemoryUrlOverride(unittest.TestCase):
+    """Chaos E2 (nova_wargame): only a loopback .../remember URL may redirect the memory probe."""
+
+    def test_security_non_loopback_override_is_ignored(self):
+        for bad in ("http://evil.example/remember", "http://10.0.0.1:18799/remember", "https://127.0.0.1:1/remember",
+                    "http://127.0.0.1:18799/forget", "file:///etc/passwd"):
+            self.assertEqual(pr.memory_remember_url(env={pr.MEMORY_URL_ENV: bad}, config_value=bad),
+                             pr.MEMORY_REMEMBER_URL, bad)
+
+    def test_unit_env_beats_config_beats_default(self):
+        env = {pr.MEMORY_URL_ENV: "http://127.0.0.1:18799/remember"}
+        self.assertEqual(pr.memory_remember_url(env=env, config_value="http://localhost:1/remember"),
+                         "http://127.0.0.1:18799/remember")
+        self.assertEqual(pr.memory_remember_url(env={}, config_value="http://localhost:1/remember"),
+                         "http://localhost:1/remember")
+        self.assertEqual(pr.memory_remember_url(env={}, config_value=""), pr.MEMORY_REMEMBER_URL)
+
+    def test_retry_config_read_never_raises(self):
+        with patch.object(pr, "_ops_conn", side_effect=RuntimeError("pg down")):
+            self.assertIsNone(_REAL_CONFIG_MEMORY_URL())
+
+    def test_integration_probe_posts_to_the_override(self):
+        seen = []
+        with patch.object(pr, "memory_remember_url", return_value="http://127.0.0.1:18799/remember"), \
+             patch.object(pr.urllib.request, "urlopen", side_effect=lambda req, timeout: seen.append(req.full_url)
+                          or (_ for _ in ()).throw(OSError("proxy down"))):
+            ok, detail = pr.probe_memory_roundtrip()
+        self.assertFalse(ok)
+        self.assertEqual(seen, ["http://127.0.0.1:18799/remember"])
 
 
 if __name__ == "__main__":

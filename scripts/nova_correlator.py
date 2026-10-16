@@ -172,7 +172,17 @@ def correlate(conn, ev):
                     "WHERE id=%s", (inc_id, role, ev["id"]))
         return {"action": "attached", "incident_id": inc_id, "role": role, "suppress": True}
 
-    # No match. Open a NEW incident if this looks like a correlatable root/problem.
+    # No match. A KNOWN ERROR (nova_problems, #38, 2026-10-15) links the event to its problem's
+    # anchor incident instead of opening a new incident — unless it is a real page (SLO/Tier-0/house).
+    try:
+        import nova_problems
+        linked = nova_problems.link_event(cur, ev, host)
+        if linked:
+            return linked
+    except Exception:  # noqa: BLE001 — problems organ unavailable: open as before
+        pass
+
+    # Open a NEW incident if this looks like a correlatable root/problem.
     evec = embed(f"{ev.get('title','')} {ev.get('body','')}")
     cur.execute(
         "INSERT INTO telemetry.incidents (status, severity, host, title, root_event, member_count, embedding) "

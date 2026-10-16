@@ -6,6 +6,12 @@ model and asks for a verdict in JSON. Verdicts are stored in nova_ops.directive_
 is only a candidate: the model can be wrong, so a person resolves it. Nothing here edits a rule.
 
 Usage: nova_directive_review.py [--model qwen3:8b] [--limit N] [--dry-run] [--notify]
+
+MERGED 2026-10-15 (consolidation item #10; oversight merge approved by Claude 2026-10-15) into
+nova_directive_conflict.py --review. This file is a thin wrapper; the judging logic (prompt, parse_verdict,
+review, ask_model) and the directive_conflict_reviews table stay here. Candidate conflicts now also go into
+the shared directive_conflicts ledger (kind='review'), each surfaced once like every other conflict, so
+--notify is implied and accepted for old callers.
 Written by Jordan Koch (via Claude).
 """
 import argparse
@@ -107,46 +113,29 @@ def ensure_table(conn) -> None:
     conn.commit()
 
 
+def store_verdicts(conn, model: str, results: list) -> None:
+    """Every verdict (conflict or not, error or not) -> directive_conflict_reviews: the audit of each check."""
+    ensure_table(conn)
+    cur = conn.cursor()
+    for r in results:
+        cur.execute("""INSERT INTO directive_conflict_reviews (model, rule_a, rule_b, conflict, reason, error)
+                       VALUES (%s,%s,%s,%s,%s,%s)""",
+                    (model, r["a"], r["b"], r["conflict"], r["reason"], r["error"]))
+    conn.commit()
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--limit", type=int, default=0, help="review only the first N pairs (0 = all)")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--dry-run", action="store_true", help="review, print, do not store or notify")
-    ap.add_argument("--notify", action="store_true")
+    ap.add_argument("--notify", action="store_true", help="kept for old callers; the ledger surfaces each conflict")
     a = ap.parse_args(argv)
-    conn = connect()
-    cur = conn.cursor()
-    cur.execute("SELECT name, content FROM claude_memories WHERE type = 'feedback' ORDER BY name")
-    rules = cur.fetchall()
-    todo = pairs(rules)
-    if a.limit:
-        todo = todo[:a.limit]
-    with ThreadPoolExecutor(max_workers=a.workers) as ex:
-        results = list(ex.map(lambda p: review(p, a.model), todo))
-    conflicts = [r for r in results if r["conflict"]]
-    errors = sum(1 for r in results if r["error"])
-    print(f"reviewed {len(results)} pairs with {a.model}: {len(conflicts)} candidate conflict(s), {errors} error(s)")
-    for r in conflicts:
-        print(f"  {r['a']}  <->  {r['b']}: {r['reason']}")
-    if not a.dry_run:
-        conn = connect()
-        ensure_table(conn)
-        cur = conn.cursor()
-        for r in results:
-            cur.execute("""INSERT INTO directive_conflict_reviews (model, rule_a, rule_b, conflict, reason, error)
-                           VALUES (%s,%s,%s,%s,%s,%s)""",
-                        (a.model, r["a"], r["b"], r["conflict"], r["reason"], r["error"]))
-        conn.commit()
-    conn.close()
-    if conflicts and a.notify and not a.dry_run:
-        import nova_notify
-        nova_notify.notify(
-            f"{len(conflicts)} candidate rule conflict(s) for review",
-            "\n".join(f"{r['a']} <-> {r['b']}: {r['reason']}" for r in conflicts),
-            level="info", category="governance", source="nova_directive_review",
-            dedup_key="directive-review-" + a.model + "-" + str(len(conflicts)))
-    return 0
+    print("[directive-review] merged into nova_directive_conflict.py --review on 2026-10-15; delegating", flush=True)
+    import nova_directive_conflict as DC
+    return DC.main(["--review", "--model", a.model, "--limit", str(a.limit), "--workers", str(a.workers)]
+                   + (["--dry-run"] if a.dry_run else [])) or 0
 
 
 if __name__ == "__main__":

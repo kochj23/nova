@@ -16,6 +16,8 @@ long-running service seen in service_registry / health_checks -- is scored again
   header     a header docstring that states purpose AND owner ("Written by" / "Owner" / "Author")
   slo        covered by a row in slo_definitions; "n/a" while that table does not exist
   alerts     alerts only via nova_notify -- no direct Slack (SLACK_* / post_both / chat.postMessage ...)
+  tier       has a service tier with RTO/RPO in service_tiers (nova_service_tiers.py); "n/a" while
+             that table does not exist. Little Mister, 2026-10-15 (#35): no tier = FAIL.
 
 A check is pass / fail / n/a (n/a = not applicable, e.g. tests for a third-party service). An
 explicit exception lives in prr_waivers (component, check_name, reason) -- that is where a
@@ -27,6 +29,8 @@ Tables (nova_ops): prr_results (latest result per kind/component/check, upserted
   nova_prr.py                      evaluate everything, store, print a summary
   nova_prr.py --dry-run            evaluate everything, print, write nothing
   nova_prr.py --digest             evaluate + store + weekly digest via nova_notify (scheduler)
+  nova_prr.py --organ-dod          organ Definition of Done board (test, metric+baseline+prediction,
+                                   agent_doc, owner Nova, retirement criterion) -> organ_registry
   nova_prr.py --component NAME     print one component's checklist (task id, service name or
                                    script stem/file); exit 1 if any check fails -- the gate Claude
                                    sessions run before calling new work "done"
@@ -53,7 +57,7 @@ SIX_YAML = SCRIPTS_DIR.parent / "config" / "scheduler.yaml"
 CORE_YAML_LOCAL = Path.home() / ".openclaw" / "config" / "scheduler-core.yaml"
 CORE_SSH_HOST = "nova-core"
 
-CHECKS = ("tests", "docs", "health", "chronic", "header", "slo", "alerts")
+CHECKS = ("tests", "docs", "health", "chronic", "header", "slo", "alerts", "tier")
 TASK_FAIL_THRESHOLD = 0.20       # >20% of finished runs failed/timed out in the window = chronic
 SERVICE_DOWN_THRESHOLD = 0.05    # >5% of health checks down over 7d = chronic
 QUARANTINE_THRESHOLD = 10        # mirrors nova_scheduler.QUARANTINE_THRESHOLD (dead-letter)
@@ -363,6 +367,17 @@ def check_slo(slo_rows, cols, names, kind=None) -> tuple:
     return False, "no slo_definitions row covers it (add one, or a prr_waivers no-SLO reason)"
 
 
+def check_tier(tier_rows, names) -> tuple:
+    """tier_rows None = service_tiers absent -> n/a. Else pass iff a tier resolves (exact or glob)."""
+    if tier_rows is None:
+        return None, "n/a: service_tiers does not exist yet"
+    from nova_service_tiers import tier_for
+    r = tier_for([n for n in names if n], tier_rows)
+    if not r:
+        return False, "no service tier (nova_service_tiers.py --set <name> <0|1|2>)"
+    return True, f"Tier{r['tier']} via {r['component']} (RTO {r['rto_s']}s, RPO {r['rpo_s']}s)"
+
+
 def apply_waiver(result, reason) -> tuple:
     passed, ev = result
     if reason and passed is not True:
@@ -384,6 +399,7 @@ def evaluate_component(comp, ctx) -> dict:
         "header": check_header(script, source),
         "slo": check_slo(ctx.get("slo_rows"), ctx.get("slo_cols") or [], names, comp["kind"]),
         "alerts": check_alerts(script, source),
+        "tier": check_tier(ctx.get("tier_rows"), names),
     }
     if comp["kind"] == "task":
         period = expected_period_s(comp.get("schedule"))
@@ -561,6 +577,14 @@ def add_services(comps, ctx, script_names):
 def build_ctx(cur, only_tasks=None, only_services=None):
     ctx = gather(cur, only_tasks, only_services)
     ctx["test_names"] = [p.name for p in TESTS_DIR.glob("test_*.py")]
+    try:                                   # #35 service tiers; absent table -> check is n/a
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        from nova_service_tiers import load
+        ctx["tier_rows"] = load(cur)
+    except Exception as e:  # noqa: BLE001 - a tier lookup failure must not sink the whole review
+        cur.connection.rollback() if not getattr(cur.connection, "autocommit", True) else None
+        print(f"service tiers unavailable: {e}", file=sys.stderr)
+        ctx["tier_rows"] = None
     return ctx
 
 
@@ -610,6 +634,297 @@ def print_checklist(comp, res):
         print(f"  [{mark}] {chk:8s} {ev}")
 
 
+# ── Organ Definition of Done (plan item #32, 2026-10-15) ─────────────────────
+# Little Mister: "Nova's organs are for Nova." An organ is done only when Nova can tell whether it
+# earns its keep: a test, a named metric with a recorded baseline and a predicted effect, an agent_doc,
+# an owner (Nova), and a retirement criterion. Separate from the component checks above (no score impact);
+# stored per organ in organ_registry and flagged in the weekly digest. flop_slate / mark_to_market can
+# call check_predictions(cur) (or the pure prediction_check) to grade the prediction at 30 days.
+
+DOD_CHECKS = ("test", "metric", "baseline", "prediction", "agent_doc", "owner", "retirement")
+PREDICTION_DAYS = 30
+ORGAN_SCHEMA = """
+CREATE TABLE IF NOT EXISTS organ_registry (
+  organ text PRIMARY KEY, created_at timestamptz NOT NULL DEFAULT now());
+ALTER TABLE organ_registry
+  ADD COLUMN IF NOT EXISTS metric text,
+  ADD COLUMN IF NOT EXISTS metric_sql text,
+  ADD COLUMN IF NOT EXISTS baseline numeric,
+  ADD COLUMN IF NOT EXISTS baseline_at timestamptz,
+  ADD COLUMN IF NOT EXISTS predicted_effect text,
+  ADD COLUMN IF NOT EXISTS predicted_direction text,
+  ADD COLUMN IF NOT EXISTS predicted_pct numeric,
+  ADD COLUMN IF NOT EXISTS owner text DEFAULT 'nova',
+  ADD COLUMN IF NOT EXISTS retirement_criterion text,
+  ADD COLUMN IF NOT EXISTS inventory_from text[],
+  ADD COLUMN IF NOT EXISTS dod_pass boolean,
+  ADD COLUMN IF NOT EXISTS dod_failing text[],
+  ADD COLUMN IF NOT EXISTS dod_evidence jsonb,
+  ADD COLUMN IF NOT EXISTS dod_checked_at timestamptz,
+  ADD COLUMN IF NOT EXISTS prediction_verdict text,
+  ADD COLUMN IF NOT EXISTS prediction_detail text,
+  ADD COLUMN IF NOT EXISTS prediction_checked_at timestamptz,
+  ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now();
+"""
+REG_FIELDS = ("metric", "metric_sql", "baseline", "baseline_at", "predicted_effect", "predicted_direction",
+              "predicted_pct", "owner", "retirement_criterion")
+# Header declarations an organ can carry instead of (or before) a registry row, one per line:
+#   Metric: <name>   Baseline: <number> (<YYYY-MM-DD>)   Predicted effect: <text, e.g. "down 20%">
+#   Retire when: <criterion>   Owner: Nova
+_DECL = {
+    "metric": re.compile(r"^\s*metric\s*:\s*(.+)$", re.I | re.M),
+    "baseline": re.compile(r"^\s*baseline\s*:\s*(-?\d+(?:\.\d+)?)\s*(?:\((\d{4}-\d{2}-\d{2})\))?", re.I | re.M),
+    "predicted_effect": re.compile(r"^\s*predicted effect\s*:\s*(.+)$", re.I | re.M),
+    "retirement_criterion": re.compile(r"^\s*(?:retire when|retirement(?: criterion)?)\s*:\s*(.+)$", re.I | re.M),
+    "owner": re.compile(r"^\s*owner\s*:\s*(\w+)", re.I | re.M),
+}
+_EFFECT = re.compile(r"\b(up|down|rise|fall|increase|decrease|drop|grow|shrink)\w*\b[^0-9-]*(\d+(?:\.\d+)?)?\s*%?", re.I)
+_READ_ONLY_SQL = re.compile(r"^\s*(SELECT|WITH)\b(?!.*;\s*\S)", re.I | re.S)
+
+
+def parse_declarations(header: str) -> dict:
+    """Organ header -> registry fields it declares. Pure."""
+    out = {}
+    for k, rx in _DECL.items():
+        m = rx.search(header or "")
+        if not m:
+            continue
+        if k == "baseline":
+            out["baseline"] = float(m.group(1))
+            if m.group(2):
+                out["baseline_at"] = m.group(2)
+        else:
+            out[k] = m.group(1).strip()[:300]
+    if out.get("predicted_effect"):
+        out.update(effect_terms(out["predicted_effect"]))
+    return out
+
+
+def effect_terms(text: str) -> dict:
+    """'down 20%' -> {'predicted_direction': 'down', 'predicted_pct': 20.0}. Pure."""
+    m = _EFFECT.search(text or "")
+    if not m:
+        return {}
+    d = "up" if m.group(1).lower()[:2] in ("up", "ri", "in", "gr") else "down"
+    return {"predicted_direction": d, "predicted_pct": float(m.group(2)) if m.group(2) else 0.0}
+
+
+def organ_dod(script, reg, test_names, docs) -> dict:
+    """{check: (passed, evidence)} for one organ. reg = its organ_registry row (dict, may be empty). Pure."""
+    reg = reg or {}
+    stem = stem_of(script)
+    return {
+        "test": check_tests(script, test_names),
+        "metric": (True, reg["metric"]) if reg.get("metric") else (False, "no named metric"),
+        "baseline": ((True, f"{reg['baseline']} at {reg.get('baseline_at')}") if reg.get("baseline") is not None
+                     and reg.get("baseline_at") else (False, "no recorded baseline (value + date)")),
+        "prediction": (True, reg["predicted_effect"]) if reg.get("predicted_effect") else (False, "no predicted effect"),
+        "agent_doc": check_docs([script, stem], docs),
+        "owner": ((True, "nova") if str(reg.get("owner") or "").strip().lower() == "nova"
+                  else (False, f"owner is {reg.get('owner')!r}, not Nova")),
+        "retirement": ((True, reg["retirement_criterion"]) if reg.get("retirement_criterion")
+                       else (False, "no retirement criterion")),
+    }
+
+
+def prediction_check(row: dict, now: datetime, current=None) -> tuple:
+    """Grade an organ's prediction PREDICTION_DAYS after its baseline. -> (verdict, detail) where verdict is
+    'not_due' | 'unmeasurable' | 'hit' | 'miss'. row: organ_registry fields. Pure — the hook flop_slate calls."""
+    base, at = row.get("baseline"), row.get("baseline_at")
+    direction = row.get("predicted_direction")
+    if base is None or not at or direction not in ("up", "down"):
+        return "unmeasurable", "no baseline/date/direction to grade against"
+    if isinstance(at, str):
+        at = datetime.fromisoformat(at)
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    age = (now - at).days
+    if age < PREDICTION_DAYS:
+        return "not_due", f"baseline is {age}d old (< {PREDICTION_DAYS}d)"
+    if current is None:
+        return "unmeasurable", "metric has no current value (no metric_sql or it returned nothing)"
+    base, current = float(base), float(current)
+    change = (current - base) / abs(base) * 100.0 if base else (100.0 if current > 0 else -100.0 if current < 0 else 0.0)
+    want = float(row.get("predicted_pct") or 0.0)
+    hit = change >= want if direction == "up" else change <= -want
+    hit = hit and change != 0.0
+    return ("hit" if hit else "miss"), f"{base:g} -> {current:g} ({change:+.1f}%), predicted {direction} {want:g}%"
+
+
+def safe_metric_sql(sql) -> bool:
+    """Only a single SELECT/WITH statement is evaluated (and only on a read-only session). Pure."""
+    return bool(sql) and bool(_READ_ONLY_SQL.match(sql))
+
+
+def _readonly_value(sql, connect=None):
+    """First column of the first row of sql, on its own READ ONLY session (a write raises in PG)."""
+    conn = (connect or (lambda: __import__("nova_dsn").pg_connect("nova_ops")))()
+    try:
+        conn.set_session(readonly=True, autocommit=False)
+        c = conn.cursor()
+        c.execute("SET LOCAL statement_timeout = '30s'")
+        c.execute(sql)
+        r = c.fetchone()
+        return r[0] if r else None
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+def organ_inventory_scripts(cur) -> dict:
+    """script -> [why it is an organ], from mark_to_market's shared inventory (read-only). Falls back to the
+    registry if that module cannot load."""
+    try:
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        import nova_mark_to_market as mtm
+        inv = mtm.organ_inventory(cur, mtm.script_texts(), mtm.load_scheduler(), mtm.load_wishes(cur))
+        return {k: v.get("from", []) for k, v in inv.items()}
+    except Exception as e:  # noqa: BLE001
+        print(f"organ inventory unavailable ({e}); using organ_registry only", file=sys.stderr)
+        try:
+            cur.connection.rollback()
+            cur.execute("SELECT organ, coalesce(inventory_from, '{}') FROM organ_registry")
+            return {o: list(f) for o, f in cur.fetchall()}
+        except Exception:  # noqa: BLE001
+            return {}
+
+
+def load_registry(cur) -> dict:
+    cur.execute("SELECT to_regclass('public.organ_registry') IS NOT NULL")
+    if not cur.fetchone()[0]:
+        return {}
+    cur.execute("SELECT organ, " + ", ".join(REG_FIELDS) + " FROM organ_registry")
+    return {r[0]: dict(zip(REG_FIELDS, r[1:])) for r in cur.fetchall()}
+
+
+def evaluate_organs(cur, test_names=None, docs=None) -> list:
+    """[(script, reg_merged, results, from)] for every organ in the inventory."""
+    inv = organ_inventory_scripts(cur)
+    reg = load_registry(cur)
+    if docs is None:
+        cur.execute("SELECT doc_type, lower(content) FROM agent_docs")
+        docs = cur.fetchall()
+    test_names = test_names if test_names is not None else [p.name for p in TESTS_DIR.glob("test_*.py")]
+    out = []
+    for script in sorted(set(inv) | set(reg)):
+        try:
+            hdr = header_text((SCRIPTS_DIR / script).read_text(errors="replace"), Path(script).suffix)
+        except OSError:
+            hdr = ""
+        merged = {"owner": "nova", **{k: v for k, v in parse_declarations(hdr).items()},
+                  **{k: v for k, v in (reg.get(script) or {}).items() if v is not None}}
+        out.append((script, merged, organ_dod(script, merged, test_names, docs), inv.get(script, [])))
+    return out
+
+
+def dod_summary(organs) -> dict:
+    fail_by = {c: 0 for c in DOD_CHECKS}
+    failing = []
+    for script, _, res, _ in organs:
+        bad = [c for c in DOD_CHECKS if res[c][0] is False]
+        for c in bad:
+            fail_by[c] += 1
+        if bad:
+            failing.append((script, bad))
+    return {"organs": len(organs), "pass": len(organs) - len(failing), "fail": len(failing),
+            "fail_by_check": fail_by, "failing": failing}
+
+
+def dod_digest_lines(s) -> str:
+    lines = ["", f"Organ Definition of Done: {s['pass']}/{s['organs']} organs pass, {s['fail']} flagged.",
+             "  missing most: " + ", ".join(f"{c} {n}" for c, n in sorted(s["fail_by_check"].items(),
+                                                                          key=lambda kv: -kv[1]) if n)]
+    lines += [f"  FLAG {o}: {', '.join(b)}" for o, b in s["failing"][:10]]
+    return "\n".join(lines)
+
+
+def store_organs(cur, organs):
+    try:
+        from nova_pg_schema import safe_ddl
+        safe_ddl(cur, ORGAN_SCHEMA)
+    except ImportError:
+        cur.execute(ORGAN_SCHEMA)
+    for script, merged, res, why in organs:
+        bad = [c for c in DOD_CHECKS if res[c][0] is False]
+        decl = {k: merged.get(k) for k in REG_FIELDS}
+        cur.execute("""INSERT INTO organ_registry (organ, metric, metric_sql, baseline, baseline_at, predicted_effect,
+                           predicted_direction, predicted_pct, owner, retirement_criterion, inventory_from,
+                           dod_pass, dod_failing, dod_evidence, dod_checked_at, updated_at)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,now(),now())
+                       ON CONFLICT (organ) DO UPDATE SET
+                           metric = coalesce(organ_registry.metric, EXCLUDED.metric),
+                           baseline = coalesce(organ_registry.baseline, EXCLUDED.baseline),
+                           baseline_at = coalesce(organ_registry.baseline_at, EXCLUDED.baseline_at),
+                           predicted_effect = coalesce(organ_registry.predicted_effect, EXCLUDED.predicted_effect),
+                           predicted_direction = coalesce(organ_registry.predicted_direction, EXCLUDED.predicted_direction),
+                           predicted_pct = coalesce(organ_registry.predicted_pct, EXCLUDED.predicted_pct),
+                           retirement_criterion = coalesce(organ_registry.retirement_criterion, EXCLUDED.retirement_criterion),
+                           inventory_from = EXCLUDED.inventory_from, dod_pass = EXCLUDED.dod_pass,
+                           dod_failing = EXCLUDED.dod_failing, dod_evidence = EXCLUDED.dod_evidence,
+                           dod_checked_at = now(), updated_at = now()""",
+                    (script, decl["metric"], decl["metric_sql"], decl["baseline"], decl["baseline_at"],
+                     decl["predicted_effect"], decl["predicted_direction"], decl["predicted_pct"],
+                     decl["owner"] or "nova", decl["retirement_criterion"], list(why), not bad, bad,
+                     json.dumps({c: {"passed": v, "evidence": e} for c, (v, e) in res.items()})))
+
+
+def check_predictions(cur, now=None, metric_connect=None) -> list:
+    """The 30-day hook for flop_slate / mark_to_market: grade every organ whose baseline is >= 30 days old and
+    has not been graded in the last 30 days. Runs the organ's metric_sql only if it is a single SELECT/WITH,
+    on a separate READ ONLY session. Stores prediction_verdict/detail. -> [(organ, verdict, detail)]."""
+    now = now or datetime.now(timezone.utc)
+    cur.execute("SELECT to_regclass('public.organ_registry') IS NOT NULL")
+    if not cur.fetchone()[0]:
+        return []
+    cur.execute("""SELECT organ, """ + ", ".join(REG_FIELDS) + """ FROM organ_registry
+                   WHERE baseline_at IS NOT NULL AND baseline_at <= %s - make_interval(days => %s)
+                     AND (prediction_checked_at IS NULL OR prediction_checked_at <= %s - make_interval(days => %s))""",
+                (now, PREDICTION_DAYS, now, PREDICTION_DAYS))
+    out = []
+    for r in cur.fetchall():
+        row = dict(zip(REG_FIELDS, r[1:]))
+        current = None
+        if safe_metric_sql(row.get("metric_sql")):
+            try:
+                current = _readonly_value(row["metric_sql"], metric_connect)
+            except Exception as e:  # noqa: BLE001
+                print(f"metric_sql for {r[0]} failed: {e}", file=sys.stderr)
+        verdict, detail = prediction_check(row, now, current)
+        if verdict != "not_due":
+            cur.execute("""UPDATE organ_registry SET prediction_verdict=%s, prediction_detail=%s,
+                           prediction_checked_at=%s WHERE organ=%s""", (verdict, detail, now, r[0]))
+        out.append((r[0], verdict, detail))
+    return out
+
+
+def organ_dod_in_txn(cur):
+    """run_organ_dod inside a savepoint: a DoD failure never sinks the PRR store/digest. -> summary or None."""
+    try:
+        cur.execute("SAVEPOINT organ_dod")
+        s = run_organ_dod(cur, write=True, verbose=False)
+        cur.execute("RELEASE SAVEPOINT organ_dod")
+        return s if isinstance(s, dict) and "organs" in s else None
+    except Exception as e:  # noqa: BLE001
+        try:
+            cur.execute("ROLLBACK TO SAVEPOINT organ_dod")
+        except Exception:  # noqa: BLE001
+            pass
+        print(f"organ DoD skipped: {e}", file=sys.stderr)
+        return None
+
+
+def run_organ_dod(cur, write=True, verbose=True) -> dict:
+    organs = evaluate_organs(cur)
+    s = dod_summary(organs)
+    if verbose:
+        print(dod_digest_lines(s).strip())
+    if write:
+        store_organs(cur, organs)
+    return s
+
+
 def match_component(query, comps):
     q = query.strip()
     qs = stem_of(q)
@@ -622,7 +937,15 @@ def main(argv=None):
     ap.add_argument("--dry-run", action="store_true", help="evaluate and print; write nothing")
     ap.add_argument("--digest", action="store_true", help="also send the weekly digest via nova_notify")
     ap.add_argument("--json", action="store_true", help="with --component: JSON output")
+    ap.add_argument("--organ-dod", action="store_true", help="only the organ Definition of Done board (#32)")
     a = ap.parse_args(argv)
+    if a.organ_dod:
+        conn = connect(); conn.autocommit = False; cur = conn.cursor()
+        s = run_organ_dod(cur, write=not a.dry_run)
+        for o, bad in s["failing"]:
+            print(f"  FLAG {o}: {', '.join(bad)}")
+        conn.commit()
+        return 0
 
     comps, notes, script_names = inventory()
     conn = connect()
@@ -680,12 +1003,15 @@ def main(argv=None):
     r = cur.fetchone()
     if r:
         prev = float(r[0])
+    dod = organ_dod_in_txn(cur) if a.digest else None   # #32: same transaction, flagged in the digest
     store(cur, evals, summary)
     conn.commit()
     print(f"stored {len(evals) * len(CHECKS)} results in prr_results")
     if a.digest:
         from nova_notify import notify
         title, body = digest_text(summary, prev)
+        if dod:
+            body += "\n" + dod_digest_lines(dod)
         week = datetime.now().strftime("%G-W%V")
         notify(title, body, level="info", category="digest", source="nova_prr.py",
                dedup_key=f"prr-weekly-{week}",

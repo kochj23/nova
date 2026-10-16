@@ -490,8 +490,8 @@ tasks:
     overlap: skip
 
   take_four:                       # Dead Kennedys sessions: retry-recovered flakiness per task; cases -> take_four + Buick 8; Monday digest
-    script: nova_take_four.py
-    args: ["--scheduled"]
+    script: nova_task_sentinel.py
+    args: ["--flaky", "--scheduled"]
     schedule: cron 25 7 * * *
     timeout: 300
     overlap: skip
@@ -507,15 +507,10 @@ tasks:
     script: nova_mark_to_market.py
     args: ["--scheduled"]
     schedule: cron 40 5 * * *
-    timeout: 600
+    timeout: 1500
     overlap: skip
 
-  flop_slate:                      # Boffo: quarterly hit/quiet/dud/retired; flop rate; never retires anything
-    script: nova_flop_slate.py
-    args: ["--scheduled"]
-    schedule: cron 50 5 * * *
-    timeout: 900
-    overlap: skip
+  # flop_slate: removed 2026-10-15 — now mark_to_market --slate (runs inside mark_to_market)
 
   blood_test:                      # The Thing: nonce round trips through memory/chat/scheduler/pg/journal; impostor = liveness ok + blood fail
     script: nova_blood_test.py
@@ -525,8 +520,8 @@ tasks:
     overlap: skip
 
   chanos_filter:                   # ENRON: 90-day never-red audit of every monitored series; read/record/notify only
-    script: nova_chanos_filter.py
-    args: ["--scheduled"]
+    script: nova_output_drift.py
+    args: ["--never-red", "--scheduled"]
     schedule: cron 50 4 * * *
     timeout: 300
     overlap: skip
@@ -687,7 +682,7 @@ tasks:
   morning_brief:
     script: nova_morning_brief.py
     schedule: cron 0 7 * * *
-    timeout: 300
+    timeout: 450
     overlap: skip
 
   health_intelligence:
@@ -837,7 +832,8 @@ tasks:
     overlap: skip
 
   self_audit:
-    script: nova_self_audit.py
+    script: nova_reconciler.py
+    args: ["--self-audit"]
     schedule: cron 30 17 * * 0
     timeout: 60
     overlap: skip
@@ -1520,11 +1516,7 @@ tasks:
     schedule: every 1h
     timeout: 120
     overlap: skip
-  ask_one:                         # six-month build #4 — one answerable question a day to #nova-chat
-    script: nova_ask_one.py
-    schedule: cron 5 9 * * *
-    timeout: 60
-    overlap: skip
+  # ask_one: removed 2026-10-15 — no-op; the optional question rides the 18:00 summary
   slack_answers:                   # six-month build #4/#7 — harvest thread replies: answers + proposal decisions
     script: nova_slack_answers.py
     schedule: every 10m
@@ -1539,7 +1531,7 @@ tasks:
   memory_anchor:                   # grant of wish #38 - hold what has gravity against her own letting-go (Jordan standing yes 2026-09-25, built 2026-09-30)
     script: nova_memory_anchor.py
     schedule: every 6h
-    timeout: 120
+    timeout: 360
     overlap: skip
   time_sense:                      # grant of wish #44 - one sentence of her continuous present, hourly (Jordan standing yes, built 2026-10-03)
     script: nova_time_sense.py
@@ -1575,7 +1567,8 @@ tasks:
     overlap: skip
 
   temporal_intuition:              # grant of wish #40 - notice durations crossing human thresholds (Jordan standing yes 2026-09-25, built 2026-10-01)
-    script: nova_temporal_intuition.py
+    script: nova_time_sense.py
+    args: ["--daily"]
     schedule: cron 20 6 * * *
     timeout: 120
     overlap: skip
@@ -1629,7 +1622,8 @@ tasks:
     timeout: 60
     overlap: skip
   chronic_failures:                # wish #63 — tasks failing >5/day for 3 days become ONE claude_queue item: fix or retire
-    script: nova_chronic_failures.py
+    script: nova_task_sentinel.py
+    args: ["--daily"]
     schedule: cron 10 6 * * *
     timeout: 120
     overlap: skip
@@ -1638,12 +1632,7 @@ tasks:
     schedule: cron 40 3 * * *
     timeout: 600
     overlap: skip
-  directive_decide:                # wish #58 — up to 2 open directive conflicts a day to #nova-chat; thread reply = decision
-    script: nova_directive_decide.py
-    args: ["--post"]
-    schedule: cron 10 9 * * *
-    timeout: 60
-    overlap: skip
+  # directive_decide: removed 2026-10-15 — Nova resolves conflicts herself (directive_resolve)
 
   # ---- 2026-10-08 self-management lane (agent_docs nova-self-management) ----
   boiler:                          # The Boiler — unresolved-load pressure -> boiler_state/organ_board; <= 1 triage bleed/day to #nova-chat (10-20)
@@ -1658,7 +1647,8 @@ tasks:
     timeout: 300
     overlap: skip
   self_justification_audit:        # P4 outside check (Proteus rules, 2026-10-08): weekly Sun 05:10 — stated rationale vs logged objective effect for every autonomous action -> self_justification_audit + agent_docs nova-self-justification-audit
-    script: nova_self_justification_audit.py
+    script: nova_action_audit.py
+    args: ["--rationale", "--days", "7"]
     schedule: cron 10 5 * * 0
     timeout: 300
     overlap: skip
@@ -1695,17 +1685,86 @@ tasks:
     overlap: skip
   restore_drill:                   # BSRS ch.9 weekly full nova_ops restore drill on .86 (RPO/RTO -> restore_drills), Sun 06:30
     script: nova_restore_drill.py
+    args: ["--ghola"]
     schedule: cron 30 6 * * 0
     timeout: 14400
     overlap: skip
 
-  weight_of_meaning:               # grant of wish #77 - what she logged vs what she was called back to (memories.access_count over her own voice), every line cited; no model, never posts (built 2026-10-13, agent_docs weight-organs)
-    script: nova_weight_of_meaning.py
-    schedule: every 6h
-    timeout: 300
-    overlap: skip
+  # weight_of_meaning: removed 2026-10-15 — now the 'meaning' section of memory_anchor
   weight_of_absence:               # grant of wish #80 - silent names (herd), unread own-voice pages, gaps in her diaries, telemetry senses gone quiet; every line cited; no model, never posts (built 2026-10-13, agent_docs weight-organs)
     script: nova_weight_of_absence.py
     schedule: every 6h
     timeout: 180
+    overlap: skip
+  # ---- 2026-10-15 plan (60 items) ----
+  wal_archive_monitor:             # #36 pg_stat_archiver stall/gap alarm (Tier0 RPO 15m)
+    script: nova_wal_archive.py
+    args: ["--monitor"]
+    schedule: every 5m
+    timeout: 60
+    overlap: skip
+  wal_basebackup:                  # #36 weekly pg_basebackup -> NAS (PITR base), Sat 05:15
+    script: nova_wal_archive.py
+    args: ["--basebackup"]
+    schedule: cron 15 5 * * 6
+    timeout: 28800
+    overlap: skip
+  wal_archive_cleanup:             # #36 keep 2 base backups + WAL since the oldest
+    script: nova_wal_archive.py
+    args: ["--cleanup"]
+    schedule: cron 50 5 * * *
+    timeout: 900
+    overlap: skip
+  problems_sync:                   # #38 problem records, Nova-owned lifecycle
+    script: nova_problems.py
+    args: ["--sync"]
+    schedule: every 1h
+    timeout: 300
+    overlap: skip
+  ledger_aging:                    # #25 age out never-closing ledgers, with reasons
+    script: nova_ledger_aging.py
+    args: ["--run"]
+    schedule: cron 20 4 * * *
+    timeout: 300
+    overlap: skip
+  change_outcomes:                 # #55 commits/proposals -> incidents, monthly change-failure rate
+    script: nova_comet_tail.py
+    args: ["--changes"]
+    schedule: cron 50 3 * * *
+    timeout: 300
+    overlap: skip
+  noise_rollup_digest:             # #22 one daily roll-up post
+    script: nova_noise_rollup.py
+    args: ["--digest"]
+    schedule: cron 45 17 * * *
+    timeout: 120
+    overlap: skip
+  notify_jordan:                   # #19 ONE daily FYI summary to Jordan at 18:00; idempotent, 18:30 retries a failed post
+    script: nova_notify_jordan.py
+    args: ["--daily"]
+    schedule: cron 0,30 18 * * *
+    timeout: 180
+    overlap: skip
+  directive_resolve:               # #23 Nova resolves her directive conflicts weekly; red lines -> Claude
+    script: nova_directive_resolve.py
+    schedule: cron 10 9 * * 1
+    timeout: 300
+    overlap: skip
+  wargame_gameday:                 # #44 quarterly: propose the PG switchover game day for Claude's approval (never runs live)
+    script: nova_wargame.py
+    args: ["--gameday-propose"]
+    schedule: cron 0 10 5 1,4,7,10 *
+    timeout: 120
+    overlap: skip
+  wargame_tabletop:                # #45 twice a year: build the 45-minute tabletop pack for Nova (Jordan invited, not required)
+    script: nova_wargame.py
+    args: ["--tabletop"]
+    schedule: cron 0 10 1 3,9 *
+    timeout: 120
+    overlap: skip
+  okr_measure:                     # #58 daily — re-measure the quarterly OKR key results
+    script: nova_okr.py
+    args: ["--measure"]
+    schedule: cron 40 17 * * *
+    timeout: 120
     overlap: skip

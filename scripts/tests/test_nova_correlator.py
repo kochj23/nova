@@ -257,5 +257,25 @@ class TestFrame(unittest.TestCase):
         self.assertTrue(callable(m.correlate))
 
 
+class TestKnownErrorLinking(unittest.TestCase):
+    """#38 (Little Mister, 2026-10-15): a known error links to its problem instead of opening an incident."""
+    def test_known_error_links_instead_of_opening(self):
+        cur = _Cur([("FROM telemetry.incidents i WHERE status='open'", []),
+                    ("FROM problems", (4, "known_error", 900, True, "self heals"))])
+        r = co.correlate(_conn(cur), EV)
+        self.assertEqual(r, {"action": "attached", "incident_id": 900, "role": "problem", "suppress": True,
+                             "problem_id": 4})
+        self.assertEqual(cur.stmts("INSERT INTO telemetry.incidents"), [])
+        self.assertEqual(cur.stmts("WHERE recurrence_key=%s")[0][1], ("nova-core:ollama",))
+
+    def test_no_problem_table_opens_as_before(self):
+        cur = _Cur([("FROM telemetry.incidents i WHERE status='open'", []),
+                    ("INSERT INTO telemetry.incidents", (9,))], raise_on=("FROM problems",))
+        with mock.patch.object(co, "embed", return_value=None):
+            r = co.correlate(_conn(cur), EV)
+        self.assertEqual(r["action"], "opened")
+        self.assertTrue(cur.stmts("ROLLBACK TO SAVEPOINT problems_ke"))
+
+
 if __name__ == "__main__":
     unittest.main()

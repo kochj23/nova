@@ -35,6 +35,7 @@ NOT re-fed to record_outcome — alert_triage_log and predictions are already ha
 counting them twice would inflate the record.
 
 CLI: --sweep [--dry-run] [--hours 72] | --rollup [--dry-run] | --list [--days N] | --selftest
+     | --weekly-retro [--dry-run]   (plan #57: logic in nova_weekly_retro.py)
 Table: nova_ops.hotwash.  Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -48,14 +49,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-KINDS = ("false_alarm", "missed_event", "wrong_prediction", "overreach")
+KINDS = ("false_alarm", "missed_event", "wrong_prediction", "overreach", "experiment")
 MAX_PROPOSALS = 5
 BIG_FALSE_ALARM = 10
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS hotwash (
   id bigserial PRIMARY KEY,
   ts timestamptz NOT NULL DEFAULT now(),
-  kind text NOT NULL CHECK (kind IN ('false_alarm','missed_event','wrong_prediction','overreach')),
+  kind text NOT NULL CHECK (kind IN ('false_alarm','missed_event','wrong_prediction','overreach','experiment')),
   ref text NOT NULL UNIQUE,
   subject text,
   occurred_at timestamptz,
@@ -259,6 +260,8 @@ def proposal_action(kind, subj, g, w) -> str:
         sk = f" (Brier skill {pc['skill']:+.2f})" if pc.get("skill") is not None else ""
         return (f"Cap stated confidence for {name} predictions at the base rate {cap_txt}{sk} until "
                 f"nova_soft_certainty shows positive skill ({len(g)} misses this week).")
+    if kind == "experiment":
+        return f"Add the missing alert path found by chaos experiment {name} ({len(g)} runs this week)."
     if subj.startswith("guard:"):
         _g, guard, src = (subj.split(":", 2) + ["", ""])[:3]
         return f"Have {src} check the {guard} guard before proposing, so refused actions stop recurring ({len(g)} refusals)."
@@ -302,6 +305,58 @@ def file_hotwash(cur, kind: str = "overreach", ref: str = "", summary: str = "",
     ensure_schema(cur)
     prod = producer or ref.split(":")[-1]
     return upsert(cur, aar_unlogged(ref, prod, summary))
+
+
+def aar_experiment(exp: dict) -> dict:
+    """AAR for one chaos experiment (nova_wargame.py, plan #47). exp: name, id, hypothesis, state, verdict
+    {held, observed, abort, rollback_ok, missing}, monitors_proven. A monitor that did not fire is a fix. Pure."""
+    v = exp.get("verdict") or {}
+    missing = list(v.get("missing") or [])
+    state = exp.get("state") or "?"
+    actual = (f"State {state}. Hypothesis {'held' if v.get('held') else 'did not hold'}. "
+              f"Seen: {_clip(json.dumps(v.get('observed') or {}, default=str), 220)}.")
+    if v.get("abort"):
+        actual += f" Aborted: {_clip(v['abort'], 160)}."
+    if v.get("rollback_ok") is False:
+        why = "The rollback did not complete cleanly; the restore path itself is the finding."
+        fix, kind = "Fix the rollback path before this experiment is approved again.", "rule"
+    elif missing:
+        why = f"No monitor reacted for: {', '.join(missing)}. The injected fault was real and went unseen."
+        fix, kind = f"Add or repair the alert path for {', '.join(missing)}.", "rule"
+    elif v.get("abort"):
+        why = "An abort condition fired before the hypothesis could be judged."
+        fix, kind = "Re-plan with a smaller blast radius or a quieter window.", "none"
+    else:
+        why = "No difference: the system behaved as predicted."
+        fix, kind = "None.", "none"
+    return {"kind": "experiment", "ref": f"chaos:{exp.get('id')}", "subject": f"chaos:{exp.get('name')}",
+            "occurred_at": exp.get("started_at"),
+            "q1_expected": _clip(exp.get("hypothesis") or "", 400),
+            "q2_actual": actual, "q3_why": why,
+            "q4_sustain": ("Monitors proven able to go red: " + ", ".join(exp.get("monitors_proven") or [])
+                           if exp.get("monitors_proven") else "The guarded run and its rollback."),
+            "q4_fix": fix, "fix_kind": kind, "weight": 1,
+            "proposed_change": {"type": "chaos_finding", "experiment": exp.get("name"), "missing": missing}}
+
+
+def _ensure_experiment_kind(cur) -> None:
+    """One-time widening of the kind CHECK for 'experiment'. Catalog read first; the ALTER (short lock_timeout)
+    runs only while the live constraint still lacks it, so routine calls take no lock."""
+    cur.execute("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'hotwash'::regclass "
+                "AND conname = 'hotwash_kind_check'")
+    r = cur.fetchone()
+    if r and "experiment" not in (r[0] or ""):
+        import nova_pg_schema
+        nova_pg_schema.safe_ddl(cur, "ALTER TABLE hotwash DROP CONSTRAINT hotwash_kind_check, ADD CONSTRAINT "
+                                     "hotwash_kind_check CHECK (kind IN ('false_alarm','missed_event',"
+                                     "'wrong_prediction','overreach','experiment'))")
+
+
+def file_experiment(cur, exp: dict) -> int | None:
+    """Adapter for nova_wargame: file (or refresh) the hotwash for one experiment. -> hotwash id or None."""
+    ensure_schema(cur)
+    _ensure_experiment_kind(cur)
+    return upsert(cur, aar_experiment(exp))
 
 
 def from_prediction(oc, pred_id, statement, domain, conf, reasoning) -> int | None:
@@ -491,14 +546,21 @@ def main(argv=None) -> int:
     ap.add_argument("--hours", type=int, default=72)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--weekly-retro", action="store_true",
+                    help="weekly: Nova's data-drafted retro -> <=3 claude_queue items (nova_weekly_retro.py)")
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
-    if not (a.sweep or a.rollup or a.list):
+    if not (a.sweep or a.rollup or a.list or a.weekly_retro):
         ap.print_help()
         return 0
     import nova_watch_common as W
     cur = W.connect().cursor()
+    if a.weekly_retro:
+        import nova_weekly_retro
+        out = nova_weekly_retro.run(cur, a.dry_run)
+        print("\n".join(out["lines"]))
+        print(f"keep={out['keep']}\nstop={out['stop']}\ntry={out['try']}\nqueue={out['queue_ids']}")
     if a.sweep:
         rows = sweep(cur, a.dry_run, a.hours)
         if a.dry_run:

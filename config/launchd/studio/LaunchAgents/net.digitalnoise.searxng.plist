@@ -2,14 +2,22 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>__HOME__</string>
+		<key>SEARXNG_SETTINGS_PATH</key>
+		<string>/Volumes/Data/searxng/searx/settings.yml</string>
+	</dict>
 	<key>KeepAlive</key>
 	<true/>
 	<key>Label</key>
 	<string>net.digitalnoise.searxng</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/bin/zsh</string>
-		<string>__HOME__/.openclaw/scripts/searxng_start.sh</string>
+		<string>/Volumes/Data/searxng/venv/bin/python3</string>
+		<string>-m</string>
+		<string>searx.webapp</string>
 	</array>
 	<key>RunAtLoad</key>
 	<false/>
@@ -19,5 +27,7 @@
 	<string>__HOME__/.openclaw/logs/searxng.log</string>
 	<key>ThrottleInterval</key>
 	<integer>10</integer>
+	<key>WorkingDirectory</key>
+	<string>/Volumes/Data/searxng</string>
 </dict>
 </plist>

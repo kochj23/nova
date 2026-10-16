@@ -33,6 +33,12 @@ CLI:    --run [--dry-run] [--weeks N]   --offer-drill [--dry-run]
 Tables: butlerian_weekly (one row per ISO week), butlerian_drills (one offer per quarter)
 Config: service_config butlerian/aub_drill_consent (absent = no), butlerian/runbook_dir
 Schedule: weekly Monday 05:15 --run; quarterly --offer-drill (no-op without consent).
+
+MERGED 2026-10-15 (consolidation item #16, approved by Claude for Little Mister) into the Haven Drill:
+the weekly share is `nova_haven_drill.py --butlerian`, Aub's Drill is `--aub-offer` / `--aub-record`,
+and --report carries a Butlerian section. This module keeps the logic and both tables (haven imports
+it); main() is a thin wrapper so the old invocations still run:
+  --run -> --butlerian   --offer-drill -> --aub-offer   --record-drill T --result R -> --aub-record T --result R
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -49,6 +55,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import nova_watch_common as W  # noqa: E402
 
 SERVICE = "butlerian"
+MERGED_ON = "2026-10-15"   # consolidation #16: survivor is nova_haven_drill.py --butlerian / --aub-*
 DEFAULT_RUNBOOK_DIR = "/Volumes/nas/nova/runbooks/lagash"   # the mounted UNAS share ("Nightfall"'s Lagash)
 # Hand-curated: the house tasks he should be able to do with Nova down. Runbook = <dir>/<key>.md.
 TASKS = {
@@ -412,15 +419,18 @@ def main(argv=None) -> int:
     if a.record_drill:
         if not a.result:
             ap.error("--record-drill needs --result")
-        return record_drill(a.record_drill, a.result, a.note, dry=a.dry_run)
-    if a.offer_drill:
-        offer_drill(dry=a.dry_run)
+        fwd = ["--aub-record", a.record_drill, "--result", a.result, "--note", a.note]
+    elif a.offer_drill:
+        fwd = ["--aub-offer"]
+    elif a.run:
+        fwd = ["--butlerian", "--weeks", str(a.weeks)]
+    else:
+        ap.print_help()
         return 0
-    if a.run:
-        run(dry=a.dry_run, n_weeks=max(1, min(a.weeks, 104)))
-        return 0
-    ap.print_help()
-    return 0
+    fwd += ["--dry-run"] if a.dry_run else []
+    log(f"merged into nova_haven_drill on {MERGED_ON}: running nova_haven_drill {' '.join(fwd[:3])}")
+    import nova_haven_drill
+    return nova_haven_drill.main(fwd)
 
 
 if __name__ == "__main__":

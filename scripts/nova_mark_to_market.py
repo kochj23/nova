@@ -32,17 +32,39 @@ Each class gets a realisation ratio (realised / booked) and a WRITE-DOWN list: t
 and never realised. One row per (month, class) in mark_to_market; one monthly digest notification.
 The measure for the continuity review: the realisation ratio per class, month over month (--report).
 
+  7 unread_tables  organ tables written in the last 30 days
+                                                   vs those with a READER. "Read" is defined from code, not
+                                                      from pg_stat (the writer's own upserts/dedup SELECTs would
+                                                      count there): another script (not one that creates the
+                                                      table, not this ledger) names it after FROM/JOIN, or imports
+                                                      the writer module when the writer itself exposes a FROM/JOIN
+                                                      read of it (e.g. nova_watch_bill -> nova_cardinal.load_ledger).
+                                                      The Watch Bill turnover is such a reader, so wiring a table
+                                                      into it closes the loop. Dynamic SQL (psycopg2.sql.Identifier)
+                                                      is invisible to this rule, so a flag is a question, not a verdict.
+                     STILL UNREAD = unread at this marking AND at the previous one (markings are a month apart,
+                     so >= 30 days): listed in detail.retirement_signals as a RETIREMENT SIGNAL for the organ.
+                     detail.unread carries {table: first month flagged} forward month to month.
+
 Read-only towards everything it measures: it never deletes, retires, re-scores or rewrites a belief,
 wish, organ, preoccupation or skill. A write-down is a finding for a human, not an action.
 The helpers for "what organs exist and did they produce anything" are shared with nova_flop_slate.py.
 
-CLI:   --scheduled   daily; acts once a month (first run of the month with no rows yet)
+THE FLOP SLATE (merged here 2026-10-15, consolidation item #13 — Claude, as integrator, approved the
+merge; no coverage lost): `--slate` is the quarterly hit/quiet/dud/retired classification that used to
+be its own entry (nova_flop_slate.py, Boffo). Its logic and table (flop_slate) stay in nova_flop_slate.py;
+nova_flop_slate.py is now a thin wrapper and keeps working. One scheduler entry: `--scheduled` runs the
+monthly marking AND the slate's own once-a-quarter step, each isolated (one failing never skips the other).
+
+CLI:   --scheduled   daily; marks once a month (first run of the month with no rows yet), then the
+                     flop slate's quarterly step (acts once a quarter)
+       --slate [...]  the Flop Slate (nova_flop_slate options: --scheduled --quarter --dry-run --force --report)
        --dry-run     measure and print; write and notify nothing
        --force       measure and write even if this month is already booked
        --report [N]  last N months, ratio per class
        --selftest    offline checks of the pure functions
 Table: mark_to_market (month, class) primary key.
-Schedule: scheduler-core, daily 05:40, timeout 600, overlap skip.
+Schedule: scheduler-core, daily 05:40, timeout 1500 (was 600 + flop_slate's 900), overlap skip.
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -64,7 +86,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 REPO_DIR = SCRIPTS_DIR.parent
 CONFIG_DIR = REPO_DIR / "config"
 SCHEDULER_FILES = ("scheduler-core.yaml", "scheduler.yaml")
-CLASSES = ("beliefs", "feature_wishes", "organs", "attention", "preoccupations", "skills")
+CLASSES = ("beliefs", "feature_wishes", "organs", "attention", "preoccupations", "skills", "unread_tables")
 WINDOW_DAYS = 30
 WRITEDOWN_CAP = 60              # write-downs stored per class (the full count is in detail)
 STATEMENT_TIMEOUT_MS = 60000
@@ -96,6 +118,8 @@ CREATE TABLE IF NOT EXISTS mark_to_market (
 
 SCRIPT_TOKEN = re.compile(r"\b([A-Za-z0-9_][\w./-]*\.(?:py|sh))\b")
 CITED = re.compile(r"\[\d+\]")
+READ_TOKEN = re.compile(r"(?i)\b(?:FROM|JOIN)\s+\"?([A-Za-z_][\w.]*)")
+IMPORT_TOKEN = re.compile(r"(?m)^\s*(?:import|from)\s+(nova_\w+)")
 ONE_SHOT = re.compile(r"(_article|^nova_ingest_)")   # one-off articles/ingests Jordan asked for are not organs
 
 
@@ -144,6 +168,43 @@ def created_tables(src: str | None) -> list[str]:
         if t not in out and re.fullmatch(r"\w+(\.\w+)?", t):
             out.append(t)
     return out
+
+
+def _tname(t: str) -> str:
+    t = t.lower().replace('"', "")
+    return t[len("public."):] if t.startswith("public.") else t
+
+
+def read_tokens(src: str | None) -> set[str]:
+    """Every name that follows FROM/JOIN in a source (tables, plus harmless Python 'from x import'). Pure."""
+    return {_tname(t) for t in READ_TOKEN.findall(src or "")}
+
+
+def table_readers(texts: dict[str, str]) -> dict[str, dict]:
+    """table -> {"writers": [scripts that CREATE it], "readers": [other scripts that read it]}. Pure.
+    A reader names the table after FROM/JOIN, or imports a writer module that itself reads the table."""
+    writers: dict[str, set] = {}
+    for s, src in texts.items():
+        for t in created_tables(src):
+            writers.setdefault(_tname(t), set()).add(s)
+    reads = {s: read_tokens(src) for s, src in texts.items()}
+    imports = {s: set(IMPORT_TOKEN.findall(src or "")) for s, src in texts.items()}
+    out = {}
+    for t, ws in writers.items():
+        if ws <= SELF_SCRIPTS:      # the measuring ledgers' own books are not organ output
+            continue
+        exposing = {Path(w).stem for w in ws if t in reads.get(w, ())}
+        readers = sorted(s for s in texts if s not in ws and s not in SELF_SCRIPTS
+                         and (t in reads[s] or imports[s] & exposing))
+        out[t] = {"writers": sorted(ws), "readers": readers}
+    return out
+
+
+def unread_verdicts(unread_fresh: list[str], prev_unread: dict, month: date) -> tuple[dict, list[str]]:
+    """unread now + {table: first month flagged} last time -> (carried-forward map, still-unread list). Pure."""
+    first = {t: (prev_unread or {}).get(t) or f"{month:%Y-%m}" for t in unread_fresh}
+    still = sorted(t for t in unread_fresh if t in (prev_unread or {}))
+    return first, still
 
 
 def grounded_topics(skill_runs: list[tuple], threads: list[tuple]) -> dict[str, str]:
@@ -643,6 +704,52 @@ def measure_skills(oc) -> dict:
     return _class(len(rows), len(rows) - len(wd), wd)
 
 
+def previous_unread(oc, month: date) -> dict:
+    """{table: first month flagged} from the latest earlier unread_tables row ({} if none)."""
+    oc.execute("SELECT to_regclass('public.mark_to_market') IS NOT NULL")
+    r = oc.fetchone()
+    if not r or not r[0]:
+        return {}
+    oc.execute("SELECT detail FROM mark_to_market WHERE class = 'unread_tables' AND month < %s "
+               "ORDER BY month DESC LIMIT 1", (month,))
+    r = oc.fetchone()
+    d = (r[0] if r else None) or {}
+    if isinstance(d, str):
+        d = json.loads(d)
+    u = d.get("unread") if isinstance(d, dict) else None
+    return u if isinstance(u, dict) else {}
+
+
+def measure_unread(oc, texts, since, until, month: date | None = None,
+                   budget_s: float = TABLE_PROBE_BUDGET_S) -> dict:
+    """Class 7: organ tables written in the window that nothing reads. Freshness is probed only for the
+    tables with no reader (the expensive part), within a time budget; unprobed ones are counted, not flagged."""
+    month = month or month_of(until.date())
+    rd = table_readers(texts)
+    read = sorted(t for t, r in rd.items() if r["readers"])
+    deadline = time.monotonic() + budget_s
+    fresh, unknown, quiet = [], 0, 0
+    for t in sorted(t for t, r in rd.items() if not r["readers"]):
+        if time.monotonic() >= deadline:
+            unknown += 1
+            continue
+        f = table_fresh(oc, t, since, until)
+        if f:
+            fresh.append(t)
+        elif f is None:
+            unknown += 1
+        else:
+            quiet += 1
+    first, still = unread_verdicts(fresh, previous_unread(oc, month), month)
+    wd = [{"item": f"table {t}",
+           "why": (f"still unread since {first[t]} — RETIREMENT SIGNAL" if t in still else
+                   "written in 30 d, no reader in code (first flagged this month)")
+                  + f"; writer {', '.join(rd[t]['writers'])}"}
+          for t in sorted(fresh, key=lambda x: (x not in still, x))]
+    return _class(len(read) + len(fresh), len(read), wd, unread=first, retirement_signals=still,
+                  unread_not_written=quiet, unknown=unknown, tables_with_reader=len(read))
+
+
 # ---------------------------------------------------------------- run
 
 def connect(dbname="nova_ops"):
@@ -668,6 +775,10 @@ def measure(oc, mc, now: datetime | None = None) -> dict:
     res["attention"] = measure_attention(oc, since, now)
     res["preoccupations"] = measure_preoccupations(oc)
     res["skills"] = measure_skills(oc)
+    try:
+        res["unread_tables"] = measure_unread(oc, texts, since, now)
+    except Exception as e:  # noqa: BLE001 — the newest class never sinks the other six
+        log(f"unread_tables not measured: {e}")
     return res
 
 
@@ -695,8 +806,10 @@ def have_month(oc, month: date) -> bool:
     oc.execute("SELECT to_regclass('public.mark_to_market') IS NOT NULL")
     if not oc.fetchone()[0]:
         return False
-    oc.execute("SELECT count(*) FROM mark_to_market WHERE month = %s", (month,))
-    return oc.fetchone()[0] >= len(CLASSES)
+    # the six original books decide "already marked"; a missing unread_tables row (budget/failure, or a
+    # month marked before class 7 existed) must not re-mark the month every day
+    oc.execute("SELECT count(*) FROM mark_to_market WHERE month = %s AND class <> 'unread_tables'", (month,))
+    return oc.fetchone()[0] >= len(CLASSES) - 1
 
 
 def report(oc, n: int) -> None:
@@ -715,7 +828,7 @@ def report(oc, n: int) -> None:
 
 def print_result(res: dict, month: date) -> None:
     print(render(res, month))
-    for c in CLASSES:
+    for c in (c for c in CLASSES if c in res):
         r = res[c]
         print(f"\n== {c}: booked {_n(r['booked'])}, realised {_n(r['realised'])}, "
               f"ratio {r['ratio']}  detail {json.dumps(r['detail'], default=str)}")
@@ -736,13 +849,58 @@ def selftest() -> int:
     assert wish_evidence(w, {"nova_a.py"}, {}, set(), set(), {}) == ["file nova_a.py exists"]
     assert wish_evidence({"id": 8, "lineage": {}}, set(), {"nova_mark_to_market.py": "wish #8"}, set(), set(), {}) == []
     assert due(date(2026, 11, 1), False) and not due(date(2026, 11, 2), True)
+    rd = table_readers({"nova_w.py": "CREATE TABLE IF NOT EXISTS w_t (a int); SELECT a FROM w_t",
+                        "nova_r.py": "import nova_w\n", "nova_q.py": "CREATE TABLE IF NOT EXISTS q_t (a int)"})
+    assert rd["w_t"]["readers"] == ["nova_r.py"] and rd["q_t"]["readers"] == []
+    first, still = unread_verdicts(["a", "b"], {"a": "2026-09"}, date(2026, 10, 1))
+    assert first == {"a": "2026-09", "b": "2026-10"} and still == ["a"]
     print("selftest ok")
     return 0
 
 
+def _slate(argv: list[str]) -> int:
+    """The Flop Slate (merged 2026-10-15): logic stays in nova_flop_slate.run_slate."""
+    import nova_flop_slate
+    return nova_flop_slate.run_slate(argv)
+
+
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--scheduled", action="store_true", help="daily; acts once a month")
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "--slate" in argv:
+        return _slate([x for x in argv if x != "--slate"])
+    both = "--scheduled" in argv and not any(x in argv for x in ("--selftest", "--report", "-h", "--help"))
+    rc, err = 0, None
+    try:
+        rc = _mark(argv)
+    except Exception as e:  # noqa: BLE001 — remembered; the slate still runs, then the failure surfaces
+        if not both:
+            raise
+        err = e
+    if both:
+        try:   # one entry, two books: the slate's quarterly step runs even if the marking failed
+            rc = max(rc, _slate(["--scheduled"] + (["--dry-run"] if "--dry-run" in argv else [])))
+        except Exception as e:  # noqa: BLE001
+            log(f"flop slate step failed: {e}")
+            rc = max(rc, 1)
+        try:   # Definition of Done: grade organs' 30-day predictions (nova_prr, 2026-10-15)
+            if "--dry-run" not in argv:
+                import nova_prr
+                import nova_dsn as _d
+                _c = _d.pg_connect(); _c.autocommit = True
+                nova_prr.check_predictions(_c.cursor()); _c.close()
+        except Exception as e:  # noqa: BLE001
+            log(f"organ prediction check failed (non-fatal): {e}")
+    if err is not None:
+        raise err
+    return rc
+
+
+def _mark(argv) -> int:
+    ap = argparse.ArgumentParser(prog="nova_mark_to_market.py", description=__doc__.split("\n")[0],
+                                 epilog="--slate [--scheduled|--quarter Q|--dry-run|--force|--report N]: "
+                                        "the Flop Slate (see nova_flop_slate.py)")
+    ap.add_argument("--scheduled", action="store_true",
+                    help="daily; marks once a month, then the flop slate's once-a-quarter step")
     ap.add_argument("--dry-run", action="store_true", help="measure and print; write and notify nothing")
     ap.add_argument("--force", action="store_true", help="re-mark this month even if already booked")
     ap.add_argument("--report", nargs="?", const=6, type=int, metavar="N", help="last N months per class")
@@ -750,7 +908,10 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
-    t0 = time.monotonic()
+    return _mark_run(a, time.monotonic())
+
+
+def _mark_run(a, t0) -> int:
     oc_conn = connect("nova_ops")
     oc = oc_conn.cursor()
     try:
@@ -775,12 +936,13 @@ def main(argv=None) -> int:
         nova_pg_schema.safe_ddl(oc, SCHEMA)
         write(oc, month, res)
         from nova_notify import notify
-        low = [c for c in CLASSES if res[c]["ratio"] is not None and res[c]["ratio"] < 0.5]
-        notify(f"Mark-to-market {month:%B %Y}: {len(low)} of {len(CLASSES)} books under 50% realised",
+        low = [c for c in CLASSES if c in res and res[c]["ratio"] is not None and res[c]["ratio"] < 0.5]
+        notify(f"Mark-to-market {month:%B %Y}: {len(low)} of {len(res)} books under 50% realised",
                body=render(res, month, prev), level="info", category="mark_to_market",
                dedup_key=f"mark_to_market:{month:%Y-%m}",
-               meta={"month": f"{month:%Y-%m}", "ratios": {c: res[c]["ratio"] for c in CLASSES}})
-        log(f"{month:%Y-%m} marked: " + ", ".join(f"{c} {res[c]['ratio']}" for c in CLASSES)
+               meta={"month": f"{month:%Y-%m}", "ratios": {c: res[c]["ratio"] for c in CLASSES if c in res},
+                     "retirement_signals": (res.get("unread_tables") or {}).get("detail", {}).get("retirement_signals", [])})
+        log(f"{month:%Y-%m} marked: " + ", ".join(f"{c} {res[c]['ratio']}" for c in CLASSES if c in res)
             + f" ({time.monotonic() - t0:.1f}s)")
         return 0
     finally:

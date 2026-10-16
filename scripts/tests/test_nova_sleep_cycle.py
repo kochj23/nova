@@ -78,8 +78,9 @@ class TestSecurity(_Base):
     def test_sql_with_values_is_parameterized(self):
         self.assertNotRegex(SRC, r'\.execute\(\s*f["\']')
         oc = Cur([("FROM beliefs", None), ("RETURNING id", (5,))])
-        mc = Cur([("nova_articles", [("T'; --", "body")])])
-        with patch.object(sc, "llm", return_value='[{"topic":"NAS speed","stance":"UNAS cut latency","confidence":0.8}]'):
+        mc = Cur([("nova_articles", [(42, "T'; --", "the UNAS cutover cut write latency")])])
+        with patch.object(sc, "llm", return_value='[{"topic":"NAS speed","stance":"UNAS cut latency","confidence":0.8,'
+                                                 '"quote":"the UNAS cutover cut write latency"}]'):
             sc.phase_beliefs(mc, oc)
         sql, params = oc.writes("INSERT INTO beliefs")[0]
         self.assertNotIn("T'; --", sql)
@@ -143,15 +144,52 @@ class TestUnit(_Base):
         self.remember.assert_not_called()
 
     def test_belief_same_stance_skipped_new_stance_supersedes(self):
-        ans = '[{"topic":"NAS speed","stance":"S2","confidence":0.9}]'
+        ans = '[{"topic":"NAS speed","stance":"S2","confidence":0.9,"quote":"write latency fell by half"}]'
+        art = [(9, "t", "After the move, write latency fell by half.")]
         oc = Cur([("FROM beliefs", (7, "S1")), ("RETURNING id", (8,))])
         with patch.object(sc, "llm", return_value=ans):
-            sc.phase_beliefs(Cur([("nova_articles", [("t", "b")])]), oc)
+            sc.phase_beliefs(Cur([("nova_articles", art)]), oc)
         self.assertEqual(oc.writes("UPDATE beliefs")[0][1], (8, 7))
         oc2 = Cur([("FROM beliefs", (7, "S2"))])
         with patch.object(sc, "llm", return_value=ans):
-            sc.phase_beliefs(Cur([("nova_articles", [("t", "b")])]), oc2)
-        self.assertEqual(oc2.writes("INSERT"), [])
+            sc.phase_beliefs(Cur([("nova_articles", art)]), oc2)
+        self.assertEqual(oc2.writes("INSERT INTO beliefs"), [])
+
+    def test_belief_evidence_pure(self):
+        b = {"quote": "write latency fell by half"}
+        refs, why = sc.belief_evidence(b, 9, "t", "After the move, Write latency fell by half!")
+        self.assertIsNone(why)
+        self.assertEqual(refs[:2], ["memory:9", "article:t"])
+        self.assertTrue(refs[2].startswith("quote:"))
+        self.assertEqual(sc.belief_evidence(b, None, "t", "write latency fell by half")[1],
+                         "no memory id for the source chunk")
+        self.assertEqual(sc.belief_evidence({"quote": "too short"}, 9, "t", "too short")[1], "no supporting quote")
+        self.assertEqual(sc.belief_evidence({}, 9, "t", "x")[1], "no supporting quote")
+        self.assertEqual(sc.belief_evidence({"quote": "an invented line nobody wrote"}, 9, "t", "real text")[1],
+                         "quote not found in the source text")
+
+    def test_unevidenced_belief_refused_and_counted(self):
+        ans = ('[{"topic":"a","stance":"A","quote":"this sentence is not there"},'
+               '{"topic":"b","stance":"B"},'
+               '{"topic":"c","stance":"C","quote":"the backup ran clean all week"}]')
+        oc = Cur([("FROM beliefs", None), ("RETURNING id", (5,))])
+        with patch.object(sc, "llm", return_value=ans), \
+                patch.dict(sys.modules, {"nova_pg_schema": MagicMock()}):
+            sc.phase_beliefs(Cur([("nova_articles", [(3, "t", "The backup ran clean all week.")])]), oc)
+        ins = oc.writes("INSERT INTO beliefs")
+        self.assertEqual(len(ins), 1)
+        self.assertEqual(ins[0][1][0], "c")
+        self.assertIn("memory:3", ins[0][1][4])
+        stats = oc.writes("INSERT INTO sleep_cycle_belief_stats")[0][1]
+        self.assertEqual(stats[1:3], (1, 2))
+        self.assertEqual(json.loads(stats[3]), {"quote not found in the source text": 1, "no supporting quote": 1})
+        self.assertIn("refusal rate 67%", self.out.getvalue())
+
+    def test_stats_failure_never_breaks_the_phase(self):
+        oc = MagicMock()
+        oc.execute.side_effect = RuntimeError("pg down")
+        sc._record_belief_stats(oc, 1, 1, {})
+        self.assertIn("stats not recorded", self.out.getvalue())
 
     def test_taste_requires_an_encounter(self):
         mc = Cur([("source='television'", [(11, "Severance", "The office is lit like a dentist")]),

@@ -81,9 +81,20 @@ def retry(fn, *args, attempts: int = 3, delay: float = 2.0, tag: str = "watch", 
     return res
 
 
-def post_slack(text: str, channel: str, timeout: int = 10) -> bool:
+def _ledger_outbound(channel: str, text: str, source: str | None) -> None:
+    """P15 "no unlogged actions": every accepted post gets an outbound_ledger row, the same hook
+    nova_config.post_both uses. Never raises, never blocks (record_outbound swallows everything)."""
+    try:
+        import nova_action_audit
+        nova_action_audit.record_outbound("slack", channel, text, source=source)
+    except Exception:  # noqa: BLE001 — the ledger must never break a send
+        pass
+
+
+def post_slack(text: str, channel: str, timeout: int = 10, source: str | None = None) -> bool:
     """Slack-only post that REPORTS failure (nova_config.post_both swallows it), so callers can
-    wrap it in retry(). Returns True only when Slack answered ok."""
+    wrap it in retry(). Returns True only when Slack answered ok. An accepted post is written to
+    the outbound ledger (source defaults to the running script's name)."""
     import urllib.request
     import nova_config
     token = nova_config.slack_bot_token()
@@ -94,7 +105,10 @@ def post_slack(text: str, channel: str, timeout: int = 10) -> bool:
         data=json.dumps({"channel": channel, "text": text, "mrkdwn": True}).encode(),
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json; charset=utf-8"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return bool(json.loads(r.read()).get("ok"))
+        ok = bool(json.loads(r.read()).get("ok"))
+    if ok:
+        _ledger_outbound(channel, text, source)
+    return ok
 
 
 def home(_sleep=None):

@@ -115,10 +115,11 @@ class TestSecurity(unittest.TestCase):
     def test_sql_is_parameterized(self):
         self.assertNotRegex(SRC, r'execute\(\s*f"')
         self.assertNotRegex(SRC, r'execute\([^)]*%\s*\(')
-        cur = _Cur([("SET status='decided'", (9,))])
+        cur = _Cur([("SET status='decided'", (9,))]); cur.rowcount = 1
         with redirect_stdout(io.StringIO()):
-            dc.decide(cur, 9, "A wins; ' OR 1=1 --")
-        self.assertEqual(cur.params[0], ("A wins; ' OR 1=1 --", 9))     # note travels as a bound parameter
+            self.assertTrue(dc.decide(9, "A wins; ' OR 1=1 --", "jordan", cur=cur))
+        self.assertEqual(cur.params[0], ("jordan", "A wins; ' OR 1=1 --", 9))     # note travels as a bound parameter
+        self.assertIn("AND status='open'", cur.sql[0])                        # only an OPEN row is ever closed
 
     def test_read_only_over_the_world(self):
         writes = {m.group(1) for m in re.finditer(r"(?:INSERT INTO|(?<!DO )UPDATE|DELETE FROM)\s+([\w.]+)", SRC)}
@@ -231,7 +232,7 @@ class TestFunctional(unittest.TestCase):
         kw = notify.call_args.kwargs
         self.assertEqual((kw["level"], kw["category"], kw["dedup_key"][:19], kw["meta"]["conflict_id"]),
                          ("warning", "directive_conflict", "directive-conflict:", 9))
-        self.assertIn("I am not resolving this alone", notify.call_args[0][1])
+        self.assertIn("Nova resolves this in her weekly pass", notify.call_args[0][1])
         self.assertTrue(cur.stmts("SET notified_at = now()"))
         self.assertGreaterEqual(conn.commits, 3)
         self.assertIn("done: 1 new conflict(s)", out)
@@ -258,10 +259,89 @@ class TestFunctional(unittest.TestCase):
         self.assertIn("9 | 2026-10-05 09:00:00 | live | open | send_email", out)
         self.assertFalse(cur.stmts("FROM agent_docs"))
         cur = _Cur(_rules())
+        cur.rowcount = 1
         conn, uo, notify, out = _run_main(cur, ["--decide", "9", "Rule A wins"])
-        self.assertEqual(cur.stmts("SET status='decided'")[0][1], ("Rule A wins", 9))
-        self.assertIn("decided (9,)", out)
+        self.assertEqual(cur.stmts("SET status='decided'")[0][1], ("jordan", "Rule A wins", 9))
+        self.assertIn("#9 decided", out)
         self.assertEqual(conn.commits, 2)
+
+
+class TestMergedModes(unittest.TestCase):
+    """2026-10-15 item #10: directive_review / directive_conflicts / directive_decide / whole_picture folded in."""
+    def test_decision_note_and_public_decide(self):
+        self.assertEqual(dc.decision_note("A", "safer"), "A — safer")
+        self.assertEqual(dc.decision_note("both apply", ""), "both apply")
+        self.assertEqual(dc.decision_note("", "why"), "why")
+        cur = _Cur(); cur.rowcount = 0
+        self.assertFalse(dc.decide("4", "B", "claude", "r", cur=cur))       # not open -> False, id cast to int
+        self.assertEqual(cur.params[0], ("claude", "B — r", 4))
+
+    def test_decide_cli_note_and_by(self):
+        cur = _Cur(_rules()); cur.rowcount = 1
+        conn, uo, notify, out = _run_main(cur, ["--decide", "9", "--note", "both apply", "--by", "claude"])
+        self.assertEqual(cur.stmts("SET status='decided'")[0][1], ("claude", "both apply", 9))
+
+    def test_review_keyword_records_into_shared_ledger(self):
+        rules = [("ask-first", "Always ask before you restart a service on the fleet."),
+                 ("just-do", "Never ask; just execute and restart the service on the fleet.")]
+        cur = _Cur([("FROM claude_memories WHERE type = 'feedback'", rules),
+                    ("INSERT INTO directive_conflicts", (11,))])
+        conn, uo, notify, out = _run_main(cur, ["--review", "--keyword"])
+        ins = cur.stmts("INSERT INTO directive_conflicts")
+        self.assertEqual(len(ins), 1)
+        self.assertEqual(ins[0][1][0], "review")
+        self.assertEqual((ins[0][1][3], ins[0][1][5]), ("feedback:ask-first", "feedback:just-do"))
+        uo.assert_not_called()                      # keyword mode never calls a model
+        notify.assert_called_once()
+        self.assertFalse(cur.stmts("FROM agent_docs"))
+
+    def test_review_model_stores_verdicts_and_ledger_rows(self):
+        import nova_directive_review as R
+        rules = [("a", "Always ask."), ("b", "Never ask.")]
+        cur = _Cur([("FROM claude_memories WHERE type = 'feedback'", rules), ("INSERT INTO directive_conflicts", (12,))])
+        stored = []
+        with mock.patch.object(R, "review", lambda p, m: {"a": p[0][0], "b": p[1][0], "conflict": True,
+                                                          "reason": "opposite", "error": False}), \
+             mock.patch.object(R, "store_verdicts", lambda conn, m, res: stored.extend(res)):
+            conn, uo, notify, out = _run_main(cur, ["--review"])
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(len(cur.stmts("INSERT INTO directive_conflicts")), 1)
+        stored.clear(); cur = _Cur([("FROM claude_memories WHERE type = 'feedback'", rules)])
+        with mock.patch.object(R, "review", lambda p, m: {"a": "a", "b": "b", "conflict": True, "reason": "x",
+                                                          "error": False}), \
+             mock.patch.object(R, "store_verdicts", lambda conn, m, res: stored.extend(res)):
+            _run_main(cur, ["--review", "--dry-run"])
+        self.assertEqual(stored, [])
+        self.assertFalse(cur.stmts("INSERT INTO directive_conflicts"))
+
+    def test_gaps_lines_and_never_raises(self):
+        cur = _Cur([("FROM directive_conflicts WHERE status='open'", (37, "2026-10-01")),
+                    ("FROM directive_conflict_reviews", (0,)),
+                    ("FROM claude_actions", (2291, 715))])
+        lines = dc.gaps_lines(cur)
+        self.assertEqual(len(lines), 2)
+        self.assertIn("37 directive conflict(s) still open", lines[0])
+        self.assertIn("715 of 2291", lines[1])
+        bad = _Cur(raise_on=("FROM",))
+        self.assertEqual(dc.gaps_lines(bad), [])
+        self.assertEqual(bad.rollbacks, 3)
+
+    def test_post_and_list_delegate_to_decide_module(self):
+        import nova_directive_decide as D
+        with mock.patch.object(D, "run", return_value=0) as run:
+            self.assertEqual(dc.main(["--post", "--dry-run"]), 0)
+            run.assert_called_with("post", dry=True)
+            dc.main(["--list"]); run.assert_called_with("list", dry=False)
+
+    def test_old_wrappers_delegate(self):
+        import nova_directive_review as R, nova_directive_conflicts as K, nova_whole_picture as W
+        with mock.patch.object(dc, "main", return_value=0) as m, \
+             mock.patch.dict(sys.modules, {"nova_directive_conflict": dc}), redirect_stdout(io.StringIO()):
+            R.main(["--limit", "3", "--dry-run"])
+            self.assertEqual(m.call_args[0][0][:2], ["--review", "--model"])
+            self.assertIn("--dry-run", m.call_args[0][0])
+            K.main(["--dry-run"]); m.assert_called_with(["--review", "--keyword", "--dry-run"])
+            W.main(["--hours", "12"]); m.assert_called_with(["--gaps", "--hours", "12"])
 
 
 class TestFrame(unittest.TestCase):

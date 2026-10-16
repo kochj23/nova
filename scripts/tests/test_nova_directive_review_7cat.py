@@ -120,7 +120,8 @@ def test_functional_limit_and_dry_run_exit_zero_when_model_offline_is_reported()
     out = subprocess.run([sys.executable, str(SCRIPTS / "nova_directive_review.py"), "--limit", "2", "--dry-run"],
                          capture_output=True, text=True, timeout=300, cwd=SCRIPTS)
     assert out.returncode == 0, out.stderr
-    assert out.stdout.startswith("reviewed 2 pairs")
+    assert "merged into nova_directive_conflict.py --review" in out.stdout
+    assert "review: 2 pairs" in out.stdout
 
 
 # ── Frame ─────────────────────────────────────────────────────────────────────

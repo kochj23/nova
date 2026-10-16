@@ -27,6 +27,12 @@ Resilient: each source/series is independently guarded; insufficient history
   python3 nova_disk_forecast.py            # forecast + write PG
   python3 nova_disk_forecast.py --dry-run  # forecast + print, no write
   python3 nova_disk_forecast.py --target 90
+  python3 nova_disk_forecast.py --pendulum [--dry-run]   # The Pendulum (blade heights, every 6 h)
+  python3 nova_disk_forecast.py --pendulum --line        # the Pendulum line for the Watch Bill
+
+THE PENDULUM (consolidation #18, 2026-10-15): nova_pendulum.py merged here as --pendulum. It already
+read this collector's telemetry.disk_forecast series; its logic, table pendulum_blades and the
+'Pendulum' line stay in nova_pendulum (run/show/watch_bill_line), which is now a thin wrapper.
 
 Written by Jordan Koch.
 """
@@ -301,12 +307,27 @@ def write_rows(conn, rows):
     return inserted
 
 
-def main():
+def pendulum(dry_run=False, line=False):
+    """--pendulum: The Pendulum (nova_pendulum.run / --line), merged here 2026-10-15."""
+    import nova_pendulum as P
+    log("Pendulum: blade heights (merged from nova_pendulum.py 2026-10-15)")
+    if line:
+        return P.show(line_only=True)
+    P.run(dry=dry_run)
+    return 0
+
+
+def main(argv=None):
     ap = argparse.ArgumentParser(description="Nova disk-growth forecast collector")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--target", type=float, default=DEFAULT_TARGET_PCT,
                     help="full-threshold pct (default 95)")
-    args = ap.parse_args()
+    ap.add_argument("--pendulum", action="store_true",
+                    help="The Pendulum: days until disks, PG and certs run out (pendulum_blades)")
+    ap.add_argument("--line", action="store_true", help="with --pendulum: the Watch Bill 'Pendulum' line")
+    args = ap.parse_args(argv)
+    if args.pendulum:
+        return pendulum(args.dry_run, args.line)
 
     try:
         conn = psycopg2.connect(DB_DSN)
@@ -344,4 +365,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)

@@ -261,6 +261,18 @@ class TestFunctional(unittest.TestCase):
             out = B.run(dry=dry)
         return cur, out
 
+    def test_main_is_a_thin_wrapper_for_haven(self):
+        import nova_haven_drill as H
+        cases = [(["--run"], ["--butlerian", "--weeks", "8"]),
+                 (["--run", "--weeks", "3", "--dry-run"], ["--butlerian", "--weeks", "3", "--dry-run"]),
+                 (["--offer-drill"], ["--aub-offer"]),
+                 (["--record-drill", "pg_failover", "--result", "could", "--note", "n"],
+                  ["--aub-record", "pg_failover", "--result", "could", "--note", "n"])]
+        for argv, fwd in cases:
+            with mock.patch.object(H, "main", return_value=0) as hm, mock.patch("builtins.print"):
+                self.assertEqual(B.main(argv), 0)
+            hm.assert_called_once_with(fwd)
+
     def test_run_writes_weeks(self):
         cur, out = self._run(False)
         self.assertIn("2026-10-05", out["weeks"])

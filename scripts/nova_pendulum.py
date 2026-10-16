@@ -29,7 +29,10 @@ CLI:      --run [--dry-run]   --line   --show   --selftest
 Table:    pendulum_blades
 Config:   service_config pendulum/disks      [["node_status","mac-studio"], ["storage_metrics", null], ...]
           service_config pendulum/lead_days  {"disk": 30, "pg": 30, "cert": 21}
-Schedule: every 6 h: `nova_pendulum.py --run`; the weekly Watch Bill reads `--line` / watch_bill_line().
+MERGED 2026-10-15 (consolidation #18): the 6-hourly run is now `nova_disk_forecast.py --pendulum`
+(the collector whose series it already read). Logic, table and the 'Pendulum' line stay here;
+`--run` is a thin wrapper that delegates; --line/--show/--selftest unchanged.
+Schedule: every 6 h: `nova_disk_forecast.py --pendulum` (was `nova_pendulum.py --run`); the weekly Watch Bill reads `--line` / watch_bill_line().
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -315,6 +318,9 @@ def selftest() -> int:
     return 0
 
 
+MERGED_ON = "2026-10-15"
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--run", action="store_true", help="measure every blade and write one row each")
@@ -326,8 +332,9 @@ def main(argv=None) -> int:
     if a.selftest:
         return selftest()
     if a.run:
-        run(dry=a.dry_run)
-        return 0
+        log(f"merged into nova_disk_forecast.py --pendulum on {MERGED_ON}; delegating")
+        import nova_disk_forecast
+        return nova_disk_forecast.main(["--pendulum"] + (["--dry-run"] if a.dry_run else [])) or 0
     if a.line or a.show:
         return show(line_only=a.line)
     ap.print_help()

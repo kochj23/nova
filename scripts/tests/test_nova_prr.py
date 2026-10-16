@@ -158,6 +158,23 @@ class TestUnit(unittest.TestCase):
         self.assertFalse(prr.check_docs(["nova_hue"], docs)[0])
         self.assertTrue(prr.check_docs(["nova_hue_history"], docs)[0])
 
+    def test_check_tier_fails_untiered_components(self):
+        # Little Mister, 2026-10-15 (#35): a component with no tier FAILS; absent table -> n/a
+        rows = [{"component": "gateway", "tier": 0, "rto_s": 3600, "rpo_s": 900},
+                {"component": "journal_*", "tier": 2, "rto_s": 259200, "rpo_s": 604800}]
+        self.assertIsNone(prr.check_tier(None, ["gateway"])[0])
+        ok, ev = prr.check_tier(rows, ["gateway"])
+        self.assertTrue(ok); self.assertIn("Tier0", ev)
+        self.assertTrue(prr.check_tier(rows, ["journal_digest", "nova_journal_digest"])[0])
+        ok, ev = prr.check_tier(rows, ["self_model", "nova_self_model"])
+        self.assertFalse(ok); self.assertIn("--set", ev)
+
+    def test_tier_is_a_check(self):
+        self.assertIn("tier", prr.CHECKS)
+        res = prr.evaluate_component({"kind": "script", "name": "zeta", "script": None},
+                                     {**_ctx(), "tier_rows": []})
+        self.assertFalse(res["tier"][0])
+
     def test_check_header(self):
         self.assertTrue(prr.check_header("nova_alpha.py", GOOD_PY)[0])
         self.assertFalse(prr.check_header("x.py", '"""x.py — does a thing, no attribution."""\n')[0])
@@ -318,6 +335,133 @@ class TestFrame(unittest.TestCase):
     def test_import_does_not_run_main(self):
         self.assertTrue(callable(prr.main))
         self.assertIn('if __name__ == "__main__":', SRC)
+
+
+# ── Organ Definition of Done (#32) — 7 categories ───────────────────────────
+from datetime import datetime as _dt, timedelta as _td, timezone as _tz  # noqa: E402
+
+_FULL_REG = {"metric": "alerts/day", "baseline": 40, "baseline_at": "2026-09-01", "predicted_effect": "down 20%",
+             "predicted_direction": "down", "predicted_pct": 20, "owner": "nova",
+             "retirement_criterion": "no reader for 60 days"}
+
+
+class TestOrganDoDSecurity(unittest.TestCase):
+    def test_metric_sql_only_single_select(self):
+        self.assertTrue(prr.safe_metric_sql("SELECT count(*) FROM x"))
+        self.assertTrue(prr.safe_metric_sql("WITH a AS (SELECT 1) SELECT * FROM a"))
+        self.assertFalse(prr.safe_metric_sql("SELECT 1; DELETE FROM x WHERE id = 1"))
+        self.assertFalse(prr.safe_metric_sql("UPDATE x SET y = 1 WHERE id = 1"))
+        self.assertFalse(prr.safe_metric_sql(None))
+
+    def test_metric_sql_runs_on_readonly_session(self):
+        conn = MagicMock()
+        conn.cursor.return_value.fetchone.return_value = (5,)
+        self.assertEqual(prr._readonly_value("SELECT 5", lambda: conn), 5)
+        conn.set_session.assert_called_once_with(readonly=True, autocommit=False)
+        conn.rollback.assert_called_once()
+        conn.close.assert_called_once()
+
+
+class TestOrganDoDPerformance(unittest.TestCase):
+    def test_dod_10k_organs_fast(self):
+        t = time.perf_counter()
+        for i in range(10_000):
+            prr.organ_dod(f"nova_o{i}.py", _FULL_REG, ["test_nova_o1.py"], [("scripts", "nova_o1.py")])
+        self.assertLess(time.perf_counter() - t, 5.0)
+
+
+class TestOrganDoDRetry(unittest.TestCase):
+    """No retry: a failing DoD pass is contained by a savepoint so the PRR digest still goes out."""
+    def test_dod_failure_rolls_back_savepoint(self):
+        cur = MagicMock()
+        with patch.object(prr, "run_organ_dod", side_effect=RuntimeError("x")), \
+                redirect_stdout(io.StringIO()), patch("sys.stderr", io.StringIO()):
+            self.assertIsNone(prr.organ_dod_in_txn(cur))
+        self.assertIn("ROLLBACK TO SAVEPOINT organ_dod", [c.args[0] for c in cur.execute.call_args_list])
+
+    def test_metric_sql_failure_is_unmeasurable(self):
+        cur = MagicMock()
+        cur.fetchone.return_value = (True,)
+        cur.fetchall.return_value = [("nova_o.py", "m", "SELECT 1", 40, _dt(2026, 8, 1, tzinfo=_tz.utc),
+                                      "down 20%", "down", 20, "nova", "r")]
+        bad = MagicMock(side_effect=RuntimeError("db gone"))
+        with patch("sys.stderr", io.StringIO()):
+            out = prr.check_predictions(cur, _dt(2026, 10, 15, tzinfo=_tz.utc), metric_connect=bad)
+        self.assertEqual(out[0][1], "unmeasurable")
+
+
+class TestOrganDoDUnit(unittest.TestCase):
+    def test_full_registry_passes(self):
+        res = prr.organ_dod("nova_o.py", _FULL_REG, ["test_nova_o_7cat.py"], [("organ-x", "uses nova_o.py")])
+        self.assertTrue(all(v is True for v, _ in res.values()), res)
+
+    def test_each_missing_piece_fails(self):
+        res = prr.organ_dod("nova_o.py", {"owner": "jordan"}, [], [])
+        self.assertEqual({k for k, (v, _) in res.items() if v is False}, set(prr.DOD_CHECKS))
+
+    def test_parse_declarations(self):
+        d = prr.parse_declarations("x\nMetric: wakes/day\nBaseline: 12.5 (2026-10-01)\n"
+                                   "Predicted effect: up 10% within a month\nRetire when: no output 30d\nOwner: Nova")
+        self.assertEqual(d["metric"], "wakes/day")
+        self.assertEqual((d["baseline"], d["baseline_at"]), (12.5, "2026-10-01"))
+        self.assertEqual((d["predicted_direction"], d["predicted_pct"]), ("up", 10.0))
+        self.assertEqual(d["owner"], "Nova")
+
+    def test_prediction_check_grades(self):
+        now = _dt(2026, 10, 15, tzinfo=_tz.utc)
+        self.assertEqual(prr.prediction_check(_FULL_REG, now, 30)[0], "hit")      # 40 -> 30 = -25%
+        self.assertEqual(prr.prediction_check(_FULL_REG, now, 36)[0], "miss")     # -10% < -20% wanted
+        self.assertEqual(prr.prediction_check(_FULL_REG, now, None)[0], "unmeasurable")
+        young = dict(_FULL_REG, baseline_at=(now - _td(days=5)).isoformat())
+        self.assertEqual(prr.prediction_check(young, now, 1)[0], "not_due")
+        self.assertEqual(prr.prediction_check({"baseline": 1}, now, 1)[0], "unmeasurable")
+        self.assertEqual(prr.prediction_check(dict(_FULL_REG, baseline=0, predicted_direction="up",
+                                                   predicted_pct=0), now, 0)[0], "miss")   # no change is no hit
+
+
+class TestOrganDoDIntegration(unittest.TestCase):
+    def test_evaluate_organs_merges_inventory_registry_and_header(self):
+        cur = MagicMock()
+        with patch.object(prr, "organ_inventory_scripts", return_value={"nova_prr.py": ["agent_doc sre-prr"]}), \
+                patch.object(prr, "load_registry", return_value={"nova_prr.py": {"metric": "readiness %"}}):
+            out = prr.evaluate_organs(cur, test_names=["test_nova_prr.py"], docs=[("sre-prr", "nova_prr.py")])
+        script, merged, res, why = out[0]
+        self.assertEqual(script, "nova_prr.py")
+        self.assertEqual(merged["metric"], "readiness %")
+        self.assertTrue(res["test"][0] and res["agent_doc"][0] and res["metric"][0])
+        self.assertEqual(why, ["agent_doc sre-prr"])
+
+    def test_store_organs_upserts_without_clobbering_declared_fields(self):
+        cur = MagicMock()
+        res = prr.organ_dod("nova_o.py", {"owner": "nova"}, [], [])
+        with patch.dict(sys.modules, {"nova_pg_schema": MagicMock()}):
+            prr.store_organs(cur, [("nova_o.py", {"owner": "nova"}, res, ["x"])])
+        sql, params = cur.execute.call_args_list[-1].args
+        self.assertIn("coalesce(organ_registry.metric, EXCLUDED.metric)", sql)
+        self.assertEqual(params[0], "nova_o.py")
+        self.assertFalse(params[11])                       # dod_pass
+        self.assertIn("metric", params[12])                # dod_failing
+
+
+class TestOrganDoDFunctional(unittest.TestCase):
+    def test_summary_and_digest_flag_failing_organs(self):
+        good = prr.organ_dod("a.py", _FULL_REG, ["test_a.py"], [("d", "a.py")])
+        bad = prr.organ_dod("b.py", {"owner": "nova"}, ["test_b.py"], [("d", "b.py")])
+        s = prr.dod_summary([("a.py", {}, good, []), ("b.py", {}, bad, [])])
+        self.assertEqual((s["organs"], s["pass"], s["fail"]), (2, 1, 1))
+        txt = prr.dod_digest_lines(s)
+        self.assertIn("1/2 organs pass", txt)
+        self.assertIn("FLAG b.py: metric, baseline, prediction, retirement", txt)
+
+
+class TestOrganDoDFrame(unittest.TestCase):
+    def test_help_lists_organ_dod(self):
+        r = subprocess.run([sys.executable, str(SCRIPTS / "nova_prr.py"), "--help"], capture_output=True,
+                           text=True, timeout=30, env=dict(os.environ, NOVA_TEST_QUIET="1"))
+        self.assertIn("--organ-dod", r.stdout)
+
+    def test_dod_does_not_change_component_checks(self):
+        self.assertNotIn("dod", " ".join(prr.CHECKS))
 
 
 if __name__ == "__main__":

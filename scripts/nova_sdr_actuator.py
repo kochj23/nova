@@ -8,6 +8,16 @@ For every tuner on this host:
   * apply: renders /etc/systemd/system/<unit>.service.d/zz-sdr.conf from the assigned target;
     restarts only units whose config changed, master before slave; stops units with no target
   * self-heal: an SDRplay unit unhealthy >5 min -> restart sdrplay.service (max once / 30 min)
+  * deep health (2026-10-15, plan #6) -- folded into the same ok/sick, so the heal and the placer act on it:
+      stream   nova_fm_capture's per-channel heartbeat (STATS_DIR/<label>.json): IQ samples in the last 30 s,
+               stale file = hung capture. Live SNR (channel vs band median) -> sdr_health.snr_db.
+      output   transcripts per channel in nova_memories vs that channel's own 7-day rate: silent long enough
+               that >= OUTPUT_EXPECT calls were due (and >= 30 min) = sick. Caught the core2 P25 slave
+               (LAPD North Hollywood, 819 calls/day) silent from 10:16 to 17:35 on 10-15 with "bridge listening".
+      api      SDRplay API liveness, passive: sdrplay.service active, apiService not zombie/uninterruptible,
+               no ServiceNotResponding / segfault / repeated submiturb failures in the last 10 min.
+               (No active enumerate: opening the API from a probe can itself wedge it.)
+    Every tuner (+ 'sdrplay_api' per host) is also written to health_checks (checked_by nova_sdr_actuator).
 nova_sdr_placement.py decides the assignments; this only applies them.
 
   nova_sdr_actuator.py [--dry-run]
@@ -24,6 +34,13 @@ OPENED = {  # pipeline -> how to tell its capture really opened since the unit s
     "nrsp": r"pynrsp capture up",
 }
 SDRPLAY = {"fm_master", "fm_dt", "p25_slave"}
+STATS_DIR = "/home/kochj/.cache/nova-sdr"      # nova_fm_capture.py writes <label>.json here (User=kochj units)
+STATS_STALE_S = 180
+OUTPUT_EXPECT = 20                             # calls that should have arrived during the silence
+OUTPUT_SILENCE_MIN_S = 1800
+OUTPUT_MIN_HISTORY = 50                        # calls in 7 days before a channel's silence is judged at all
+API_BAD = re.compile(r"ServiceNotResponding|segfault at .* in sdrplay_apiService|sdrplay_api_\w+ (failed|Fail)", re.I)
+API_URB = re.compile(r"submiturb failed")
 
 
 def sh(*cmd, check=False):
@@ -92,6 +109,88 @@ def unit_health(unit, pipeline, assigned):
     return up, "capture opened" if up else f"no capture since start ({since})"
 
 
+def lab(label):
+    return clean(label).replace(" ", "_")
+
+
+def stream_health(label, now=None, stats_dir=STATS_DIR):
+    """(ok|None, detail, snr_db) from nova_fm_capture's heartbeat. None = no heartbeat file (older capture code)."""
+    now = now or time.time()
+    try:
+        st = json.load(open(os.path.join(stats_dir, f"{lab(label)}.json")))
+    except (OSError, ValueError):
+        return None, "", None
+    age = now - float(st.get("ts", 0))
+    snr = st.get("snr_db")
+    if age > STATS_STALE_S:
+        return False, f"capture heartbeat stale {age / 60:.0f} min (hung)", None
+    if not st.get("samples"):
+        return False, "no IQ samples in the last 30 s (stream stalled)", None
+    return True, f"IQ flowing, SNR {snr} dB" if snr is not None else "IQ flowing", snr
+
+
+def output_rates(dsn):
+    """{channel label: (calls_7d, calls_1h, last_ts, first_ts)} (epoch s) from nova_memories; {} when unreachable."""
+    try:
+        import psycopg2
+        with psycopg2.connect(dsn, connect_timeout=10) as c, c.cursor() as cur:
+            cur.execute("""SELECT metadata->>'channel', count(*), count(*) FILTER (WHERE created_at > now() - interval '1 hour'),
+                                  extract(epoch FROM max(created_at)), extract(epoch FROM min(created_at))
+                           FROM memories WHERE source IN ('scanner', 'rf_discovery') AND created_at > now() - interval '7 days'
+                           GROUP BY 1""")
+            return {r[0]: (int(r[1]), int(r[2]), float(r[3]), float(r[4])) for r in cur.fetchall() if r[0]}
+    except Exception as e:  # noqa: BLE001 -- the memory DB being down must not mark every tuner sick
+        print(f"[sdr-actuator] output rates unavailable: {e}")
+        return {}
+
+
+def output_health(label, rates, assigned_since, now=None):
+    """(ok|None, detail, calls_1h). None = not judged (no history, or too quiet a channel to tell)."""
+    now = now or time.time()
+    if label not in rates:
+        return None, "", None
+    n7, n1h, last, first = rates[label]
+    silent_s = now - max(last, assigned_since or 0)
+    # rate over the span the channel was actually producing (a channel added 2 days ago is not 7 days quiet)
+    expected = n7 / max(last - first, 3600) * silent_s
+    if n7 >= OUTPUT_MIN_HISTORY and silent_s >= OUTPUT_SILENCE_MIN_S and expected >= OUTPUT_EXPECT:
+        return False, f"no output for {silent_s / 3600:.1f} h (~{expected:.0f} calls were due)", n1h
+    return True, f"{n1h} calls/h", n1h
+
+
+def api_health(journal=None, ps=None, active=None):
+    """SDRplay API liveness, passive. Arguments are for tests; live calls read systemd/ps/journal."""
+    active = sh("systemctl", "is-active", "sdrplay") if active is None else active
+    if active != "active":
+        return False, f"sdrplay.service {active}"
+    ps = sh("ps", "-o", "stat=", "-C", "sdrplay_apiService") if ps is None else ps
+    if not ps.strip():
+        return False, "sdrplay_apiService not running"
+    if any(st.startswith(("Z", "D")) for st in ps.split()):
+        return False, f"sdrplay_apiService state {ps.split()[0]}"
+    # no -u/-k filters: journalctl ANDs different match fields, and the segfault line is a kernel message
+    journal = sh("journalctl", "--since", "-10 min", "--no-pager", "-o", "cat",
+                 "-g", "sdrplay|submiturb|ServiceNotResponding") if journal is None else journal
+    bad = [l for l in journal.splitlines() if API_BAD.search(l)]
+    if bad:
+        return False, f"API error: {bad[-1].strip()[:120]}"
+    urb = len(API_URB.findall(journal))
+    if urb >= 3:
+        return False, f"{urb} USB submiturb failures in 10 min (stream dying)"
+    return True, "API responding"
+
+
+def combine(base, *checks):
+    """base=(ok, detail); checks=(ok|None, detail). Sick if any judged check is sick; details joined."""
+    ok, parts = base[0], [base[1]]
+    for c_ok, c_detail in checks:
+        if c_ok is False:
+            ok = False
+        if c_detail:
+            parts.append(c_detail)
+    return ok, "; ".join(p for p in parts if p)
+
+
 def main(dry):
     import psycopg2
     try:
@@ -101,13 +200,14 @@ def main(dry):
     con = psycopg2.connect(dsn); con.autocommit = True; cur = con.cursor()
     host = socket.gethostname()
     cur.execute("""SELECT u.id, u.pipeline, u.unit, u.port, u.meta, u.requires,
-                          t.id, t.label, t.freq_hz, t.demod, t.meta
+                          t.id, t.label, t.freq_hz, t.demod, t.meta, extract(epoch FROM a.since)
                    FROM sdr_tuners u LEFT JOIN sdr_assignments a ON a.tuner_id = u.id
                    LEFT JOIN sdr_targets t ON t.id = a.target_id AND t.enabled
                    WHERE u.host = %s AND u.enabled ORDER BY u.id""", (host,))
     units = {}
-    for tid, pipe, unit, port, meta, req, gid, label, hz, demod, gmeta in cur.fetchall():
-        target = {"id": gid, "label": label, "freq_hz": hz, "demod": demod, "meta": gmeta or {}} if gid else None
+    for tid, pipe, unit, port, meta, req, gid, label, hz, demod, gmeta, since in cur.fetchall():
+        target = {"id": gid, "label": label, "freq_hz": hz, "demod": demod, "meta": gmeta or {},
+                  "since": float(since) if since else None} if gid else None
         units.setdefault(unit, {"pipeline": pipe, "rows": [], "tuners": [], "requires": set()})
         units[unit]["rows"].append((port, target, meta or {}))
         units[unit]["tuners"].append(tid)
@@ -121,11 +221,26 @@ def main(dry):
         state = {}
     now = time.time()
 
-    # 1) health
+    # 1) health: unit/capture + stream heartbeat + output rate + SDRplay API (all fold into ok/sick)
     sick_sdrplay = False
+    has_sdrplay = any(u["pipeline"] in SDRPLAY for u in units.values())
+    api = api_health() if has_sdrplay else (True, "")
+    rates = output_rates(dsn.replace("dbname=nova_ops", "dbname=nova_memories"))
+    deep = {}                                          # tuner id -> (ok, detail, snr, calls_1h)
     for unit, u in units.items():
         assigned = any(t for _, t, _ in u["rows"])
-        ok, detail = unit_health(unit, u["pipeline"], assigned)
+        base = unit_health(unit, u["pipeline"], assigned)
+        for (port, t, _), tid in zip(u["rows"], u["tuners"]):
+            if not t:
+                deep[tid] = (base[0], base[1], None, None)
+                continue
+            s_ok, s_detail, snr = stream_health(t["label"]) if u["pipeline"] in ("fm_master", "fm_dt") else (None, "", None)
+            o_ok, o_detail, n1h = output_health(t["label"], rates, t.get("since"))
+            a = api if u["pipeline"] in SDRPLAY else (None, "")
+            ok_t, detail_t = combine(base, (s_ok, s_detail), (o_ok, o_detail), (a[0], "" if a[0] else a[1]))
+            deep[tid] = (ok_t, detail_t, snr, n1h)
+        ok = all(deep[tid][0] for tid in u["tuners"])
+        detail = " | ".join(deep[tid][1] for tid in u["tuners"])
         if not ok and u["pipeline"] in SDRPLAY:
             first = state.setdefault("sick_since", {}).setdefault(unit, now)
             # A stuck MASTER/DT capture means a wedged API. A sick slave gets its own restarts first, but
@@ -137,12 +252,29 @@ def main(dry):
         print(f"[sdr-actuator] {unit:22s} {'OK  ' if ok else 'SICK'} {detail}")
         if not dry:
             for tid in u["tuners"]:
+                t_ok, t_detail, snr, n1h = deep[tid]
                 cur.execute("""INSERT INTO sdr_health(tuner_id, ts, ok, detail, unhealthy_since)
                                VALUES (%s, now(), %s, %s, CASE WHEN %s THEN NULL ELSE now() END)
                                ON CONFLICT (tuner_id) DO UPDATE SET ts=now(), ok=EXCLUDED.ok, detail=EXCLUDED.detail,
                                  unhealthy_since = CASE WHEN EXCLUDED.ok THEN NULL
                                                         ELSE COALESCE(sdr_health.unhealthy_since, now()) END""",
-                            (tid, ok, detail, ok))
+                            (tid, t_ok, t_detail[:500], t_ok))
+                try:   # columns added 2026-10-15; an older schema must not break basic health
+                    cur.execute("UPDATE sdr_health SET snr_db=%s, calls_1h=%s WHERE tuner_id=%s", (snr, n1h, tid))
+                    cur.execute("""INSERT INTO health_checks (service_name, node_name, checked_by, status, error_message)
+                                   VALUES (%s, %s, 'nova_sdr_actuator', %s, %s)""",
+                                (f"sdr:{tid}", host, "up" if t_ok else "down", None if t_ok else t_detail[:500]))
+                except Exception as e:  # noqa: BLE001
+                    print(f"[sdr-actuator] deep-health write skipped: {e}")
+
+    if has_sdrplay and not dry:
+        try:
+            cur.execute("""INSERT INTO health_checks (service_name, node_name, checked_by, status, error_message)
+                           VALUES ('sdrplay_api', %s, 'nova_sdr_actuator', %s, %s)""",
+                        (host, "up" if api[0] else "down", None if api[0] else api[1]))
+        except Exception as e:  # noqa: BLE001
+            print(f"[sdr-actuator] api health write skipped: {e}")
+    print(f"[sdr-actuator] sdrplay api: {'OK' if api[0] else 'SICK'} {api[1]}")
 
     # 2) self-heal a wedged SDRplay API (the 2026-10-12 failure on both hosts)
     if sick_sdrplay and now - state.get("last_heal", 0) >= HEAL_EVERY_S:

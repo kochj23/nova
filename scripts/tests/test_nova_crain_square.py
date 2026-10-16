@@ -243,5 +243,24 @@ class TestFrame(unittest.TestCase):
         self.assertIn('if __name__ == "__main__":', SRC)
 
 
+
+class TestMergedIntoCardinal(unittest.TestCase):
+    """Consolidation #18 (2026-10-15): --run is `nova_cardinal.py --invariants`."""
+
+    def test_run_delegates_to_cardinal_invariants(self):
+        import nova_cardinal
+        with mock.patch.object(nova_cardinal, "main", return_value=0) as m:
+            self.assertEqual(C.main(["--run", "--day", "2026-10-14", "--dry-run"]), 0)
+        m.assert_called_once_with(["--invariants", "--day", "2026-10-14", "--dry-run"])
+
+    def test_cardinal_invariants_runs_crain(self):
+        import nova_cardinal
+        with mock.patch.object(C, "run", return_value=[]) as r:
+            self.assertEqual(nova_cardinal.main(["--invariants", "--day", "2026-10-14", "--dry-run"]), 0)
+        r.assert_called_once_with(date(2026, 10, 14), dry=True)
+
+    def test_table_name_unchanged(self):
+        self.assertIn("crain_square_residuals", Path(C.__file__).read_text())
+
 if __name__ == "__main__":
     unittest.main()

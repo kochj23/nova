@@ -319,7 +319,8 @@ def drain(verbose=False, only_source=None) -> int:
                 # 3.5) AI triage — fail-open to paging (see _triage_event above).
                 #      suppress -> don't post; downgrade -> post to #nova-feed w/ note;
                 #      page/downgrade -> append likely-cause + similar-incident context.
-                if isinstance(t, dict) and t.get("decision") in ("page", "downgrade", "suppress"):
+                triage_ticket = False
+                if isinstance(t, dict) and t.get("decision") in ("page", "downgrade", "suppress", "ticket"):
                     decision = t["decision"]
                     if decision == "suppress":
                         # Only ever reached for non-critical (brain's own rule). Mark the
@@ -332,6 +333,14 @@ def drain(verbose=False, only_source=None) -> int:
                     ann = (t.get("annotation") or "").strip()
                     if ann:
                         msg = f"{msg}\n{ann}"
+                    if decision == "ticket":
+                        # RULE C (#39, 2026-10-15): no SLO/Tier-0/house impact -> a ticket for Nova's
+                        # queue (#nova-digest, never the mesh). The incident row stays hers to close.
+                        triage_ticket = True
+                        if channel == nova_config.SLACK_ALERTS:
+                            channel = nova_config.SLACK_DIGEST
+                        if not msg.startswith(":ticket:"):
+                            msg = f":ticket: {msg}"
                     if decision == "downgrade":
                         channel = nova_config.SLACK_FEED  # lower-priority ambient channel
                         msg = f"(downgraded) {msg}"
@@ -344,7 +353,8 @@ def drain(verbose=False, only_source=None) -> int:
                     # never mark such an event 'sent' (it would vanish unseen).
                     if not nova_config.post_both(msg, slack_channel=channel):
                         raise RuntimeError(f"post_both delivered nowhere (channel={channel})")
-                    if ev["level"] == "critical" and not _is_ticket(ev["level"], ev["category"]):
+                    if (ev["level"] == "critical" and not _is_ticket(ev["level"], ev["category"])
+                            and not triage_ticket):
                         _mesh_relay(ev["title"], ev.get("body"))
                     cur.execute(
                         "UPDATE telemetry.events SET status='sent', channel=%s, sent_at=now() "

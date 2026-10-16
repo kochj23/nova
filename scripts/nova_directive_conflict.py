@@ -29,6 +29,23 @@ dedup_key, top 15). Model: qwen3:8b on the idle Linux Ollama nodes (local, free)
   nova_directive_conflict.py --latent      # pairwise scan of the directive set (daily)
   nova_directive_conflict.py --dry-run     # print, write nothing
   nova_directive_conflict.py --show        # print the open ledger
+
+ONE DIRECTIVE ORGAN (2026-10-15, consolidation item #10; oversight merge approved by Claude 2026-10-15,
+no check lost). The four directive organs are now modes of this one; each old script is a thin wrapper:
+  --review [--model M] [--limit N] [--workers W]   was nova_directive_review.py: every PAIR of feedback
+                        rules judged by the local model. Verdicts still land in directive_conflict_reviews
+                        (the audit of every check); candidate conflicts now ALSO land in the shared
+                        directive_conflicts ledger (kind='review'), so they get decided like the rest.
+  --review --keyword    was nova_directive_conflicts.py: the free keyword detector (require/forbid
+                        families sharing subject words), same ledger, kind='review'. No model call.
+  --post / --list / --decide ID [NOTE] [--note N] [--by WHO]   was nova_directive_decide.py (wish #58):
+                        put up to 2 open conflicts a day to #nova-chat (thread reply = decision, recorded
+                        by nova_slack_answers), list open rows, close one row. Programmatic entry point:
+                        decide(conflict_id, decision, decided_by, reason) -> bool (only closes an OPEN row).
+  --gaps [--hours H]    was nova_whole_picture.py: what she cannot account for (open conflicts, failed
+                        reviews, actions with no recorded rationale); gaps_lines(cur) is what the Watch Bill
+                        gaps block reads. The HomeKit line stays with nova_home_reachability.
+The logic of the absorbed organs stays in their modules (10-09 pattern); only the entry points moved.
 ponytail: the judge is a small local model with a strict JSON contract; it will miss subtle
 collisions and flag a few false ones. The false ones are cheap (one line in a bundle); the misses
 are the same misses she had before, now with a place to land when a human spots one.
@@ -37,11 +54,12 @@ import argparse, hashlib, json, os, re, sys, urllib.request
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import nova_dsn as _nova_dsn  # noqa: E402
 import psycopg2  # noqa: E402
 import psycopg2.extras  # noqa: E402
 from nova_notify import notify  # noqa: E402
 
-DSN = os.environ.get("NOVA_OPS_DSN", "dbname=nova_ops user=kochj host=pg-primary.digitalnoise.net port=5432")
+DSN = os.environ.get("NOVA_OPS_DSN", _nova_dsn.pg_dsn("nova_ops"))
 OLLAMA_NODES = ["http://192.168.1.5:11434", "http://192.168.1.125:11434", "http://192.168.1.86:11434"]
 MODEL = os.environ.get("NOVA_DIRECTIVE_MODEL", "qwen3:8b")
 IMPERATIVE = re.compile(r"\b(never|always|do not|don't|must|must not|only|refuse|hold|held|no [a-z]+ (content|alerts?)|require[sd]?|forbid|prohibit|allowed|not allowed)\b", re.I)
@@ -137,7 +155,7 @@ def record(cur, kind, c, dry=False):
     body = (f"Rule A ({c.get('source_a')}): {c.get('directive_a')}\nRule B ({c.get('source_b')}): {c.get('directive_b')}\n"
             f"Situation: {c.get('situation')}\nDecision I would take: {c.get('decision_taken') or '-'}\n"
             f"Conservative branch: {c.get('conservative_branch') or '-'}\nWhy: {c.get('why') or '-'}\n"
-            f"I am not resolving this alone. Decide: nova_directive_conflict.py --decide {row[0]} \"<note>\" or tell Nova which rule wins.")
+            f"Nova resolves this in her weekly pass (nova_directive_resolve.py); red-line conflicts go to Claude.")
     notify(title, body, level="warning", category="directive_conflict", source="nova_directive_conflict",
            dedup_key=f"directive-conflict:{sig}", meta={"conflict_id": row[0], "kind": kind, "action_type": c.get("action_type")})
     cur.execute("UPDATE directive_conflicts SET notified_at = now() WHERE id = %s", (row[0],))
@@ -232,25 +250,135 @@ def show(cur):
     for r in cur.fetchall(): print(" | ".join(str(x) for x in r))
 
 
-def decide(cur, cid, note):
-    cur.execute("UPDATE directive_conflicts SET status='decided', decided_by='jordan', decided_at=now(), decision_note=%s WHERE id=%s RETURNING id", (note, cid))
-    print("decided", cur.fetchone())
+# ── 4. deciding (was nova_directive_decide.py; WHO decides is set by the caller) ─────────────────
+def decision_note(decision, reason="") -> str:
+    """Pure: the stored decision_note from a decision ('A' / 'B' / 'both apply' / a sentence) and its reason."""
+    d, r = (decision or "").strip(), (reason or "").strip()
+    return f"{d} — {r}" if d and r else (d or r)
 
 
-def main():
-    ap = argparse.ArgumentParser()
+def decide_row(cur, conflict_id, note, decided_by) -> bool:
+    """Close ONE open row (status 'decided', who, when, note). A row that is not open is left alone."""
+    cur.execute("UPDATE directive_conflicts SET status='decided', decided_by=%s, decided_at=now(), decision_note=%s "
+                "WHERE id=%s AND status='open'", (decided_by, note, int(conflict_id)))
+    return cur.rowcount == 1
+
+
+def decide(conflict_id, decision, decided_by, reason="", cur=None) -> bool:
+    """The decide mechanics as a function: close open conflict `conflict_id` with `decision` (+ `reason`),
+    recorded as decided by `decided_by`. Uses `cur` if given (caller commits), else its own connection."""
+    note = decision_note(decision, reason)
+    if cur is not None:
+        return decide_row(cur, conflict_id, note, decided_by)
+    conn = psycopg2.connect(DSN, connect_timeout=8)
+    try:
+        ok = decide_row(conn.cursor(), conflict_id, note, decided_by)
+        conn.commit()
+        return ok
+    finally:
+        conn.close()
+
+
+# ── 5. review (was nova_directive_review.py + nova_directive_conflicts.py) ────────────────────────
+def run_review(cur, conn, *, model=None, limit=0, workers=4, keyword=False, dry=False) -> int:
+    """Pairwise check of the feedback rules -> candidate conflicts into directive_conflicts (kind 'review').
+    keyword=True: the free keyword detector; else the local model per pair (verdicts also stored in
+    directive_conflict_reviews by nova_directive_review). Returns the number of NEW ledger rows."""
+    cur.execute("SELECT name, content FROM claude_memories WHERE type = 'feedback' ORDER BY name")
+    rules = cur.fetchall()
+    text = {n: " ".join((t or "").split())[:400] for n, t in rules}
+    if keyword:
+        import nova_directive_conflicts as K
+        found = [(a, b, f"keyword family '{fam}': one requires what the other forbids (shared: {', '.join(sh)})")
+                 for fam, a, b, sh in K.candidates(rules)]
+        log(f"review --keyword: {len(found)} candidate(s)")
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+        import nova_directive_review as R
+        model = model or R.DEFAULT_MODEL
+        todo = R.pairs(rules)[:limit] if limit else R.pairs(rules)
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
+            results = list(ex.map(lambda p: R.review(p, model), todo))
+        errors = sum(1 for r in results if r["error"])
+        found = [(r["a"], r["b"], r["reason"]) for r in results if r["conflict"]]
+        log(f"review: {len(results)} pairs with {model}: {len(found)} candidate(s), {errors} error(s)")
+        if not dry:
+            R.store_verdicts(conn, model, results)
+    n = 0
+    for a, b, why in found:
+        n += record(cur, "review", {"directive_a": text.get(a, a), "source_a": f"feedback:{a}",
+                                    "directive_b": text.get(b, b), "source_b": f"feedback:{b}",
+                                    "situation": why, "why": why, "action_type": "standing-rule"}, dry)
+    return n
+
+
+# ── 6. gaps (was nova_whole_picture.py): what she cannot account for ─────────────────────────────
+def gaps_lines(cur, hours: int = 24) -> list:
+    """Short lines for the Watch Bill gaps block. Read-only; never raises (a failed read is skipped)."""
+    out = []
+    qs = [("SELECT count(*), min(ts)::date FROM directive_conflicts WHERE status='open'", (),
+           lambda r: f"{r[0]} directive conflict(s) still open (oldest {r[1]}): my weekly resolver closes them; red lines wait for Claude."
+           if r and r[0] else None),
+          ("SELECT count(*) FROM directive_conflict_reviews WHERE error AND reviewed_at = "
+           "(SELECT max(reviewed_at) FROM directive_conflict_reviews)", (),
+           lambda r: f"{r[0]} rule-pair review(s) failed in the last review: those pairs are unchecked."
+           if r and r[0] else None),
+          ("SELECT count(*), count(*) FILTER (WHERE rationale IS NULL OR btrim(rationale) = '') FROM claude_actions "
+           "WHERE ts > now() - make_interval(hours => %s)", (hours,),
+           lambda r: f"{r[1]} of {r[0]} recorded actions in {hours}h have no rationale: I can't say why they happened."
+           if r and r[1] else None)]
+    for sql, params, fmt in qs:
+        try:
+            cur.execute(sql, params)
+            line = fmt(cur.fetchone())
+            if line:
+                out.append(line)
+        except Exception:  # noqa: BLE001 — a gaps line is never worth breaking the caller
+            try:
+                cur.connection.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+    return out
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="the one directive organ: detect, review, decide, gaps")
     ap.add_argument("--hourly", action="store_true"); ap.add_argument("--latent", action="store_true")
     ap.add_argument("--dry-run", action="store_true"); ap.add_argument("--show", action="store_true")
-    ap.add_argument("--hours", type=int, default=1); ap.add_argument("--decide", nargs=2, metavar=("ID", "NOTE"))
-    a = ap.parse_args()
+    ap.add_argument("--hours", type=int, default=None, help="live window (default 1) / --gaps window (default 24)")
+    ap.add_argument("--decide", nargs="+", metavar="ID [NOTE]", help="close one open conflict")
+    ap.add_argument("--note", help="with --decide: the decision note"); ap.add_argument("--by", default="jordan",
+                    help="with --decide: who decided (default jordan)")
+    ap.add_argument("--reason", default="", help="with --decide: why")
+    ap.add_argument("--post", action="store_true", help="RETIRED 2026-10-15: Nova resolves conflicts herself (nova_directive_resolve.py); kept for manual use only")
+    ap.add_argument("--list", action="store_true", help="open conflicts")
+    ap.add_argument("--review", action="store_true", help="pairwise review of feedback rules (was directive_review)")
+    ap.add_argument("--keyword", action="store_true", help="with --review: keyword detector, no model")
+    ap.add_argument("--model", default=None); ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--gaps", action="store_true", help="what she cannot account for (was whole_picture)")
+    a = ap.parse_args(argv)
+    if a.post or a.list:
+        import nova_directive_decide as D
+        return D.run("post" if a.post else "list", dry=a.dry_run)
     conn = psycopg2.connect(DSN); cur = conn.cursor(); ensure_schema(cur); conn.commit()
     if a.show: show(cur); return
-    if a.decide: decide(cur, int(a.decide[0]), a.decide[1]); conn.commit(); return
+    if a.decide:
+        note = a.note if a.note is not None else " ".join(a.decide[1:])
+        ok = decide(int(a.decide[0]), note, a.by, a.reason, cur=cur); conn.commit()
+        print(f"#{a.decide[0]} {'decided' if ok else 'not open'}"); return
+    if a.gaps:
+        lines = gaps_lines(cur, a.hours or 24)
+        print("\n".join(lines) or "no gaps I can name"); return
+    if a.review:
+        n = run_review(cur, conn, model=a.model, limit=a.limit, workers=a.workers, keyword=a.keyword, dry=a.dry_run)
+        if not a.dry_run: conn.commit()
+        log(f"review done: {n} new conflict(s)"); return
     directives = collect_directives(cur); conn.commit()
     log(f"{len(directives)} active directives")
     n = 0
     if a.latent: n += latent_pass(cur, directives, a.dry_run)
-    if a.hourly or not a.latent: n += live_pass(cur, directives, a.hours, a.dry_run)
+    if a.hourly or not a.latent: n += live_pass(cur, directives, a.hours or 1, a.dry_run)
     if not a.dry_run: conn.commit()
     log(f"done: {n} new conflict(s)")
 

@@ -46,6 +46,10 @@ CLI:   --scheduled      scan, record, and send the month's digest once (monthly 
        --selftest       pure-logic assertions, no DB
 Table: tahiti_check.   Schedule: scheduler.yaml (the Studio holds the journal), monthly.
 Written by Jordan Koch (via Claude).
+
+MERGED 2026-10-15 (consolidation item #12): scheduled as `nova_evidence_check.py --absence --scheduled`, which
+forwards its remaining args to main() here. The logic, flags and table stay in this module, and
+this script stays runnable directly with the same flags.
 """
 from __future__ import annotations
 

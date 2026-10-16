@@ -298,9 +298,10 @@ class TestFunctional(unittest.TestCase):
         (_, p), = cur.stmts("INSERT INTO coagency_proposals")
         self.assertEqual((p[0], p[1], p[3], p[4], p[6]), ("goal", "Draft a status note for RsyncGUI polish", None, True, "pending_human"))
         self.assertTrue(json.loads(p[5])["allowed"])
-        msg = cfg.post_both.call_args[0][0]
-        self.assertIn("1 proposal(s) awaiting your call", msg)
-        self.assertIn("⏳ pending #11", msg)
+        # 2026-10-15: Nova is her own customer — the per-run digest is logged, not posted to Jordan
+        cfg.post_both.assert_not_called()
+        self.assertIn("1 proposal(s) filed for my own decision path", out)
+        self.assertIn("⏳ pending #11", out)
         rs.assert_not_called()
 
     def test_off_mode_stands_down_and_refuses_decisions(self):

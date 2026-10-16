@@ -38,7 +38,10 @@ def test_performance_candidates_on_many_rules_is_bounded():
 # ── Retry ─────────────────────────────────────────────────────────────────────
 def test_retry_loader_uses_shared_retrying_connect():
     # The loader is read-only and runs once per invocation, so the shared helper's retry is the retry path.
-    assert "_nova_dsn.pg_connect(" in (SCRIPTS / "nova_directive_conflicts.py").read_text()
+    # Merged 2026-10-15: the wrapper delegates to nova_directive_conflict.py --review --keyword, whose single
+    # connect fails loudly (the scheduler re-runs it). RETRY GAP: nova_directive_conflict.main
+    src = (SCRIPTS / "nova_directive_conflicts.py").read_text()
+    assert 'DC.main(["--review", "--keyword"]' in src
 
 
 # ── Unit ──────────────────────────────────────────────────────────────────────

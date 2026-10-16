@@ -33,6 +33,7 @@ throws is recorded as ok=False with the exception text as detail.
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -58,6 +59,12 @@ OLLAMA = "http://127.0.0.1:11434"
 EMBED_MODEL = "nomic-embed-text"
 
 MEMORY_REMEMBER_URL = "http://memory-server.digitalnoise.net:18790/remember"
+# Chaos experiment E2 (nova_wargame.py, 2026-10-15) points ONLY the prober at a loopback fault proxy in front of
+# the memory server. Override order: env NOVA_PROBER_MEMORY_URL, then service_config prober/memory_url, then the
+# default. An override is honoured only if it is a loopback http URL ending in /remember (a local proxy); any
+# other value is ignored, so a bad row can never send the probe (or its synthetic memory) somewhere else.
+MEMORY_URL_ENV = "NOVA_PROBER_MEMORY_URL"
+_LOOPBACK_REMEMBER = re.compile(r"^http://(127\.0\.0\.1|localhost):\d{1,5}/remember$")
 
 HTTP_TIMEOUT = 12       # seconds per HTTP probe (short — a hang IS a failure)
 PG_CONNECT_TIMEOUT = 8
@@ -102,6 +109,28 @@ def _mem_conn():
     return psycopg2.connect(MEM_DSN, connect_timeout=PG_CONNECT_TIMEOUT)
 
 
+def memory_remember_url(env=None, config_value=None) -> str:
+    """The /remember URL the memory probe writes to. env > service_config prober/memory_url > default; an
+    override that is not a loopback .../remember URL is ignored. config_value: pass to skip the DB read."""
+    env = os.environ if env is None else env
+    ok = lambda u: bool(u) and bool(_LOOPBACK_REMEMBER.match(str(u).strip()))  # noqa: E731
+    if ok(env.get(MEMORY_URL_ENV)):
+        return env[MEMORY_URL_ENV].strip()
+    cfg = config_value if config_value is not None else _config_memory_url()
+    return str(cfg).strip() if ok(cfg) else MEMORY_REMEMBER_URL
+
+
+def _config_memory_url():
+    """service_config prober/memory_url, or None. Never raises (no row / no DB = no override)."""
+    try:
+        with _ops_conn() as c, c.cursor() as cur:
+            cur.execute("SELECT value #>> '{}' FROM service_config WHERE service = 'prober' AND key = 'memory_url'")
+            r = cur.fetchone()
+            return r[0] if r else None
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Probes  — each returns (ok: bool, detail: str). They must not raise; the
 # runner wraps them, but keeping them clean makes detail messages precise.
@@ -141,7 +170,7 @@ def probe_memory_roundtrip():
     # 1) write via the real API
     payload = json.dumps({"text": text}).encode()
     req = urllib.request.Request(
-        MEMORY_REMEMBER_URL, data=payload,
+        memory_remember_url(), data=payload,
         headers={"Content-Type": "application/json", "User-Agent": "nova-prober/1.0"})
     try:
         with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as r:

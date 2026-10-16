@@ -13,6 +13,18 @@ Monthly drill (non-destructive):
 Alerts via nova_notify on ANY failure/drift. Exit 0 = all good, 1 = problem.
 
 stdlib + psql/pg_restore CLI. Written for Jordan (#644).
+
+Little Mister, 2026-10-15 (#34): this drill failed every month since August in under a second.
+Root cause: the dump directory was fixed at IMPORT time (first a hard-coded
+/Volumes/Data/backups/postgres, emptied when nova_pg_backup.sh started deleting its staging copy
+after the NAS rsync; since 10-03 a _first_existing() that falls back to that same nonexistent
+path when /Volumes/nas is not visible to the launchd scheduler at 04:00), so main() took the
+"no dump" branch — which only notified and never logged, leaving scheduler_runs with a bare
+header line. Now the directory is resolved at RUN time, every candidate tried is logged, a
+missing dir and an empty dir are distinct loud errors (exit 2), and a dump still being written by
+the 02:00 backup (no toc.dat yet) is skipped. Its nova_memories data-only restore check now also
+lives in nova_restore_drill.py (weekly), which supersedes this monthly task.
+Written by Jordan Koch (via Claude).
 """
 import os, random, subprocess, sys
 from datetime import datetime
@@ -21,17 +33,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from nova_notify import notify
 
-def _first_existing(*cands):
-    for c in cands:
-        if Path(c).exists():
-            return Path(c)
-    return Path(cands[0])
-
 # 2026-10-03: .6 no longer keeps a local dump dir or a local Postgres (primary is .2:5434,
 # 127.0.0.1:5432 is the pgbouncer shim which cannot createdb). Use the NAS copy wherever we
 # run, and talk to the primary directly unless the caller set PGHOST/PGPORT.
-LOCAL_DIR = _first_existing("/Volumes/Data/backups/postgres", "/Volumes/nas/backups/postgres", "/mnt/nas/backups/postgres")
-NAS_DIR   = _first_existing("/Volumes/nas/backups/postgres", "/mnt/nas/backups/postgres")
+# 2026-10-15: candidates are resolved at RUN time (resolve_dump_dir), never at import.
+# nova_pg_backup.sh deletes its internal staging after the NAS copy, so the NAS is the only copy.
+DUMP_DIR_CANDIDATES = ("/Volumes/nas/backups/postgres", "/mnt/nas/backups/postgres",
+                       "/Volumes/nas-1/backups/postgres")
+LOCAL_DIR = None           # override hooks (tests / manual runs); None = resolve at run time
+NAS_DIR   = None
 os.environ.setdefault("PGHOST", "pg-primary.digitalnoise.net")
 os.environ.setdefault("PGPORT", "5434")
 DB_USER   = "kochj"
@@ -48,14 +58,51 @@ def sh(args, **kw):
     return subprocess.run(args, capture_output=True, text=True, **kw)
 
 
+def resolve_dump_dir(cands=DUMP_DIR_CANDIDATES):
+    """First candidate that is a readable directory RIGHT NOW, else None. Logs every miss."""
+    for c in cands:
+        p = Path(c)
+        try:
+            if p.is_dir():
+                log(f"dump dir: {p}")
+                return p
+            log(f"dump dir candidate not visible: {p}")
+        except OSError as e:
+            log(f"dump dir candidate unreadable: {p} ({e})")
+    return None
+
+
+def _complete(p):
+    """A directory-format dump is complete once its toc.dat exists (pg_dump writes it last);
+    plain files (legacy) count as complete."""
+    try:
+        return not p.is_dir() or (p / "toc.dat").exists()
+    except OSError:
+        return False
+
+
 def latest_dump(base, db="nova_memories"):
-    dumps = sorted(base.glob(f"{db}_*"), reverse=True) if base.exists() else []
-    return dumps[0] if dumps else None
+    if base is None or not base.exists():
+        return None
+    dumps = sorted(base.glob(f"{db}_*"), reverse=True)
+    for d in dumps:
+        if _complete(d):
+            return d
+        log(f"skipping {d.name}: no toc.dat yet (still being written by the 02:00 backup?)")
+    return None
 
 
-def nova_ops_restore_test():
+def fail_loud(title, body, code=2):
+    """Log to stdout (scheduler_runs.stdout_tail) AND notify — never a silent exit."""
+    log(f"FAIL: {title} — {body}")
+    print(f"[restore-test] FAIL: {title}: {body}", file=sys.stderr, flush=True)
+    notify(title, body=body, level="critical", category="backup", dedup_key="restore-test")
+    sys.exit(code)
+
+
+def nova_ops_restore_test(base=None):
     """Full restore of the latest nova_ops dump to scratch (it's small) + sanity check."""
-    dump = latest_dump(LOCAL_DIR, "nova_ops")
+    dump = latest_dump(base if base is not None else (LOCAL_DIR or resolve_dump_dir()), "nova_ops")
     if not dump:
         PROBLEMS.append("nova_ops (control plane) has NO point-in-time backup"); return None
     scratch = "nova_ops_restoretest"
@@ -127,11 +174,16 @@ def nas_sample_check(local, nas):
 
 def main():
     log("=== backup restore-test drill ===")
-    dump = latest_dump(LOCAL_DIR)
+    local = LOCAL_DIR or resolve_dump_dir()
+    if local is None:
+        fail_loud("Backup restore-test FAILED: dump dir not visible",
+                  "None of " + ", ".join(DUMP_DIR_CANDIDATES) + " is a readable directory on "
+                  f"{os.uname().nodename} (NAS not mounted for this process?).")
+    dump = latest_dump(local)
     if not dump:
-        notify("Backup restore-test FAILED", body="No local nova_memories dump found to restore.",
-               level="critical", category="backup", dedup_key="restore-test"); sys.exit(1)
-    log(f"latest dump: {dump.name}")
+        fail_loud("Backup restore-test FAILED: no nova_memories dump",
+                  f"{local} has no complete nova_memories_* dump (missed backup night?).")
+    log(f"latest dump: {dump}")
 
     live = live_count()
     restored = pg_restore_test(dump)
@@ -143,11 +195,16 @@ def main():
             PROBLEMS.append(f"row-count DRIFT: restored={restored:,} vs live={live:,} (±{int(TOLERANCE*100)}%)")
         log(f"restored memories rows: {restored:,} (live {live:,}) — {'OK' if not PROBLEMS else 'CHECK'}")
 
-    nas_ok, nas_n = nas_sample_check(dump, latest_dump(NAS_DIR))
-    log(f"NAS sample: {nas_ok}/{nas_n} files match")
+    nas = NAS_DIR or local
+    if nas == local:
+        nas_ok = nas_n = 0
+        log("NAS sample: skipped — the NAS dump is the only copy (staging is deleted after rsync)")
+    else:
+        nas_ok, nas_n = nas_sample_check(dump, latest_dump(nas))
+        log(f"NAS sample: {nas_ok}/{nas_n} files match")
 
     # full restore-test of the control-plane DB
-    ops_rows = nova_ops_restore_test()
+    ops_rows = nova_ops_restore_test(local)
     if ops_rows:
         log(f"nova_ops restored OK (claude_memories {ops_rows:,} rows)")
 

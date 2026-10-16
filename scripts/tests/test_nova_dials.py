@@ -140,8 +140,7 @@ class TestFunctional(unittest.TestCase):
         items = cc.gather(ops, mem)
         self.assertEqual([i["kind"] for i in items], ["alert", "articles", "reach"])
         self.assertIn('"New device"', items[0]["text"])
-        msg = cc.compose(items, date(2026, 10, 11))
-        self.assertIn("3. reach-out on rail radio", msg)
+        self.assertIn("reach-out on rail radio", items[2]["text"])   # 2026-10-15: no compose — she asks no one
 
     def test_set_writes_service_config(self):
         p, cur = _pg_rows([])

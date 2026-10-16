@@ -3,7 +3,8 @@
 controller (every room dark) or a network segment (only some rooms dark).
 
 Reads the latest snapshot in telemetry.homekit_outlets. Optionally pings a few known LAN devices to tell a
-powered-but-unreachable device apart from a dead one. Alerts once per room per day via nova_notify.
+powered-but-unreachable device apart from a dead one. Counts each dark room once per day in the
+daily roll-up (nova_noise_rollup, 2026-10-15 #22) — no per-event notification.
 
 Usage: nova_home_reachability.py [--dry-run] [--no-ping]
 Written by Jordan Koch (via Claude).
@@ -78,8 +79,6 @@ def main(argv=None) -> int:
     ap.add_argument("--dry-run", action="store_true", help="print the verdict, do not notify")
     ap.add_argument("--no-ping", action="store_true")
     a = ap.parse_args(argv)
-    import psycopg2
-    import nova_notify
     conn = _nova_dsn.pg_connect()
     try:
         rows = latest_rows(conn)
@@ -90,12 +89,21 @@ def main(argv=None) -> int:
     if not a.no_ping and res["verdict"] != "ok":
         print("ping: " + ping_summary(PING_HOSTS))
     if res["verdict"] in ("controller", "segment") and not a.dry_run:
-        from datetime import date
-        for room in res["dark_rooms"]:
-            nova_notify.notify(
-                f"HomeKit: {room} unreachable", res["text"], level="warn", category="home",
-                source="nova_home_reachability", dedup_key=f"homekit-dark-{room}-{date.today()}")
+        record_dark_rooms(res)
     return 0
+
+
+def record_dark_rooms(res: dict, record=None) -> int:
+    """Little Mister, 2026-10-15 (#22): no per-event notify. One roll-up row per dark room per day
+    (nova_noise_rollup), counting how many runs saw it dark — the metric is kept, the daily digest
+    reports it. Was ~450 events per room per week. Returns rows recorded."""
+    if record is None:
+        from nova_noise_rollup import record
+    n = 0
+    for room in res.get("dark_rooms") or []:
+        n += bool(record("nova_home_reachability", f"homekit-dark-{room}", f"HomeKit: {room} unreachable",
+                         "warning", res.get("text")))
+    return n
 
 
 if __name__ == "__main__":

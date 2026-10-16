@@ -23,6 +23,12 @@ Since 2026-10-08 the post is the "PDB for Little Mister" (nova_watch_bill.compos
 3-6 items graded A1-F6 by CARDINAL, estimative language, what would change my mind, gaps,
 a red-cell dissent line and yesterday's prediction scorecard. --classic gives the old lines.
 
+MERGED 2026-10-15 (consolidation #17): the Night Watch PDB is now a SECTION of the 07:00
+morning brief (nova_morning_brief.get_night_watch -> section() below); the separate 07:02 post is
+retired from the scheduler. The logic stays here because nova_morning_brief and nova_watch_bill
+import it. Running this script by hand still works exactly as before (Slack-only #nova-chat post),
+for a re-run or a missed morning.
+
 Usage: nova_night_watch.py [--dry-run] [--date YYYY-MM-DD] [--classic]
 Written by Jordan Koch (via Claude).
 """
@@ -210,12 +216,33 @@ def compose_pdb(cur, g: dict, start, end) -> str:
         return compose(g, start, end)
 
 
+MERGED_ON = "2026-10-15"
+
+
+def section(day=None, classic: bool = False) -> str:
+    """The Night Watch report as text, never posted: the morning brief's Night Watch section.
+    Same gather/compose path as main(); the privacy gate in gather() still applies."""
+    day = day or datetime.now(W.TZ).date()
+    start, end = night_bounds(day)
+    conn = W.connect()
+    try:
+        cur = conn.cursor()
+        g = gather(cur, start, end)
+        return compose(g, start, end) if classic else compose_pdb(cur, g, start, end)
+    finally:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--date", help="report the night ending 07:00 on this local date")
     ap.add_argument("--classic", action="store_true", help="the pre-PDB 3-5 line report")
     a = ap.parse_args(argv)
+    W.log(TAG, f"merged into the 07:00 morning brief on {MERGED_ON}; standalone run (manual re-run)")
     day = datetime.strptime(a.date, "%Y-%m-%d").date() if a.date else datetime.now(W.TZ).date()
     start, end = night_bounds(day)
     conn = W.connect()
@@ -227,7 +254,7 @@ def main(argv=None) -> int:
         return 0
     import nova_config
     # Slack only (never Discord — it describes the house). Retried; a final failure exits 1.
-    if not W.retry(W.post_slack, msg, nova_config.SLACK_CHAN, tag=TAG):
+    if not W.retry(W.post_slack, msg, nova_config.SLACK_CHAN, source="nova_night_watch", tag=TAG):
         W.log(TAG, "post to #nova-chat FAILED after retries")
         return 1
     W.log(TAG, "posted to #nova-chat")

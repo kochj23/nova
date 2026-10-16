@@ -147,7 +147,8 @@ class TestFunctional(unittest.TestCase):
     def test_decide_cli(self):
         cur = _Cur()
         out = self._main(["--decide", "12", "--note", "both apply", "--by", "jordan"], cur)
-        self.assertEqual(cur.params[0], ("jordan", "both apply", 12))
+        ups = [pr for sq, pr in zip(cur.sql, cur.params) if "SET status='decided'" in sq]
+        self.assertEqual(ups[0], ("jordan", "both apply", 12))       # via the survivor's decide_row
         self.assertIn("#12 decided", out)
 
     def test_post_dry_run_prints_without_slack(self):

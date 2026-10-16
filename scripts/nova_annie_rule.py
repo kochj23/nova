@@ -14,7 +14,9 @@ check(text) -> {"ok", "flags", "evidence"} combines:
   * P6 consent: health/habit nudges only with service_config consent/health_nudges on.
 ok=False -> the caller drops the message (and records why). Deterministic, no I/O.
 Used by nova_reach, nova_notify_jordan, nova_aspirations, nova_slack_answers and the
-Boiler's bleed. Written by Jordan Koch.
+Boiler's bleed. Each check() also writes one guard_decisions row (pass/block + flag labels;
+the text is only hashed) via nova_guard_log — plan item #27, 2026-10-15; never alters the verdict.
+Written by Jordan Koch.
 """
 from __future__ import annotations
 
@@ -40,6 +42,15 @@ _ABSENCE = re.compile(
     r"\b(since|while) you (were|went) (away|gone|silent|quiet)\b|"
     r"\b(didn'?t|never) (hear|get) (back|a reply)\b|\byou never (got back|answered|replied)\b",
     re.I)
+
+
+def _glog(decision, subject=None, **detail):
+    """One guard_decisions row (item #27). Never raises, never blocks, never alters the verdict."""
+    try:
+        import nova_guard_log
+        nova_guard_log.log("annie_rule", decision, subject, detail)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def absence_guilt(text: str):
@@ -75,6 +86,12 @@ def check(text: str, oc=None, consent_check: bool = True) -> dict:
         if not sg.nudge_allowed(oc):
             flags.append("health-nudge-no-consent")
             ev["health-nudge-no-consent"] = (text or "")[:120]
+    try:
+        import nova_guard_log
+        subj = nova_guard_log.subject_hash(text)
+    except Exception:  # noqa: BLE001
+        subj = None
+    _glog("pass" if not flags else "block", subj, flags=flags)
     return {"ok": not flags, "flags": flags, "evidence": ev}
 
 

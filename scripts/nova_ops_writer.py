@@ -121,21 +121,39 @@ def record_run_start(
     consecutive_failures: int,
     run_count: int,
     was_retry: bool,
+    trigger: str = "schedule",   # schedule | catch_up | manual  (#26)
+    sched_host: str = None,      # which scheduler ran it (Studio and nova-core share task ids)
 ):
     async def _write(conn, *a):
-        await conn.execute(
-            """
-            INSERT INTO scheduler_runs
-                (run_id, task_id, task_script, task_group, scheduled_at, started_at,
-                 status, consecutive_failures_at_start, run_count_at_start, was_retry)
-            VALUES ($1,$2,$3,$4,$5,$6,'running',$7,$8,$9)
-            ON CONFLICT (run_id) DO NOTHING
-            """,
-            *a,
-        )
+        try:
+            await conn.execute(
+                """
+                INSERT INTO scheduler_runs
+                    (run_id, task_id, task_script, task_group, scheduled_at, started_at,
+                     status, consecutive_failures_at_start, run_count_at_start, was_retry,
+                     "trigger", sched_host)
+                VALUES ($1,$2,$3,$4,$5,$6,'running',$7,$8,$9,$10,$11)
+                ON CONFLICT (run_id) DO NOTHING
+                """,
+                *a,
+            )
+        except Exception as e:  # noqa: BLE001 — pre-migration-6 table: keep run history flowing
+            if "trigger" not in str(e) and "sched_host" not in str(e):
+                raise
+            await conn.execute(
+                """
+                INSERT INTO scheduler_runs
+                    (run_id, task_id, task_script, task_group, scheduled_at, started_at,
+                     status, consecutive_failures_at_start, run_count_at_start, was_retry)
+                VALUES ($1,$2,$3,$4,$5,$6,'running',$7,$8,$9)
+                ON CONFLICT (run_id) DO NOTHING
+                """,
+                *a[:9],
+            )
     _enqueue(_write, run_id, task_id, task_script, task_group,
              scheduled_at_ms, started_at_ms,
-             consecutive_failures, run_count, was_retry)
+             consecutive_failures, run_count, was_retry,
+             trigger or "schedule", str(sched_host) if sched_host else None)
 
 
 def record_run_end(

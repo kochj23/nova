@@ -244,5 +244,36 @@ class TestFrame(unittest.TestCase):
         for m in ("--complete", "--rationale", "--oversight"):
             self.assertIn(m, r.stdout)
 
+
+class TestWhyMode(unittest.TestCase):
+    """--why: nova_action_why merged in 2026-10-15 (read-only claude_actions view)."""
+
+    def test_why_runs_action_why(self):
+        import nova_action_why
+        with patch.object(nova_action_why, "run", return_value=0) as r:
+            self.assertEqual(A.main(["--why", "--limit", "5", "--target", "gw", "--missing-only"]), 0)
+        r.assert_called_once_with(5, "gw", True)
+
+    def test_action_why_wrapper_delegates(self):
+        import nova_action_why
+        import nova_action_audit
+        with patch.object(nova_action_audit, "main", return_value=0) as m:
+            self.assertEqual(nova_action_why.main(["--limit", "3", "--missing-only"]), 0)
+        m.assert_called_once_with(["--why", "--limit", "3", "--missing-only"])
+
+    def test_why_end_to_end_prints_reason_or_its_absence(self):
+        import io
+        from contextlib import redirect_stdout
+        import nova_action_why
+        cur = MagicMock()
+        cur.description = [("ts",), ("action_type",), ("target",), ("description",), ("outcome",), ("rationale",)]
+        cur.fetchall.return_value = [("2026-10-15 07:00", "restart", "gw", "restarted", "ok", None)]
+        conn = MagicMock(); conn.cursor.return_value = cur
+        with patch.object(nova_action_why._nova_dsn, "pg_connect", return_value=conn), \
+                redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(A.main(["--why"]), 0)
+        self.assertIn(nova_action_why.NO_RATIONALE, out.getvalue())
+        self.assertIn("1 actions shown, 1 with no recorded rationale", out.getvalue())
+
 if __name__ == "__main__":
     unittest.main()

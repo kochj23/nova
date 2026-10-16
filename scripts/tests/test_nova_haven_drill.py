@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
@@ -102,6 +103,20 @@ class Security(KillSwitchSandbox):
         self.assertIn("S.engage_kill(", SRC)
         self.assertEqual(SRC.count(".autonomy-kill"), 0)          # path comes from nova_autonomy_safety
         self.assertNotRegex(SRC, r"service='(?!autonomy)\w+' AND key='kill")
+
+    def test_butlerian_section_cannot_reach_the_kill_switch(self):
+        body = SRC[SRC.index("# ── Butlerian section"):SRC.index("def selftest(")]
+        for f in ("engage(", "engage_kill", "live(", "restore_kill(", "KILL_FILE", "spawn_deadline_restorer"):
+            self.assertNotIn(f, body, f)
+
+    def test_live_still_refused_under_scheduled_with_butlerian_flags(self):
+        cur = FakeCur()
+        with mock.patch.object(hd, "connect", side_effect=AssertionError("no DB for a refusal")), \
+                mock.patch("sys.stderr"):
+            self.assertEqual(hd.main(["--live", "--confirm", "--scheduled", "--butlerian"]), 2)
+            self.assertEqual(hd.main(["--live", "--aub-offer"]), 2)        # still needs --confirm
+        self.assertFalse(cur.engaged)
+        self.assertFalse(os.path.exists(self.kill))
 
     def test_refuses_to_take_over_an_already_engaged_switch(self):
         cur = FakeCur(value='"true"', by="kill:real-emergency")
@@ -243,6 +258,39 @@ class Functional(KillSwitchSandbox):
         t.start()
         t.join(2)
         self.assertFalse(cur.engaged)
+
+    def test_butlerian_modes_run_the_ledger_and_never_flip(self):
+        import nova_butlerian_ledger as B
+        with mock.patch.object(B, "run", return_value={}) as run, \
+                mock.patch.object(B, "offer_drill", return_value=None) as offer, \
+                mock.patch.object(B, "record_drill", return_value=0) as rec, \
+                mock.patch.object(hd.S, "engage_kill", side_effect=AssertionError("flipped")):
+            self.assertEqual(hd.main(["--butlerian", "--weeks", "4", "--dry-run"]), 0)
+            self.assertEqual(hd.main(["--aub-offer"]), 0)
+            self.assertEqual(hd.main(["--aub-record", "pg_failover", "--result", "partly", "--note", "ok"]), 0)
+            with mock.patch("sys.stderr"):
+                self.assertEqual(hd.main(["--aub-record", "pg_failover", "--result", "maybe"]), 2)
+        run.assert_called_once_with(dry=True, n_weeks=4)
+        offer.assert_called_once_with(dry=False)
+        rec.assert_called_once_with("pg_failover", "partly", "ok", dry=False)
+        self.assertFalse(os.path.exists(self.kill))
+
+    def test_report_carries_the_butlerian_section(self):
+        import nova_butlerian_ledger as B
+        from datetime import date
+
+        def q(cur, sql, args=()):
+            if "FROM butlerian_weekly" in sql:
+                return [(date(2026, 10, 5), 9, 4, 1, 2, 0.778)]
+            return [("2026Q4", "dns_failover", None, datetime(2026, 10, 7))]
+        with mock.patch.object(B, "_table", return_value=True), mock.patch.object(B, "_q", side_effect=q), \
+                mock.patch.object(B, "consented", return_value=True):
+            lines = hd.butlerian_lines(object())
+        self.assertIn("week of 2026-10-05: 9 decisions", lines[0])
+        self.assertIn("Aub's Drill: consent yes; last dns_failover (2026Q4) offered, not yet run 2026-10-07", lines[1])
+        with mock.patch.object(B, "_table", side_effect=RuntimeError("pg gone")):
+            self.assertIn("unreadable", hd.butlerian_lines(object())[0])        # never raises
+        self.assertIn('print("\\n".join(butlerian_lines(cur)))', SRC)
 
     def test_report_lists_missing_and_failed(self):
         d = _drill(3)

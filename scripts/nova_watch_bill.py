@@ -15,6 +15,11 @@ three times a day (06:30, 18:00, 23:00). Each turnover is written to watch_turno
   expected   open predictions resolving in the next 12h (calibrated, in estimative words), Derry
              Clock cycles in the next day
   surprise   what would surprise me: baselines that, if broken, mean something changed
+  instruments  (2026-10-15, consolidation item #24) one compact line from each of her own organs
+             whose tables were rich but unread: CARDINAL grades, Pendulum, Federal Hill lights, Derry
+             Clock, Jade Amulet, embodiment, affect, time sense. Read-only; a missing table is skipped
+             quietly; nothing here enters the PDB. Reading them here also makes those tables "read" for
+             the mark-to-market unread_tables check.
 
 PDB (compose_pdb, used by nova_night_watch at 07:02): BLUF first; 3-6 items graded A1-F6 by
 CARDINAL, ordered by importance — the most important item leads even when it is unpleasant;
@@ -158,6 +163,130 @@ def surprises(cur, ledger: dict) -> list:
     return out
 
 
+# ── instruments: her own organs' rich-but-unread tables, one line each (item #24) ──
+
+def _exists(cur, table: str) -> bool:
+    r = _q(cur, "SELECT to_regclass(%s) IS NOT NULL", (table,))
+    return bool(r and r[0][0])
+
+
+def _ago(ts) -> str:
+    try:
+        m = max(0, int((W.now_utc() - ts).total_seconds() // 60))
+    except Exception:  # noqa: BLE001
+        return "?"
+    return f"{m} min ago" if m < 120 else (f"{m // 60} h ago" if m < 2880 else f"{m // 1440} d ago")
+
+
+def _f(v, nd=2) -> str:
+    try:
+        return f"{float(v):.{nd}f}"
+    except (TypeError, ValueError):
+        return "?"
+
+
+def inst_cardinal(cur):
+    grades = _q(cur, "SELECT reliability, count(*) FROM (SELECT DISTINCT ON (source_id) source_id, reliability "
+                     "FROM source_ledger_history ORDER BY source_id, scored_at DESC) x GROUP BY 1 ORDER BY 1")
+    if not grades:
+        return None
+    ch = _q(cur, "SELECT count(*) FROM (SELECT reliability, scored_at, lag(reliability) OVER "
+                 "(PARTITION BY source_id ORDER BY scored_at) AS p FROM source_ledger_history "
+                 "WHERE scored_at > now() - interval '8 days') x "
+                 "WHERE p IS NOT NULL AND p <> reliability AND scored_at > now() - interval '24 hours'")
+    n = sum(c for _, c in grades)
+    return (f"CARDINAL: {n} sources graded — " + " ".join(f"{g}{c}" for g, c in grades)
+            + f"; {ch[0][0] if ch else 0} grade change(s) in 24 h")
+
+
+def inst_pendulum(cur):
+    rows = _q(cur, "SELECT blade, kind, days, accelerating, inside_lead FROM pendulum_blades "
+                   "WHERE ts = (SELECT max(ts) FROM pendulum_blades) ORDER BY days NULLS LAST")
+    if not rows:
+        return None
+    b, k, d, _, lead = rows[0]
+    return (f"Pendulum: {len(rows)} blades; nearest {b} ({k}) {_f(d, 1)} d"
+            + (" — inside lead" if lead else "")
+            + f"; {sum(1 for r in rows if r[4])} inside lead, {sum(1 for r in rows if r[3])} accelerating")
+
+
+def inst_federal_hill(cur):
+    rows = _q(cur, "SELECT DISTINCT ON (containment) containment, status FROM federal_hill_lights "
+                   "ORDER BY containment, ts DESC")
+    if not rows:
+        return None
+    by = {}
+    for c, st in rows:
+        by.setdefault(st, []).append(c)
+    bad = by.get("breached", []) + by.get("unavailable", [])
+    return (f"Federal Hill lights: {len(by.get('held', []))} held, {len(by.get('breached', []))} breached, "
+            f"{len(by.get('unavailable', []))} unavailable" + (f" ({', '.join(sorted(bad)[:3])})" if bad else ""))
+
+
+def inst_derry(cur):
+    rows = _q(cur, "SELECT year, month, metric, value FROM derry_monthly WHERE (year, month) = "
+                   "(SELECT year, month FROM derry_monthly ORDER BY year DESC, month DESC LIMIT 1) "
+                   "ORDER BY value DESC NULLS LAST LIMIT 3")
+    if not rows:
+        return None
+    y, m = rows[0][0], rows[0][1]
+    return f"Derry Clock {y}-{int(m):02d}: " + ", ".join(f"{r[2]} {_f(r[3], 0)}" for r in rows)
+
+
+def inst_jade(cur):
+    rows = _q(cur, "SELECT host, count(*), max(ts) FROM jade_amulet_manifest m "
+                   "WHERE ts = (SELECT max(ts) FROM jade_amulet_manifest WHERE host = m.host) GROUP BY host")
+    if not rows:
+        return None
+    return (f"Jade Amulet: {sum(r[1] for r in rows)} items pinned on {len(rows)} host(s), "
+            f"latest snapshot {_ago(max(r[2] for r in rows))}")
+
+
+def inst_embodiment(cur):
+    rows = _q(cur, "SELECT computed_at, house_state, rhythm_deviation FROM embodiment_state "
+                   "ORDER BY computed_at DESC LIMIT 1")
+    if not rows:
+        return None
+    ts, st, dev = rows[0]
+    return f"Embodiment: house {st}, rhythm deviation {_f(dev)} ({_ago(ts)})"
+
+
+def inst_affect(cur):
+    rows = _q(cur, "SELECT computed_at, label, valence, arousal FROM affect_state ORDER BY computed_at DESC LIMIT 1")
+    if not rows:
+        return None
+    ts, label, v, a = rows[0]
+    return f"Affect: {label} (valence {_f(v)}, arousal {_f(a)}, {_ago(ts)})"
+
+
+def inst_time_sense(cur):
+    rows = _q(cur, "SELECT ts, tempo, stretch_h FROM time_sense ORDER BY ts DESC LIMIT 1")
+    if not rows:
+        return None
+    ts, tempo, h = rows[0]
+    return f"Time sense: tempo {tempo} for {h} h ({_ago(ts)})"
+
+
+INSTRUMENTS = (("source_ledger_history", inst_cardinal), ("pendulum_blades", inst_pendulum),
+               ("federal_hill_lights", inst_federal_hill), ("derry_monthly", inst_derry),
+               ("jade_amulet_manifest", inst_jade), ("embodiment_state", inst_embodiment),
+               ("affect_state", inst_affect), ("time_sense", inst_time_sense))
+
+
+def instruments(cur) -> list:
+    """One compact line per own organ; a missing table or a failed read is skipped quietly."""
+    out = []
+    for table, fn in INSTRUMENTS:
+        try:
+            if _exists(cur, table):
+                line = fn(cur)
+                if line:
+                    out.append(line)
+        except Exception as e:  # noqa: BLE001 — one organ never sinks the turnover
+            W.log(TAG, f"instrument {table} skipped: {str(e).splitlines()[0] if str(e) else type(e).__name__}")
+    return out
+
+
 def turnover(cur, watch: str) -> dict:
     import nova_cardinal as C
     try:
@@ -171,7 +300,7 @@ def turnover(cur, watch: str) -> dict:
     return {"watch": watch, "at": W.now_utc().isoformat(), "since": since.isoformat(),
             "degraded": degraded(cur, ledger, nova), "open_loops": open_loops(cur, since),
             "standing": standing(cur), "expected": expected(cur), "surprise": surprises(cur, ledger),
-            "nova": nova}
+            "instruments": instruments(cur), "nova": nova}
 
 
 def render_turnover(t: dict) -> str:
@@ -181,7 +310,8 @@ def render_turnover(t: dict) -> str:
         at = str(t.get("at"))[:16]
     lines = [f"WATCH TURNOVER {t['watch']} ({at})"]
     for key, title in (("degraded", "Degraded"), ("open_loops", "Open loops"), ("standing", "Standing orders"),
-                       ("expected", "Expected"), ("surprise", "Would surprise me")):
+                       ("expected", "Expected"), ("surprise", "Would surprise me"),
+                       ("instruments", "Own instruments")):
         items = t.get(key) or []
         lines.append(f"{title}: " + ("none" if not items else ""))
         lines += [f"  - {i}" for i in items]
@@ -369,6 +499,11 @@ def gaps(cur, t: dict | None, ledger: dict, g: dict | None) -> list:
             pass
         if not g.get("by_class"):
             out.append("no exterior camera detections at all overnight — quiet, or a silent pipeline.")
+    try:  # whole_picture folded here 2026-10-15 (consolidation #10): open directive conflicts, unexplained actions
+        import nova_directive_conflict as _DC
+        out += _DC.gaps_lines(cur)
+    except Exception:  # noqa: BLE001 — a gaps line never breaks the turnover
+        pass
     return out[:5]
 
 

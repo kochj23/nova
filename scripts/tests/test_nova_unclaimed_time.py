@@ -122,7 +122,7 @@ class TestSecurity(unittest.TestCase):
 
     def test_writes_are_her_own_tables_only(self):
         writes = set(re.findall(r"\b(?:INSERT INTO|(?<!DO )UPDATE|DELETE FROM)\s+([\w.]+)", SRC))
-        self.assertEqual(writes, {"pursuit_threads", "preoccupations"})
+        self.assertEqual(writes, {"pursuit_threads", "preoccupations", "unclaimed_wakes"})
 
     def test_private_outputs_are_marked_private(self):
         for tag in ('"privacy": "private"', '"audience": "none"', "private_notebook"):
@@ -322,14 +322,50 @@ class TestFunctional(unittest.TestCase):
         pg.assert_not_called()
         self.assertEqual(len(calls), 1)
 
-    def test_quiet_wake_is_a_first_class_outcome(self):
-        urlopen, calls = _net(chat="", sched_fail=True, chat_fail=99)      # nodes down -> canned quiet line
-        rc, out, _ = self._main(_Cur(), _Cur(), urlopen, rolls=[0.99, 0.0])
+    def test_quiet_wake_is_a_real_look_then_pass(self):
+        oc = _Cur([("FROM preoccupations", [(5, "horology", "craft", "summary")])])
+        mc = _Cur()
+        mc.routes = [("interval '30 hours'", ("a long seed about a train timetable " * 8, "television"))]
+        low = json.dumps({"preoccupation": {"pull": 2, "why": "circled it twice this week"},
+                          "thread": {"pull": 1, "why": "rerun"}})
+        urlopen, calls = _net(chat=low, sched_fail=True)
+        rc, out, _ = self._main(oc, mc, urlopen, rolls=[0.99] + [0.5] * 10)
         self.assertEqual(rc, 0)
-        self.assertIn("quiet wake", out)
+        self.assertIn("passed: nothing worth chasing (looked at 2 candidate(s))", out)
         mem = [b for u, b in calls if u.endswith("/remember")][0]
-        self.assertTrue(mem["text"].startswith("[Unclaimed — quiet] "))
-        self.assertEqual(mem["metadata"]["type"], "quiet")
+        self.assertTrue(mem["text"].startswith("[Unclaimed — quiet] passed: nothing worth chasing. Looked at: "))
+        self.assertIn("preoccupation 'horology' (pull 2: circled it twice this week)", mem["text"])
+        self.assertEqual((mem["metadata"]["type"], mem["metadata"]["outcome"]), ("quiet", "passed"))
+        self.assertEqual([x["mode"] for x in mem["metadata"]["looked_at"]], ["preoccupation", "thread"])
+        self.assertFalse(any(s.startswith("UPDATE preoccupations") for s in oc.sql))
+        wake = [p for s, p in zip(oc.sql, oc.params) if "INSERT INTO unclaimed_wakes" in s][0]
+        self.assertEqual(wake[1], "passed")
+        self.assertGreaterEqual(float(wake[3]), 0.0)
+        self.assertEqual(len(json.loads(wake[4])), 2)
+
+    def test_canned_quiet_lines_and_dice_roll_are_gone(self):
+        self.assertNotIn("QUIET_WAKE_LINES", SRC)
+        self.assertNotIn("QUIET_P", SRC)
+        self.assertNotIn("I looked at the day's residue", SRC)
+
+    def test_failed_look_never_claims_a_pass(self):
+        oc = _Cur([("FROM preoccupations", [(5, "horology", "craft", "summary")])])
+        urlopen, calls = _net(chat="", sched_fail=True, chat_fail=99)
+        rc, out, _ = self._main(oc, _Cur(), urlopen, rolls=[0.99] + [0.5] * 10)
+        self.assertNotIn("passed", out)
+        self.assertFalse(any("passed" in (b or {}).get("text", "") for u, b in calls if u.endswith("/remember")))
+
+    def test_low_pull_candidates_are_not_chased(self):
+        looked = [{"mode": "preoccupation", "candidate": "h", "pull": 7, "why": ""},
+                  {"mode": "tangent", "candidate": "t", "pull": 1, "why": ""}]
+        cands = {"preoccupation": {"mode": "preoccupation", "pid": 5, "topic": "h", "kind": "k", "summary": ""},
+                 "tangent": {"mode": "tangent", "seed": "s", "src": "x"}}
+        with mock.patch.object(ut, "_gather_candidates", return_value=cands), \
+             mock.patch.object(ut, "look_at", return_value=looked), \
+             mock.patch.object(ut, "pick_pursuit", return_value=None) as pick, \
+             mock.patch("random.random", return_value=0.99), redirect_stdout(io.StringIO()):
+            ut._wake(_Cur(), _Cur())
+        self.assertEqual(list(pick.call_args.kwargs["cands"]), ["preoccupation"])
 
     def test_error_path_llm_down_records_nothing(self):
         oc = _Cur([("FROM preoccupations", [(5, "horology", "craft", "summary")])])
@@ -339,6 +375,45 @@ class TestFunctional(unittest.TestCase):
         self.assertIn("LLM returned nothing", out)
         self.assertFalse(any(u.endswith("/remember") for u, _ in calls))
         self.assertFalse(any(s.startswith("UPDATE") for s in oc.sql))
+
+
+class TestLookThenPass(unittest.TestCase):
+    def test_nothing_worth_chasing_and_pass_text(self):
+        lk = [{"mode": "thread", "candidate": "a seed", "pull": 3, "why": "stale"}]
+        self.assertTrue(ut.nothing_worth_chasing(lk, threshold=4))
+        self.assertFalse(ut.nothing_worth_chasing(lk, threshold=3))
+        self.assertFalse(ut.nothing_worth_chasing([]))
+        self.assertEqual(ut.pass_text(lk), "passed: nothing worth chasing. Looked at: thread 'a seed' (pull 3: stale).")
+
+    def test_look_at_scores_and_clamps(self):
+        cands = {"thread": {"mode": "thread", "seed": "x", "src": "tv"},
+                 "preoccupation": {"mode": "preoccupation", "topic": "horology"}}
+        raw = '{"thread": {"pull": 14, "why": "loud"}, "preoccupation": {"pull": -2, "why": "dull"}}'
+        with mock.patch.object(ut, "llm", return_value=raw):
+            out = ut.look_at(cands)
+        self.assertEqual({x["mode"]: x["pull"] for x in out}, {"thread": 10.0, "preoccupation": 0.0})
+
+    def test_look_at_junk_or_missing_score_is_none(self):
+        with mock.patch.object(ut, "llm", return_value="not json"):
+            self.assertIsNone(ut.look_at({"thread": {"mode": "thread", "seed": "x"}}))
+        with mock.patch.object(ut, "llm", return_value='{"other": {"pull": 3}}'):
+            self.assertIsNone(ut.look_at({"thread": {"mode": "thread", "seed": "x"}}))
+        self.assertEqual(ut.look_at({}), [])
+
+    def test_record_wake_measures_minutes_and_is_tolerant(self):
+        cur = _Cur()
+        ut.record_wake(cur, 100.0, 190.0, {"outcome": "pursued", "mode": "thread", "looked_at": None})
+        ins = [p for s, p in zip(cur.sql, cur.params) if "INSERT INTO unclaimed_wakes" in s][0]
+        self.assertEqual(ins[1:4], ("pursued", "thread", 1.5))
+        self.assertIsNone(ins[4])
+        bad = _Cur([("unclaimed_wakes", RuntimeError("pg down"))])
+        with redirect_stdout(io.StringIO()) as out:
+            ut.record_wake(bad, 0, 1, {"outcome": "x"})
+        self.assertIn("attention not recorded", out.getvalue())
+
+    def test_docstring_no_longer_claims_12h_as_attention(self):
+        self.assertIn("territory she is GIVEN", SRC)
+        self.assertIn("attention_minutes", SRC)
 
 
 class TestFrame(unittest.TestCase):

@@ -84,6 +84,8 @@ class TestRetry(unittest.TestCase):
 
     def test_promote_aborts_if_promotion_command_fails(self):
         with mock.patch.object(fo, "check_primary_alive", return_value=(False, False)), \
+             mock.patch.object(fo, "load_failover_cfg", return_value={}), \
+             mock.patch.object(fo, "run_gates", return_value=(True, [("witness", True, "ok")])), \
              mock.patch.object(fo, "ssh", return_value=(1, "", "err")) as ssh, mock.patch.object(fo, "log"):
             rc = fo.cmd_promote(_args(confirm=True))
         self.assertEqual(rc, 1)
@@ -172,6 +174,8 @@ class TestFunctional(unittest.TestCase):
             marker = Path(td) / "state" / "fence.json"
             ini = Path(td) / "pgbouncer.ini"; ini.write_text("[databases]\nnova_ops = host=192.168.1.2 port=5434\n")
             with mock.patch.object(fo, "check_primary_alive", return_value=(False, False)), \
+                 mock.patch.object(fo, "load_failover_cfg", return_value={}), \
+                 mock.patch.object(fo, "run_gates", return_value=(True, [("lsn", True, "past checkpoint")])), \
                  mock.patch.object(fo, "ssh", side_effect=ssh), \
                  mock.patch.object(fo, "FENCE_MARKER", marker), \
                  mock.patch.object(fo, "PGBOUNCER_INI", str(ini)), \
@@ -181,6 +185,7 @@ class TestFunctional(unittest.TestCase):
                 rc = fo.cmd_promote(_args(confirm=True))
             self.assertEqual(rc, 0)
             self.assertTrue(marker.exists())
+            self.assertIn("Gates: lsn: past checkpoint", marker.read_text())
             self.assertIn("host=192.168.1.10 port=5432", ini.read_text())
             self.assertNotIn("192.168.1.2", ini.read_text())
         fo.nova_config.post_both.assert_called_once()
@@ -206,6 +211,213 @@ class TestFrame(unittest.TestCase):
 
     def test_import_never_runs_main(self):
         self.assertIn('if __name__ == "__main__":', SRC)
+
+
+# ── #43 hard gates ──────────────────────────────────────────────────────────
+
+WITNESS_CFG = {"witness": {"name": "w", "host": "witness.example", "pg_ports": [5432, 5434],
+                           "power_independent": True}}
+
+
+class FakeSSH:
+    """Scripted ssh: list of (substring, (rc, out, err)); first match wins. Records every call."""
+
+    def __init__(self, rules, default=(0, "", "")):
+        self.rules, self.default, self.calls = rules, default, []
+
+    def __call__(self, host, cmd, timeout=15):
+        self.calls.append((host, cmd))
+        for sub, res in self.rules:
+            if sub in cmd or sub == host:
+                return res
+        return self.default
+
+
+class TestGateWitness(unittest.TestCase):
+    def test_no_witness_configured_refuses(self):
+        ok, d = fo.witness_gate({})
+        self.assertFalse(ok); self.assertIn("no witness", d)
+
+    def test_unreachable_witness_refuses(self):
+        f = FakeSSH([("true", (255, "", "timeout"))])
+        with mock.patch.object(fo, "ssh", f):
+            ok, d = fo.witness_gate(WITNESS_CFG)
+        self.assertFalse(ok); self.assertIn("unreachable", d)
+        self.assertEqual(len(f.calls), 1)
+
+    def test_witness_still_reaching_primary_is_a_partition(self):
+        f = FakeSSH([("/dev/tcp/", (0, "open", "")), ("true", (0, "", ""))])
+        with mock.patch.object(fo, "ssh", f):
+            ok, d = fo.witness_gate(WITNESS_CFG)
+        self.assertFalse(ok); self.assertIn("partition", d)
+
+    def test_witness_agrees_primary_down(self):
+        f = FakeSSH([("/dev/tcp/", (0, "closed", "")), ("true", (0, "", ""))])
+        with mock.patch.object(fo, "ssh", f):
+            ok, d = fo.witness_gate(WITNESS_CFG)
+        self.assertTrue(ok, d)
+        self.assertEqual({c[0] for c in f.calls}, {"witness.example"})   # probes run FROM the witness
+
+    def test_unverified_power_independence_refuses(self):
+        cfg = {"witness": {**WITNESS_CFG["witness"], "power_independent": False}}
+        f = FakeSSH([("/dev/tcp/", (0, "closed", "")), ("true", (0, "", ""))])
+        with mock.patch.object(fo, "ssh", f):
+            ok, d = fo.witness_gate(cfg)
+        self.assertFalse(ok); self.assertIn("power independence", d)
+
+    def test_hostile_host_value_never_reaches_a_shell(self):
+        cfg = {"witness": {**WITNESS_CFG["witness"], "host": "w; rm -rf /"}}
+        with mock.patch.object(fo, "ssh") as ssh:
+            ok, d = fo.witness_gate(cfg)
+        self.assertFalse(ok); ssh.assert_not_called()
+
+
+class TestGateFence(unittest.TestCase):
+    def test_ssh_stop_verified_passes_without_plug(self):
+        f = FakeSSH([("systemctl stop", (0, "", "")), ("is-active", (0, "", ""))])
+        with mock.patch.object(fo, "ssh", f):
+            ok, d, method = fo.fence_gate({})
+        self.assertTrue(ok, d); self.assertEqual(method, "ssh")
+
+    def test_unverified_stop_and_no_plug_refuses(self):
+        f = FakeSSH([("systemctl stop", (255, "", "no route")), ("is-active", (255, "", ""))])
+        with mock.patch.object(fo, "ssh", f):
+            ok, d, method = fo.fence_gate({})
+        self.assertFalse(ok); self.assertIn("NOT fenced", d); self.assertEqual(method, "none")
+
+    def test_plug_used_only_when_ssh_fails_and_through_power_cut(self):
+        power = mock.MagicMock(return_value=(True, "plug switch.pg state=off"))
+        f = FakeSSH([("systemctl stop", (255, "", "")), ("is-active", (255, "", ""))])
+        with mock.patch.object(fo, "ssh", f):
+            ok, d, method = fo.fence_gate({"fence": {"plug_entity": "switch.pg"}}, confirmation_id=7, _power=power)
+        self.assertTrue(ok); self.assertEqual(method, "plug")
+        power.assert_called_once_with("switch.pg", 7)
+        power.reset_mock()
+        f = FakeSSH([("systemctl stop", (0, "", "")), ("is-active", (0, "", ""))])
+        with mock.patch.object(fo, "ssh", f):
+            fo.fence_gate({"fence": {"plug_entity": "switch.pg"}}, _power=power)
+        power.assert_not_called()                                         # ssh worked: no power cut
+
+    def test_refused_plug_with_failed_ssh_refuses(self):
+        power = mock.MagicMock(return_value=(False, "physical_guard refused: x"))
+        f = FakeSSH([("is-active", (1, "", ""))], default=(255, "", ""))
+        with mock.patch.object(fo, "ssh", f):
+            ok, d, _ = fo.fence_gate({"fence": {"plug_entity": "switch.pg"}}, _power=power)
+        self.assertFalse(ok); self.assertIn("physical_guard refused", d)
+
+    def test_dry_run_never_stops_anything(self):
+        f = FakeSSH([])
+        with mock.patch.object(fo, "ssh", f):
+            ok, d, method = fo.fence_gate({}, dry_run=True)
+        self.assertEqual(method, "plan"); self.assertIn("WOULD run", d)
+        self.assertFalse(any("systemctl stop" in c[1] for c in f.calls))
+
+    def test_power_cut_goes_through_proteus(self):
+        G = types.SimpleNamespace(kill_engaged=lambda: False, report_block=mock.MagicMock(),
+                                  physical_guard=mock.MagicMock(return_value=(False, "needs Jordan")))
+        plug = mock.MagicMock()
+        ok, d = fo._power_cut("switch.pg", None, _guards=G, _plug_off=plug)
+        self.assertFalse(ok); plug.assert_not_called()                    # guard said no => no actuation
+        G.report_block.assert_called_once()
+        self.assertEqual(G.physical_guard.call_args[1]["entity_ids"], ["switch.pg"])
+        G.physical_guard.return_value = (True, "ok")
+        plug.return_value = (True, "off")
+        self.assertEqual(fo._power_cut("switch.pg", 3, _guards=G, _plug_off=plug), (True, "off"))
+        G.kill_engaged = lambda: True
+        plug.reset_mock()
+        ok, d = fo._power_cut("switch.pg", 3, _guards=G, _plug_off=plug)
+        self.assertFalse(ok); self.assertIn("kill switch", d); plug.assert_not_called()
+
+
+class TestGateLSN(unittest.TestCase):
+    def test_lsn_int(self):
+        self.assertEqual(fo.lsn_int("0/10"), 16)
+        self.assertEqual(fo.lsn_int("1/0"), 1 << 32)
+        self.assertIsNone(fo.lsn_int("garbage")); self.assertIsNone(fo.lsn_int(None))
+
+    def test_strictly_past_checkpoint_required(self):
+        self.assertTrue(fo.evaluate_lsn("307/7D01AA51", "307/7D01AA50", "checkpoint", 0)[0])
+        ok, d = fo.evaluate_lsn("307/7D01AA50", "307/7D01AA50", "checkpoint", 1 << 30)
+        self.assertFalse(ok); self.assertIn("fork the timeline", d)       # equal is NOT enough
+        self.assertTrue(fo.evaluate_lsn("307/0", "307/7D01AA50", "checkpoint", 0, accept_loss=True)[0])
+
+    def test_unknown_window_needs_accept_loss(self):
+        self.assertFalse(fo.evaluate_lsn("1/0", None, None, 0)[0])
+        self.assertTrue(fo.evaluate_lsn("1/0", None, None, 0, accept_loss=True)[0])
+        self.assertFalse(fo.evaluate_lsn(None, "1/0", "checkpoint", 0)[0])
+
+    def test_peer_ahead_refuses(self):
+        ok, d = fo.evaluate_lsn("1/0", "0/10", "checkpoint", 1024, peer_best=("core7", (1 << 32) + 4096))
+        self.assertFalse(ok); self.assertIn("promote core7 instead", d)
+        self.assertTrue(fo.evaluate_lsn("1/0", "0/10", "checkpoint", 8192, peer_best=("core7", (1 << 32) + 4096))[0])
+
+    def test_lsn_gate_reads_controldata_and_waits_for_record_end(self):
+        seq = iter(["1/0|1/0", "1/0|1/0", "1/100|1/0"])
+        f = FakeSSH([("pg_controldata", (0, "Latest checkpoint location:           1/80\n", ""))])
+        sleeps = []
+        with mock.patch.object(fo, "ssh", f), \
+                mock.patch.object(fo, "node_sql", side_effect=lambda h, q, **k: (True, next(seq))):
+            ok, d = fo.lsn_gate({"lsn": {"controldata_cmd": "pg_controldata -D x"}}, fenced_by_ssh=True,
+                                _sleep=sleeps.append)
+        self.assertTrue(ok, d); self.assertEqual(sleeps, [5, 5])
+
+    def test_lsn_gate_without_ssh_fence_has_unknown_window(self):
+        with mock.patch.object(fo, "node_sql", return_value=(True, "1/0|1/0")), mock.patch.object(fo, "ssh") as ssh:
+            ok, d = fo.lsn_gate({"lsn": {"controldata_cmd": "pg_controldata"}}, fenced_by_ssh=False, _sleep=lambda s: None)
+        self.assertFalse(ok); self.assertIn("unknown", d); ssh.assert_not_called()
+
+
+class TestGateOrchestration(unittest.TestCase):
+    def test_live_order_stops_before_destructive_fence(self):
+        args = _args(accept_loss=False, plug_confirmation=None)
+        with mock.patch.object(fo, "witness_gate", return_value=(False, "partition")), \
+                mock.patch.object(fo, "fence_gate") as fence, mock.patch.object(fo, "lsn_gate") as lsn:
+            ok, res = fo.run_gates(args, {})
+        self.assertFalse(ok); fence.assert_not_called(); lsn.assert_not_called()
+
+    def test_promote_refuses_and_never_promotes_when_a_gate_fails(self):
+        fo.nova_config.post_both.reset_mock()
+        f = FakeSSH([])
+        with mock.patch.object(fo, "check_primary_alive", return_value=(False, False)), \
+                mock.patch.object(fo, "load_failover_cfg", return_value={}), \
+                mock.patch.object(fo, "ssh", f), mock.patch.object(fo, "log"):
+            rc = fo.cmd_promote(_args(confirm=True, dry_run=False, accept_loss=False, plug_confirmation=None))
+        self.assertEqual(rc, 1)
+        self.assertFalse(any("pg_promote" in c[1] for c in f.calls))
+        fo.nova_config.post_both.assert_not_called()
+
+    def test_dry_run_plan_is_read_only_and_reports_settings(self):
+        fo.nova_config.post_both.reset_mock()
+        f = FakeSSH([("/dev/tcp/", (0, "closed", "")), ("wal_log_hints", (0, "off|-1|off|false", "")),
+                     ("pg_last_wal_receive_lsn", (0, "1/100|1/100", "")),
+                     ("pg_controldata", (0, "Latest checkpoint location: 1/80", ""))])
+        cfg = {**WITNESS_CFG, "lsn": {"controldata_cmd": "pg_controldata"},
+               "nodes": [{"name": "nova-core", "host": "core.example"}]}
+        with mock.patch.object(fo, "check_primary_alive", return_value=(False, True)), \
+                mock.patch.object(fo, "load_failover_cfg", return_value=cfg), \
+                mock.patch.object(fo, "ssh", f), redirect_stdout(io.StringIO()) as out:
+            rc = fo.cmd_promote(_args(confirm=False, dry_run=True, accept_loss=False, plug_confirmation=None))
+        self.assertEqual(rc, 0)
+        text = out.getvalue()
+        for needle in ("gate 1  witness  PASS", "gate 2  fence", "gate 3  lsn      PASS",
+                       "wal_log_hints=off", "max_slot_wal_keep_size=-1", "pg_rewind impossible"):
+            self.assertIn(needle, text)
+        mutating = ("pg_promote", "systemctl stop", "nsupdate", "brew")
+        self.assertFalse(any(m in c[1] for c in f.calls for m in mutating))
+        fo.nova_config.post_both.assert_not_called()
+
+    def test_config_falls_back_to_standby_copy(self):
+        def boom():
+            raise OSError("primary down")
+        sql = mock.MagicMock(return_value=(True, '{"witness": {"host": "w"}}'))
+        cfg = fo.load_failover_cfg(_connect=boom, _ssh_sql=sql)
+        self.assertEqual(cfg["witness"]["host"], "w")
+        self.assertEqual(sql.call_args[0][0], fo.STANDBY_IP)
+        self.assertEqual(fo.load_failover_cfg(_connect=boom, _ssh_sql=lambda *a: (False, "x")), {})
+
+    def test_new_gate_code_adds_no_hardcoded_ips(self):
+        gate_src = SRC[SRC.index("# ── #43 hard gates"):SRC.index("def cmd_check")].replace("127.0.0.1", "")
+        self.assertIsNone(re.search(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", gate_src))
 
 
 if __name__ == "__main__":

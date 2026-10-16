@@ -14,7 +14,7 @@ Dual channel (Dual Tuner mode, each channel hardwired to its own port):
 
 Written 2026-07-23 for the six-tuner SIGINT mission assignment.
 """
-import os, sys, time, wave
+import json, os, sys, time, wave
 import numpy as np
 import SoapySDR
 from scipy import signal as sps
@@ -36,6 +36,48 @@ CHUNK_S = 30             # fixed dwell length -- matches nova_rf_discovery.py's 
                          # pattern; simpler and more robust than real-time VAD gating, and
                          # correct for always-on channels (NOAA WX) as well as intermittent ones
 MIN_RMS_TO_KEEP = 80     # skip writing/transcribing a chunk that's just silence/noise floor
+# 2026-10-15 (plan #6): per-channel heartbeat for nova_sdr_actuator -- IQ samples, audio level and live SNR every
+# STATS_EVERY_S, written EVEN WHEN readStream returns nothing (a wedged SDRplay API keeps this process alive
+# with zero samples, which unit health could not see).
+STATS_DIR = os.environ.get("NOVA_SDR_STATS_DIR", os.path.join(os.path.expanduser("~"), ".cache", "nova-sdr"))
+STATS_EVERY_S = 30
+SNR_EVERY = 16           # FFT every Nth buffer (~6/s at 2 MHz) -- cheap enough on every host
+CH_HALF_BW_HZ = 6250     # channel = +-6.25 kHz around the tuned frequency (centre of the IQ)
+DC_SKIP_HZ = 600         # zero-IF DC/LO-leak skirt excluded from the channel
+NOISE_FROM_HZ, NOISE_TO_HZ = 20_000, 90_000   # noise-floor annulus around the channel
+
+
+def channel_snr_db(iq: np.ndarray, iq_rate: float) -> float | None:
+    """Channel power vs the nearby noise floor (median of a 20-90 kHz annulus), live.
+    Zero-IF: the tuner's DC offset / LO leakage sits exactly on the channel, so the IQ mean is removed and
+    +-DC_SKIP_HZ around 0 is skipped (first cut read 48-53 dB on an idle airband channel, 2026-10-15)."""
+    n = len(iq)
+    if n < 1024:
+        return None
+    x = iq - iq.mean()
+    p = np.abs(np.fft.fftshift(np.fft.fft(x * np.hanning(n)))) ** 2
+    bin_hz = iq_rate / n
+    mid, half, skip = n // 2, max(4, int(CH_HALF_BW_HZ / bin_hz)), max(2, int(DC_SKIP_HZ / bin_hz))
+    ch = np.concatenate([p[mid - half:mid - skip], p[mid + skip + 1:mid + half + 1]])
+    # noise reference: median of a nearby annulus inside the IF passband (the whole 2 MHz band includes the
+    # IF filter's stopband, whose floor made every channel look 45+ dB "above noise")
+    lo, hi = int(NOISE_FROM_HZ / bin_hz), min(n // 2 - 1, int(NOISE_TO_HZ / bin_hz))
+    noise = float(np.median(np.concatenate([p[mid - hi:mid - lo], p[mid + lo:mid + hi]]))) if hi > lo else float(np.median(p))
+    if noise <= 0 or not len(ch):
+        return None
+    return round(10 * np.log10(float(ch.mean()) / noise), 1)
+
+
+def write_stats(label: str, stats: dict):
+    """Atomic JSON per channel: <STATS_DIR>/<label>.json. Never raises (a full disk must not stop capture)."""
+    try:
+        os.makedirs(STATS_DIR, exist_ok=True)
+        path = os.path.join(STATS_DIR, f"{label}.json")
+        with open(path + ".tmp", "w") as f:
+            json.dump(stats, f)
+        os.replace(path + ".tmp", path)
+    except OSError:
+        pass
 
 
 def open_device(dual: bool):
@@ -77,6 +119,29 @@ class ChannelState:
         self.prev = np.complex64(0)
         self.buf = []
         self.chunk_start = time.time()
+        self.samples, self.n_reads, self.snrs, self.last_rms = 0, 0, [], None
+        self.last_sample_ts, self.stats_ts = None, time.time()
+
+    def observe(self, iq: np.ndarray, iq_rate: float):
+        self.samples += len(iq)
+        self.last_sample_ts = time.time()
+        self.n_reads += 1
+        if self.n_reads % SNR_EVERY == 0:
+            snr = channel_snr_db(iq, iq_rate)
+            if snr is not None:
+                self.snrs.append(snr)
+
+    def maybe_report(self, now: float | None = None) -> bool:
+        now = now or time.time()
+        if now - self.stats_ts < STATS_EVERY_S:
+            return False
+        write_stats(self.label, {"ts": now, "label": self.label, "freq_hz": self.freq_hz, "demod": self.demod,
+                                 "window_s": round(now - self.stats_ts, 1), "samples": self.samples,
+                                 "last_sample_ts": self.last_sample_ts, "rms": self.last_rms,
+                                 "snr_db": max(self.snrs) if self.snrs else None,
+                                 "snr_med_db": float(np.median(self.snrs)) if self.snrs else None})
+        self.samples, self.snrs, self.stats_ts = 0, [], now
+        return True
 
     def feed(self, audio: np.ndarray):
         # ponytail: wall-clock-based, not sample-count-based -- the RSPduo's actual
@@ -90,6 +155,7 @@ class ChannelState:
         if self.buf:
             pcm = np.concatenate(self.buf)
             rms = float(np.sqrt(np.mean(pcm.astype(np.float32) ** 2)))
+            self.last_rms = round(rms, 1)
             if rms >= MIN_RMS_TO_KEEP:
                 fname = f"nrsp_{int(time.time()*1000)}__{self.freq_hz/1e6:.4f}__{self.demod}__{self.label.replace(' ', '_')}.wav"
                 with wave.open(os.path.join(OUT_DIR, fname), "wb") as w:
@@ -146,8 +212,10 @@ def main():
             for c in channels:
                 sr = sdr.readStream(streams[c.chan_idx], [bufs[c.chan_idx]], len(bufs[c.chan_idx]),
                                     timeoutUs=int(2e6))
+                c.maybe_report()
                 if sr.ret <= 0:
                     continue
+                c.observe(bufs[c.chan_idx][:sr.ret], actual_iq_rate)
                 audio, c.prev = c.demod_fn(bufs[c.chan_idx][:sr.ret], c.prev, DECIM_STAGES)
                 c.feed(audio)
     finally:

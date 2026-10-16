@@ -11,6 +11,12 @@ week-over-week trend, and the red/blue/purple picture. Two outputs:
 Reads existing telemetry (telemetry.events / incidents, security_scan_results, the
 wazuh/strix/purple event streams, known_devices) + the rogue-AP sentinel. Scheduled
 cron 30 8.
+
+MERGED 2026-10-15 (consolidation item #14): the Morse Horn's engine is the core and this is its
+render/Slack mode: `nova_morse_horn.py --patterns`. Every check above still runs, with the same
+queries, the same #nova-alerts post and the same sanitized /operations article; the digest now also
+leads with the Morse Horn's open demands ("what the machines keep asking for"). This module keeps the
+render/publish logic (publish(demands)); main() is a thin wrapper so the old invocation keeps working.
 """
 import json
 import sys
@@ -139,6 +145,11 @@ def render_slack(p) -> str:
     L.append(f"\n*Network:* {len(nd)} new device(s) this week" + (": " + ", ".join(f"{d['client_name']}({d['ip']})" for d in nd[:8]) if nd else ""))
     rf = p.get("rogue_flags", [])
     L.append(f"*Rogue/open APs:* {len(rf)} flagged" + ("" if not rf else " ⚠️ " + "; ".join(f"{f['kind']}:{f['ssid']}" for f in rf)))
+    dm = p.get("demands") or []
+    if dm:
+        L.append("\n*The Morse Horn — what the machines keep asking for* (open demands, 7d):")
+        for d in dm[:5]:
+            L.append(f"  – #{d.get('id', '?')} {d.get('demand', '?')} — {d.get('count_7d', 0)}× ({d.get('source', '?')})")
     return "\n".join(L)
 
 
@@ -161,6 +172,11 @@ def _sanitized_brief(p) -> str:
                  f"purple-team detection-validation last reported: {p.get('purple',{}).get('title','n/a')}.")
     lines.append(f"Network: {len(p.get('new_devices',[]))} new device(s) joined this week; "
                  f"{len(p.get('rogue_flags',[]))} open/rogue AP(s) currently flagged.")
+    # Morse Horn demands: only rule-phrased ones (fixed wording, no names/addresses can leak).
+    safe = sorted({d["demand"] for d in (p.get("demands") or []) if d.get("demand_by") == "rule" and d.get("demand")})
+    if safe:
+        lines.append("What the machines keep asking for (plain demands decoded from repeating noise): "
+                     + "; ".join(safe[:5]) + ".")
     return "\n".join(lines)
 
 
@@ -184,9 +200,16 @@ def generate_article(p):
     return title, body
 
 
-def main():
+def publish(demands=None, dry_run: bool = False):
+    """The render/Slack half of `nova_morse_horn.py --patterns`: gather the 14-day patterns, add the
+    Morse Horn's open demands, post full detail to #nova-alerts, publish the sanitized article."""
     log("gathering alert patterns")
     p = gather_patterns()
+    p["demands"] = list(demands or [])
+    if dry_run:
+        print(render_slack(p))
+        print("\n--- public brief ---\n" + _sanitized_brief(p))
+        return p
     # 1) full detail -> Slack #nova-alerts
     try:
         nova_config.post_both(render_slack(p), slack_channel=nova_config.SLACK_ALERTS, discord_channel=None)
@@ -215,6 +238,12 @@ def main():
     except Exception as e:
         log(f"article publish failed: {e}")
     log("done")
+
+
+def main():
+    log("merged into nova_morse_horn.py --patterns on 2026-10-15; delegating")
+    import nova_morse_horn
+    return nova_morse_horn.main(["--patterns"] + (["--dry-run"] if "--dry-run" in sys.argv[1:] else []))
 
 
 if __name__ == "__main__":

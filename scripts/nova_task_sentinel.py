@@ -45,6 +45,9 @@ Pages at level:
 
 Run cadence: every 15m (task failures are not a second-by-second concern). One
 instance, on .6. Never raises out of run_once — a watchdog must not crash.
+Its own heartbeat (health_checks task_sentinel) is earned, not a literal (Chanos filter, 2026-10-15):
+'down' when it had nothing current to judge or could not deliver a page, 'degraded' when the
+scheduler configs did not load, 'up' otherwise (heartbeat_status()).
 
 --daily (organ-audit merge M2, 2026-10-09; was nova_chronic_failures.py, wish #63): any task
 with more than FAIL_PER_DAY non-success runs on each of the last DAYS full days becomes ONE
@@ -57,6 +60,13 @@ tasks was retired the same day: failing tasks are reported here only.
 
     nova_task_sentinel.py                     # 15-min sweep
     nova_task_sentinel.py --daily [--dry-run] # chronic: fix-or-retire queue items
+    nova_task_sentinel.py --flaky --scheduled # Take Four: retry-recovered flakiness (daily 07:25)
+
+--flaky (consolidation item #12, 2026-10-15; was the standalone nova_take_four.py entry): TAKE FOUR,
+the runs that only worked on a retake. The logic, thresholds, take_four table, Buick 8 rows and the
+Monday digest stay in nova_take_four.py; this mode forwards the remaining args to
+nova_take_four.main() (--scheduled | --dry-run | --digest | --report [N] | --selftest).
+nova_take_four.py stays runnable directly with the same flags.
 
 Written by Jordan Koch.
 """
@@ -235,9 +245,13 @@ def _page(conn, task_id: str, health: dict):
     # Re-notify window 6h (not the default 1h): a task that's been failing all day doesn't need
     # 23 hourly pings — the first tells you, ~4/day is a reminder, more is just noise burying the
     # NEW failures. (2026-08-11 S/N pass: task-sentinel sent 77 alerts/night for 9 conditions.)
-    notify(title, body=body, level=level, category="task-sentinel",
-           source="nova_task_sentinel", dedup_key=f"task-sentinel:{task_id}",
-           meta={"dedup_window_s": 21600})
+    try:
+        delivered = bool(notify(title, body=body, level=level, category="task-sentinel",
+                                source="nova_task_sentinel", dedup_key=f"task-sentinel:{task_id}",
+                                meta={"dedup_window_s": 21600}))
+    except Exception as e:  # noqa: BLE001 — a failed page is reported in the heartbeat, not raised
+        print(f"task_sentinel: notify failed for {task_id}: {e}", file=sys.stderr)
+        delivered = False
 
     if state == "critical":
         # SAVEPOINT so a failed insert (e.g. FK/constraint) rolls back only THIS write
@@ -258,6 +272,7 @@ def _page(conn, task_id: str, health: dict):
                 cur.execute("RELEASE SAVEPOINT sp_queue")
             except Exception:
                 cur.execute("ROLLBACK TO SAVEPOINT sp_queue")
+    return delivered
 
 
 def load_configured_tasks() -> dict:
@@ -338,7 +353,24 @@ def ensure_session(conn):
         conn.rollback()
 
 
-def _heartbeat(conn, ok_count: int, bad: list):
+BLIND_S = 2 * 3600   # newest scheduler_runs row older than this: both schedulers silent, the sentinel is blind
+
+
+def heartbeat_status(tasks_seen: int, newest_age_s, config_loaded: bool, undelivered: int) -> str:
+    """What the sentinel's own heartbeat may honestly claim. Pure.
+    The row claims "the sentinel swept real, current scheduler_runs and could escalate what it found":
+      down      nothing to judge (no runs in the window, or the newest is older than BLIND_S), or a page
+                it owed was not delivered
+      degraded  swept, but the scheduler configs did not load (retired tasks cannot be told apart)
+      up        all of the above held
+    Degraded TASKS do not make the sentinel degraded: they are its findings, listed in error_message.
+    (Chanos filter 2026-10-15: this row used to be a literal 'up' written whatever happened.)"""
+    if not tasks_seen or newest_age_s is None or newest_age_s > BLIND_S or undelivered:
+        return "down"
+    return "up" if config_loaded else "degraded"
+
+
+def _heartbeat(conn, ok_count: int, bad: list, status: str = "up", note: str = ""):
     """Dogfood: the sentinel writes its own health_checks row so it, too, is watched."""
     with conn.cursor() as cur:
         cur.execute("SAVEPOINT sp_hb")
@@ -346,8 +378,8 @@ def _heartbeat(conn, ok_count: int, bad: list):
             cur.execute(
                 """INSERT INTO health_checks (service_name, node_name, checked_by, status, error_message)
                    VALUES ('task_sentinel','mac-studio','nova_task_sentinel',%s,%s)""",
-                ("up", f"{ok_count} healthy, {len(bad)} degraded: "
-                       + ",".join(b[0] for b in bad[:20])))
+                (status, (note + f"{ok_count} healthy, {len(bad)} degraded: "
+                          + ",".join(b[0] for b in bad[:20]))[:2000]))
             cur.execute("RELEASE SAVEPOINT sp_hb")
         except Exception:
             cur.execute("ROLLBACK TO SAVEPOINT sp_hb")
@@ -359,7 +391,7 @@ def run_once(conn) -> list:
     ensure_session(conn)
     runs_by_task = fetch_task_runs(conn)
     configured = load_configured_tasks()   # {task_id: schedule_str} across both schedulers
-    degraded, healthy, retired = [], 0, 0
+    degraded, healthy, retired, undelivered = [], 0, 0, 0
     for task_id, runs in runs_by_task.items():
         # RETIRED: a task with run-history but no longer in ANY scheduler config was removed;
         # never alert on it. (Only skip when we actually loaded a config — an empty dict means
@@ -371,13 +403,29 @@ def run_once(conn) -> list:
         h = classify_task(runs, now_ms=now, expected_interval_s=exp_interval)
         if h["state"] in ("failing", "critical", "stale"):
             degraded.append((task_id, h))
-            _page(conn, task_id, h)
+            if _page(conn, task_id, h) is False:
+                undelivered += 1
         elif h["state"] == "healthy":
             healthy += 1
     # worst first for the log
     order = {"critical": 0, "failing": 1, "stale": 2}
     degraded.sort(key=lambda d: order.get(d[1]["state"], 9))
-    _heartbeat(conn, healthy, degraded)
+    newest = max((r["started_at"] for rs in runs_by_task.values() for r in rs if r.get("started_at")), default=None)
+    age_s = (now - newest) / 1000.0 if newest is not None else None
+    status = heartbeat_status(len(runs_by_task), age_s, bool(configured), undelivered)
+    note = ""
+    if status != "up":
+        why = []
+        if not runs_by_task:
+            why.append(f"no scheduler_runs in {WINDOW_DAYS}d")
+        elif age_s is None or age_s > BLIND_S:
+            why.append(f"newest run {age_s or 0:.0f}s old")
+        if undelivered:
+            why.append(f"{undelivered} page(s) not delivered")
+        if not configured:
+            why.append("scheduler configs did not load")
+        note = "; ".join(why) + " | "
+    _heartbeat(conn, healthy, degraded, status, note)
     conn.commit()
     return degraded
 
@@ -432,8 +480,19 @@ def run_daily(dry_run: bool = False) -> int:
         conn.close()
 
 
+def run_flaky(argv) -> int:
+    """--flaky: Take Four (merged 2026-10-15, item #12). Logic stays in nova_take_four."""
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import nova_take_four
+    print("[task-sentinel --flaky] Take Four (merged 2026-10-15): running nova_take_four", flush=True)
+    return nova_take_four.main([a for a in argv if a != "--flaky"])
+
+
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if "--flaky" in argv:
+        return run_flaky(argv)
     if "-h" in argv or "--help" in argv:
         print(__doc__)
         return 0

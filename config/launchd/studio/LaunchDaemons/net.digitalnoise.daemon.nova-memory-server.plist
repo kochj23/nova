@@ -19,8 +19,8 @@
 	<string>Background</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/bin/zsh</string>
-		<string>__HOME__/.openclaw/scripts/nova_memory_server_start.sh</string>
+		<string>/opt/homebrew/bin/python3</string>
+		<string>__HOME__/.openclaw/memory_server.py</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>

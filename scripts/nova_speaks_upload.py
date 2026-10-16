@@ -161,8 +161,11 @@ def main():
     else:
         cur.execute("UPDATE nova_speaks_renders SET youtube_id='uploading' WHERE slug=%s AND youtube_id IS NULL", (a.slug,))
     if cur.rowcount != 1: log("claimed by another uploader"); return 0
-    s = session()
+    # A timeout kill (SIGTERM) must release the claim too: before 2026-10-15 it bypassed the except below and
+    # left 12 rows stuck at 'uploading' forever (the sweep only retries youtube_id IS NULL).
+    import signal; signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     try:
+        s = session()
         vid = s.upload(mp4, meta, progress_callback=lambda step, pct: log(f"{step} {pct:.0f}%") if pct in (0, 100) else None)
     except BaseException:
         cur.execute("UPDATE nova_speaks_renders SET youtube_id=%s WHERE slug=%s AND youtube_id='uploading'", (old if replacing else None, a.slug)); raise

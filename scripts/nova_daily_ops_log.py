@@ -403,7 +403,7 @@ def gather() -> dict:
     # 12. The work ledger — what got done / queued / incidents (claude_queue + actions)
     d["work_done"] = q(DB, """
         SELECT priority, LEFT(description,90)
-        FROM claude_queue WHERE status='completed' AND completed_at > NOW()-INTERVAL '24 hours'
+        FROM claude_queue WHERE status IN ('done','completed') AND completed_at > NOW()-INTERVAL '24 hours'
         ORDER BY completed_at DESC LIMIT 15""")
     d["work_open_top"] = q(DB, """
         SELECT priority, status, LEFT(description,80)

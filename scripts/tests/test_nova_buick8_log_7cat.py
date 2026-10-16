@@ -390,5 +390,18 @@ class TestCaseModesFrame(unittest.TestCase):
             self.assertIn(flag, r.stdout)
 
 
+class TestDormantReopen(unittest.TestCase):
+    """#25 (Little Mister, 2026-10-15): nova_ledger_aging puts idle entries to sleep; a new
+    occurrence wakes them; the cause is never touched."""
+    def test_new_occurrence_reopens_a_dormant_entry(self):
+        cur = LogCur()
+        L.log_unexplained("k", "s", "d", {}, occurrence_key="a", ts=T0, cur=cur)
+        L.log_unexplained("k", "s", "d", {}, occurrence_key="b", ts=T0, cur=cur)
+        upd = [sql for sql, _ in cur.calls if sql.startswith("UPDATE unexplained_events SET occurrences")]
+        self.assertTrue(upd)
+        self.assertIn("status=CASE WHEN status='dormant' THEN 'open' ELSE status END", upd[-1])
+        self.assertNotIn("cause", upd[-1])
+
+
 if __name__ == "__main__":
     unittest.main()

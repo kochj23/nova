@@ -15,8 +15,23 @@ CREATE TABLE IF NOT EXISTS claude_locks (
 
 -- Claim a task atomically. p_id NULL = best queued/pending task. Expired leases are claimable;
 -- legacy unowned in_progress rows only by explicit id.
-CREATE OR REPLACE FUNCTION claude_claim(p_who text, p_id int DEFAULT NULL, p_lease interval DEFAULT '20 minutes')
-RETURNS SETOF claude_queue LANGUAGE sql AS $$
+-- Kanban WIP limit (2026-10-15, plan #56): a claimant holding p_wip live leases gets nothing back
+-- (plus a NOTICE) until it finishes or hands one back. Re-claiming a row you already hold is always allowed.
+-- p_wip was added as a 4th defaulted arg, so every existing 1-3 arg call keeps working unchanged.
+DROP FUNCTION IF EXISTS claude_claim(text, int, interval);
+CREATE OR REPLACE FUNCTION claude_claim(p_who text, p_id int DEFAULT NULL, p_lease interval DEFAULT '20 minutes',
+                                        p_wip int DEFAULT 3)
+RETURNS SETOF claude_queue LANGUAGE plpgsql AS $$
+DECLARE held int;
+BEGIN
+  SELECT count(*) INTO held FROM claude_queue
+   WHERE status = 'in_progress' AND claimed_by = p_who AND lease_until > now() AND id IS DISTINCT FROM p_id;
+  IF held >= p_wip THEN
+    RAISE NOTICE 'claude_claim: % already holds % in-progress items (WIP limit %) - finish or hand one back first',
+                 p_who, held, p_wip;
+    RETURN;
+  END IF;
+  RETURN QUERY
   UPDATE claude_queue q
      SET status = 'in_progress', claimed_by = p_who, lease_until = now() + p_lease,
          heartbeat_at = now(), updated_at = now(),
@@ -24,15 +39,15 @@ RETURNS SETOF claude_queue LANGUAGE sql AS $$
                     to_char(now(), 'MM-DD HH24:MI') || ' claimed by ' || p_who ||
                     CASE WHEN q.claimed_by IS NOT NULL AND q.claimed_by <> p_who
                          THEN ' (took over from ' || q.claimed_by || ')' ELSE '' END)
-   WHERE q.id = (SELECT id FROM claude_queue
-                  WHERE (p_id IS NULL OR id = p_id)
-                    AND (status IN ('queued', 'pending')
-                         OR (status = 'in_progress' AND (lease_until < now()
-                             OR (p_id IS NOT NULL AND (claimed_by IS NULL OR claimed_by = p_who)))))
-                  ORDER BY priority, created_at LIMIT 1
+   WHERE q.id = (SELECT c.id FROM claude_queue c
+                  WHERE (p_id IS NULL OR c.id = p_id)
+                    AND (c.status IN ('queued', 'pending')
+                         OR (c.status = 'in_progress' AND (c.lease_until < now()
+                             OR (p_id IS NOT NULL AND (c.claimed_by IS NULL OR c.claimed_by = p_who)))))
+                  ORDER BY c.priority, c.created_at LIMIT 1
                   FOR UPDATE SKIP LOCKED)
   RETURNING q.*;
-$$;
+END $$;
 
 -- Append a progress note (also renews the lease). False if p_who doesn't hold it.
 CREATE OR REPLACE FUNCTION claude_note(p_id int, p_who text, p_note text)
@@ -85,19 +100,63 @@ RETURNS void LANGUAGE sql AS $$
 $$;
 
 -- Reaper: expired claims go back to the queue with a note; expired locks are dropped.
+-- Also unowned zombies (in_progress, no claimant, no lease, untouched for a day: pre-lease legacy rows).
 CREATE OR REPLACE FUNCTION claude_reap()
 RETURNS TABLE (id int, description text, was text) LANGUAGE sql AS $$
   DELETE FROM claude_locks WHERE lease_until < now();
-  WITH old AS (SELECT q.id, q.claimed_by FROM claude_queue q
-                WHERE q.status = 'in_progress' AND q.claimed_by IS NOT NULL AND q.lease_until < now()
+  WITH old AS (SELECT q.id, q.claimed_by, q.updated_at FROM claude_queue q
+                WHERE q.status = 'in_progress'
+                  AND ((q.claimed_by IS NOT NULL AND q.lease_until < now())
+                       OR (q.claimed_by IS NULL AND q.lease_until IS NULL AND q.updated_at < now() - interval '1 day'))
                 FOR UPDATE SKIP LOCKED)
   UPDATE claude_queue q
      SET status = 'queued', claimed_by = NULL, lease_until = NULL, updated_at = now(),
          progress = concat_ws(E'\n', q.progress, to_char(now(), 'MM-DD HH24:MI') ||
-                    ' lease expired, requeued (was ' || old.claimed_by || ')')
+                    CASE WHEN old.claimed_by IS NOT NULL
+                         THEN ' lease expired, requeued (was ' || old.claimed_by || ')'
+                         ELSE ' in_progress with no claimant since ' || to_char(old.updated_at, 'YYYY-MM-DD') || ', requeued' END)
     FROM old WHERE q.id = old.id
-  RETURNING q.id, q.description, old.claimed_by;
+  RETURNING q.id, q.description, coalesce(old.claimed_by, '(unowned)');
 $$;
+
+-- Kanban (2026-10-15, plan #56): one finished status. 'completed'/'resolved'/'built' from any writer
+-- (claude_finish, nova_cve_autopatch, hand UPDATEs) become 'done'; the original word is kept in outcome.
+CREATE OR REPLACE FUNCTION claude_queue_normalize_status()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.status IN ('completed', 'resolved', 'built') THEN
+    NEW.outcome := concat_ws(' ', NEW.outcome, '[finished as ' || NEW.status || ']');
+    NEW.status := 'done';
+    NEW.completed_at := coalesce(NEW.completed_at, NEW.updated_at, now());
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE OR REPLACE TRIGGER claude_queue_normalize_status BEFORE INSERT OR UPDATE OF status ON claude_queue
+  FOR EACH ROW EXECUTE FUNCTION claude_queue_normalize_status();
+UPDATE claude_queue SET status = status WHERE status IN ('completed', 'resolved', 'built');   -- maps history once
+
+-- Work-item age: every open item, oldest first.
+CREATE OR REPLACE VIEW claude_queue_wip AS
+SELECT q.id, q.status, q.priority, q.claimed_by, left(q.description, 100) AS description,
+       round((extract(epoch FROM now() - q.created_at) / 86400)::numeric, 1) AS age_days,
+       round((extract(epoch FROM now() - q.updated_at) / 86400)::numeric, 1) AS idle_days
+FROM claude_queue q
+WHERE q.status IN ('queued', 'pending', 'in_progress', 'deferred')
+ORDER BY q.created_at;
+
+-- Flow: lead time (created -> done, last 30 days), throughput vs inflow (7 days), WIP, oldest item.
+CREATE OR REPLACE VIEW claude_queue_flow AS
+SELECT
+  (SELECT count(*) FROM claude_queue WHERE status = 'in_progress') AS wip,
+  (SELECT count(*) FROM claude_queue WHERE status IN ('queued', 'pending')) AS queued,
+  (SELECT round((extract(epoch FROM now() - min(created_at)) / 86400)::numeric, 1)
+     FROM claude_queue WHERE status IN ('queued', 'pending', 'in_progress')) AS oldest_open_days,
+  (SELECT round((percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM completed_at - created_at)) / 86400)::numeric, 2)
+     FROM claude_queue WHERE status = 'done' AND completed_at > now() - interval '30 days') AS lead_p50_days,
+  (SELECT round((percentile_cont(0.85) WITHIN GROUP (ORDER BY extract(epoch FROM completed_at - created_at)) / 86400)::numeric, 2)
+     FROM claude_queue WHERE status = 'done' AND completed_at > now() - interval '30 days') AS lead_p85_days,
+  (SELECT count(*) FROM claude_queue WHERE status = 'done' AND completed_at > now() - interval '7 days') AS throughput_7d,
+  (SELECT count(*) FROM claude_queue WHERE created_at > now() - interval '7 days') AS inflow_7d;
 
 -- Who is doing what: live sessions, their claims and locks.
 DROP VIEW IF EXISTS claude_board;

@@ -370,6 +370,28 @@ class TestRetry(unittest.TestCase):
         self.assertEqual(cur.execute.call_args_list[-1][0][1][0], None)
 
 
+    def test_sigterm_during_cookie_refresh_releases_the_claim(self):
+        # 2026-10-15: the sweep's timeout kill left 12 rows at 'uploading' forever. SIGTERM -> SystemExit -> released.
+        import signal
+        conn, cur = _pg((str(_article_file()), "u", "/tmp/x.mp4", None, None))
+        yt = _yt_stub()
+        prev = signal.getsignal(signal.SIGTERM)
+
+        def killed():
+            signal.getsignal(signal.SIGTERM)()               # the handler main() installed
+        try:
+            with patch.object(up.psycopg2, "connect", lambda dsn: conn), patch.object(sys, "argv", ["x", "--slug", "s"]), \
+                 patch.dict(sys.modules, {"youtube_up": yt}), patch.object(up, "session", killed), \
+                 redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit) as cm:
+                    up.main()
+            self.assertEqual(cm.exception.code, 143)
+        finally:
+            signal.signal(signal.SIGTERM, prev)
+        last = cur.execute.call_args_list[-1][0]
+        self.assertTrue(last[0].startswith("UPDATE nova_speaks_renders SET youtube_id=%s WHERE slug=%s AND youtube_id='uploading'"))
+        self.assertIsNone(last[1][0])
+
 class TestUnit(unittest.TestCase):
     def test_fm_edges(self):
         self.assertEqual(up.fm("", "title"), "")

@@ -18,6 +18,9 @@ exactly that slow-burn class. This is the un-suppressable backstop:
 Runs as its OWN launchd job (net.digitalnoise.core-liveness), deliberately NOT
 under nova_scheduler — so the scheduler dying can't blind it — and writes its own
 heartbeat into health_checks so an off-box watcher can detect THIS dying too.
+The heartbeat's status is earned, not a literal (Chanos filter, 2026-10-15): 'up' only after a
+full check found nothing, 'degraded' when it found and paged issues, 'down' when the check
+itself failed or a page could not be delivered (see heartbeat_status()).
 """
 import socket
 import sys
@@ -59,9 +62,15 @@ def tcp_up(host, port, timeout=3):
 
 
 def page(conn, key, title, body):
-    """Un-suppressable critical page + deduped claude_queue incident."""
-    notify(title, body=body, level="critical", category="core-liveness",
-           source="nova_core_liveness.py", dedup_key=f"core-liveness:{key}:{int(time.time() // 3600)}")
+    """Un-suppressable critical page + deduped claude_queue incident.
+    Returns True when the page reached the notify bus (the queue row is a second, best-effort copy)."""
+    delivered = False
+    try:
+        delivered = bool(notify(title, body=body, level="critical", category="core-liveness",
+                                source="nova_core_liveness.py",
+                                dedup_key=f"core-liveness:{key}:{int(time.time() // 3600)}"))
+    except Exception as e:
+        print(f"[core-liveness] notify failed: {e}", flush=True)
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -74,6 +83,7 @@ def page(conn, key, title, body):
                 ("core-liveness", f"CORE LIVENESS: {title}", body, f"CORE LIVENESS: {title}%"))
     except Exception as e:
         print(f"[core-liveness] queue escalation failed: {e}", flush=True)
+    return delivered
 
 
 def ensure_session(conn):
@@ -87,12 +97,29 @@ def ensure_session(conn):
         pass
 
 
-def heartbeat(conn):
+def heartbeat_status(issues, undelivered, check_error=None):
+    """What the heartbeat may honestly claim after one cycle -> (status, detail). Pure.
+    The row claims "Nova's core is live AND this gate can still raise the alarm", so:
+      down      the check itself failed, or a page it owed could not be delivered (a mute gate)
+      degraded  the check ran and found keystone issues (all paged)
+      up        the check ran end to end and found nothing
+    (Chanos filter 2026-10-15: this row used to be a literal 'up' written whatever happened.)"""
+    if check_error:
+        return "down", f"check failed: {check_error}"[:500]
+    if undelivered:
+        return "down", f"{issues} issue(s), {undelivered} page(s) NOT delivered"
+    if issues:
+        return "degraded", f"{issues} issue(s), all paged"
+    return "up", None
+
+
+def heartbeat(conn, status="up", detail=None):
+    """Write this gate's own health_checks row. Never raises."""
     try:
         with conn.cursor() as cur:
             cur.execute(
-                """INSERT INTO health_checks (service_name, node_name, checked_by, status, latency_ms)
-                   VALUES ('core_liveness','mac-studio','core_liveness','up',0)""")
+                """INSERT INTO health_checks (service_name, node_name, checked_by, status, latency_ms, error_message)
+                   VALUES ('core_liveness','mac-studio','core_liveness',%s,0,%s)""", (status, detail))
     except Exception:
         pass
 
@@ -140,10 +167,25 @@ def check(conn):
 
 def run_once(conn):
     ensure_session(conn)
-    issues = check(conn)
+    try:
+        issues = check(conn)
+    except Exception as e:
+        # the gate could not look: say so in its own heartbeat (best effort), then let main() reconnect
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        heartbeat(conn, *heartbeat_status(0, 0, f"{type(e).__name__}: {e}"))
+        try:
+            conn.commit()
+        except Exception:
+            pass
+        raise
+    undelivered = 0
     for key, title, body in issues:
-        page(conn, key, title, body)
-    heartbeat(conn)
+        if not page(conn, key, title, body):
+            undelivered += 1
+    heartbeat(conn, *heartbeat_status(len(issues), undelivered))
     conn.commit()
     if issues:
         print(f"[core-liveness] {len(issues)} issue(s): " + "; ".join(t for _, t, _ in issues), flush=True)

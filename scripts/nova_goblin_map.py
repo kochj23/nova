@@ -34,6 +34,9 @@ service_config: goblin_map/latest (top score, above threshold, week-over-week ch
                 goblin_map/score_threshold (default 300), goblin_map/growth_pct (default 10),
                 goblin_map/schedulers ({controller: [yaml, node]} override)
 Schedule: weekly, Monday 07:30.
+
+MERGED 2026-10-15 (consolidation #11) into nova_capability_ledger.py as `--blast`: logic and table
+stay here; main() is a thin wrapper. TMA-1 decoys never counted (via C.fleet_secret_names).
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -157,8 +160,9 @@ def hosts_running(probes: dict, names: tuple) -> list:
 def gather(cur, _sleep=None) -> dict:
     probes = C.probe_fleet(cur, _sleep=_sleep)
     index = C.script_index()
-    fleet = C.fleet_secret_names(cur)
-    kc = C.keychain_names() if sys.platform == "darwin" else None
+    import nova_capability_ledger as CL   # TMA-1 decoys are never counted
+    fleet = CL.drop_decoys(C.fleet_secret_names(cur))
+    kc = CL.drop_decoys(C.keychain_names() if sys.platform == "darwin" else None)
     names = set(fleet or {}) | set(kc or {})
     cfg = C.ha_config_dir(cur)
     try:
@@ -471,14 +475,12 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
-    if a.dry_run:
-        run(dry=True)
-        return 0
-    if a.scheduled:
-        run(dry=False)
-        return 0
-    if a.report:
-        return report()
+    if a.dry_run or a.scheduled or a.report:   # merged 2026-10-15 (#11): nova_capability_ledger.py --blast
+        import nova_capability_ledger as CL
+        log(f"merged into nova_capability_ledger.py --blast on {CL.MERGED_ON}; delegating")
+        if a.dry_run or a.scheduled:
+            return CL.main(["--blast"] + (["--dry-run"] if a.dry_run else []))
+        return CL.main(["--blast", "--show"])
     ap.print_help()
     return 0
 

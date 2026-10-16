@@ -198,5 +198,21 @@ class TestFrame(unittest.TestCase):
         self.assertEqual(r.returncode, 0)
 
 
+
+class TestInvariantsMode(unittest.TestCase):
+    """Crain's Square folded in as --invariants (2026-10-15); --score untouched."""
+
+    def test_invariants_default_day_is_none(self):
+        import nova_crain_square
+        with mock.patch.object(nova_crain_square, "run", return_value=[]) as r:
+            self.assertEqual(C.main(["--invariants"]), 0)
+        r.assert_called_once_with(None, dry=False)
+
+    def test_score_does_not_run_invariants(self):
+        import nova_crain_square
+        with mock.patch.object(nova_crain_square, "run") as r, mock.patch.object(C, "score_all", return_value=[]):
+            self.assertEqual(C.main(["--score"]), 0)
+        r.assert_not_called()
+
 if __name__ == "__main__":
     unittest.main()

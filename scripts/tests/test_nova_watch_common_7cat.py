@@ -159,6 +159,24 @@ class TestRetry(unittest.TestCase):
             self.assertTrue(W.retry(W.post_slack, "m", "C1", _sleep=lambda s: None))
         self.assertEqual(uo.call_count, 3)
 
+    def test_post_slack_writes_outbound_ledger_only_when_accepted(self):
+        import nova_action_audit
+        resp = [io.BytesIO(b'{"ok": false}'), io.BytesIO(b'{"ok": true}')]
+        with mock.patch("nova_config.slack_bot_token", return_value="t"), \
+                mock.patch("urllib.request.urlopen", side_effect=resp), \
+                mock.patch.object(nova_action_audit, "record_outbound", return_value=True) as ro:
+            self.assertTrue(W.retry(W.post_slack, "night watch: all quiet", "C1", source="nova_night_watch",
+                                    _sleep=lambda s: None))
+        ro.assert_called_once_with("slack", "C1", "night watch: all quiet", source="nova_night_watch")
+
+    def test_post_slack_ledger_failure_never_breaks_the_send(self):
+        import nova_action_audit
+        with mock.patch("nova_config.slack_bot_token", return_value="t"), \
+                mock.patch("urllib.request.urlopen", return_value=io.BytesIO(b'{"ok": true}')), \
+                mock.patch.object(nova_action_audit, "record_outbound", side_effect=RuntimeError("pg down")) as ro:
+            self.assertTrue(W.post_slack("m", "C1"))
+        self.assertEqual(ro.call_args[1]["source"], None)               # record_outbound derives argv[0]
+
     def test_load_scanner_uses_retrying_connect(self):
         conn = mock.MagicMock()
         conn.cursor.return_value = Cur([("FROM memories", [(T0, 0.3, "x", "c")])])

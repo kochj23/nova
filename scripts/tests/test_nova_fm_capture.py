@@ -183,6 +183,43 @@ class TestFunctional(unittest.TestCase):
         self.assertIn("50000 Hz audio", p.call_args_list[0][0][0])
 
 
+class TestHeartbeat(unittest.TestCase):
+    """Plan #6 (2026-10-15): per-channel stats heartbeat with live SNR, written even when the stream stalls."""
+    def test_snr_high_for_a_carrier_low_for_noise(self):
+        rng = np.random.default_rng(1)
+        n = 19200
+        noise = (rng.normal(size=n) + 1j * rng.normal(size=n)).astype(np.complex64) * 0.01
+        carrier = noise + 0.5 * np.exp(2j * np.pi * 2000 * np.arange(n) / 2e6).astype(np.complex64)
+        self.assertGreater(fm.channel_snr_db(carrier, 2e6), 20)
+        self.assertLess(fm.channel_snr_db(noise, 2e6), 6)
+        self.assertIsNone(fm.channel_snr_db(noise[:100], 2e6))
+
+    def test_stalled_stream_still_reports_zero_samples(self):
+        with tempfile.TemporaryDirectory() as d, patch.object(fm, "STATS_DIR", d):
+            c = fm.ChannelState("Tower", 118.7e6, 0, 50000, "AM")
+            self.assertFalse(c.maybe_report(c.stats_ts + 5))
+            self.assertTrue(c.maybe_report(c.stats_ts + 31))
+            st = __import__("json").load(open(os.path.join(d, "Tower.json")))
+        self.assertEqual(st["samples"], 0)
+        self.assertIsNone(st["snr_db"])
+
+    def test_flowing_stream_reports_samples_and_snr_then_resets(self):
+        with tempfile.TemporaryDirectory() as d, patch.object(fm, "STATS_DIR", d):
+            c = fm.ChannelState("Tower", 118.7e6, 0, 50000, "AM")
+            iq = (np.exp(2j * np.pi * 1000 * np.arange(19200) / 2e6)).astype(np.complex64)
+            for _ in range(fm.SNR_EVERY):
+                c.observe(iq, 2e6)
+            c.maybe_report(c.stats_ts + 31)
+            st = __import__("json").load(open(os.path.join(d, "Tower.json")))
+        self.assertEqual(st["samples"], 19200 * fm.SNR_EVERY)
+        self.assertIsNotNone(st["snr_db"])
+        self.assertEqual(c.samples, 0)
+
+    def test_stats_write_never_raises(self):
+        with patch.object(fm, "STATS_DIR", "/proc/definitely/not/writable"):
+            fm.write_stats("x", {"ts": 1})
+
+
 class TestFrame(unittest.TestCase):
     def test_load_never_runs_main(self):
         self.assertIn('if __name__ == "__main__":', SRC)

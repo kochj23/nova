@@ -10,6 +10,11 @@ latent pass has a decided-by/decided-at/decision_note trail instead of Nova reso
                               nova_slack_answers.py (kind='conflict'), decided_by='jordan'.
   --selftest
 Scheduled on scheduler-core daily 09:10 with --post. Approved 2026-10-04.
+
+MERGED 2026-10-15 (consolidation item #10; oversight merge approved by Claude 2026-10-15) into
+nova_directive_conflict.py: `--post`, `--list`, `--decide ID --note N --by WHO` there. This file is a thin
+wrapper (same flags, same behaviour); the Slack posting logic stays here (post_pending, prompt_text) and
+the row-closing mechanics are nova_directive_conflict.decide_row / decide(conflict_id, decision, decided_by, reason).
 """
 import nova_dsn as _nova_dsn  # noqa: E402
 import sys, os, re
@@ -37,9 +42,10 @@ def prompt_text(row):
             f"_Reply in this thread with how to read them together (or 'A' / 'B' / 'both apply'); that closes it._")
 
 def decide(cur, cid, note, by):
-    cur.execute("UPDATE directive_conflicts SET status='decided', decided_by=%s, decided_at=now(), decision_note=%s WHERE id=%s AND status='open'",
-                (by, note, cid))
-    return cur.rowcount == 1
+    """Kept for callers: one open row closed by `by`. Delegates to the survivor's mechanics."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import nova_directive_conflict as DC
+    return DC.decide_row(cur, cid, note, by)
 
 def post_pending(cur, dry):
     if datetime.now().hour not in POST_HOURS and not dry:
@@ -65,20 +71,31 @@ def post_pending(cur, dry):
             n += 1; log(f"put conflict #{row[0]} to him")
     return n
 
+def run(mode, dry=False):
+    """--post / --list as called by nova_directive_conflict.py (the survivor). mode: 'post' | 'list'."""
+    conn = psycopg2.connect(OPS, connect_timeout=8); conn.autocommit = True; cur = conn.cursor()
+    try:
+        if mode == "list":
+            cur.execute("SELECT id, kind, severity, left(directive_a, 90), left(directive_b, 90) FROM directive_conflicts WHERE status='open' ORDER BY id")
+            for r in cur.fetchall(): print(" | ".join(str(x) for x in r))
+        else:
+            log(f"posted {post_pending(cur, dry)}")
+    finally:
+        conn.close()
+    return 0
+
 def main():
     a = sys.argv[1:]
-    conn = psycopg2.connect(OPS, connect_timeout=8); conn.autocommit = True; cur = conn.cursor()
-    if "--list" in a:
-        cur.execute("SELECT id, kind, severity, left(directive_a, 90), left(directive_b, 90) FROM directive_conflicts WHERE status='open' ORDER BY id")
-        for r in cur.fetchall(): print(" | ".join(str(x) for x in r))
-    elif "--decide" in a:
-        cid = int(a[a.index("--decide") + 1]); note = a[a.index("--note") + 1]
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import nova_directive_conflict as DC
+    if "--list" in a or "--post" in a:
+        log("merged into nova_directive_conflict.py on 2026-10-15; running its " + ("--list" if "--list" in a else "--post"))
+        return DC.main(["--list" if "--list" in a else "--post"] + (["--dry-run"] if "--dry-run" in a else []))
+    if "--decide" in a:
+        cid = a[a.index("--decide") + 1]; note = a[a.index("--note") + 1]
         by = a[a.index("--by") + 1] if "--by" in a else "claude"
-        log(f"#{cid} {'decided' if decide(cur, cid, note, by) else 'not open'}")
-    elif "--post" in a:
-        log(f"posted {post_pending(cur, '--dry-run' in a)}")
-    else:
-        print(__doc__)
+        return DC.main(["--decide", cid, "--note", note, "--by", by])
+    print(__doc__)
 
 def selftest():
     t = prompt_text((21, "latent", "When Jordan says 'do the needful' " + "x" * 400, "feedback:needful", "NEVER use ComfyUI", "feedback:no-comfyui", "use ComfyUI"))

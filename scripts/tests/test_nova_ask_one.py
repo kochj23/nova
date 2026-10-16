@@ -119,7 +119,7 @@ class TestRetry(unittest.TestCase):
                 patch.object(ask.urllib.request, "urlopen", boom), _connect_with(cur), \
                 patch.object(sys, "argv", ["nova_ask_one.py"]), patch.object(ask.sys, "platform", "darwin"):
             with self.assertRaises(OSError):
-                ask.main()
+                ask._legacy_post_main()   # the retired morning post (2026-10-15); mechanism still tested
         self.assertEqual(cur.executed("INSERT INTO slack_prompts"), [])
 
     def test_slack_api_error_surfaces_as_runtime_error(self):
@@ -189,7 +189,7 @@ class TestFunctional(unittest.TestCase):
         buf = io.StringIO()
         with _connect_with(cur), patch.object(sys, "argv", ["nova_ask_one.py", *argv]), \
                 patch.object(ask, "slack_post", post or (lambda text: "171.5")), redirect_stdout(buf):
-            rc = ask.main()
+            rc = ask._legacy_post_main()   # retired morning post, mechanism still tested
         return rc, buf.getvalue()
 
     def test_golden_path_posts_and_records_prompt(self):

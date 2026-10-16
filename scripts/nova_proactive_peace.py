@@ -15,6 +15,10 @@ This file stays runnable as a thin wrapper:
 should_alert(), get_focus_mode() and get_screen_state() remain importable and delegate.
 The burnout nudge (Slack line after 23:00 while MLXCode was up) is retired with it.
 
+RETIRED 2026-10-15 (consolidation item #8, approved by Little Mister): the every-15m scheduler entry
+`proactive_peace` ran this no-op wrapper ~96 times a day and is removed; nothing schedules it now.
+The file stays only for the importable delegates above (tests and any manual --status/--check).
+
 Written by Jordan Koch.
 """
 

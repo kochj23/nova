@@ -117,11 +117,7 @@ tasks:
     overlap: skip
 
 
-  proactive_peace:
-    script: nova_proactive_peace.py
-    schedule: every 15m
-    timeout: 90
-    overlap: skip
+  # proactive_peace: removed 2026-10-15 — merged into escalation 2026-10-09; no-op
 
 
   # ── Every 15-30 minutes ────────────────────────────────────────────────
@@ -133,12 +129,7 @@ tasks:
     overlap: skip
 
 
-  local_situation:                   # fuses ADS-B + CHP + scanner + exterior motion: "is something happening nearby?"
-    script: nova_local_situation.py
-    args: ["--minutes", "20", "--alert"]
-    schedule: every 15m
-    timeout: 120
-    overlap: skip
+  # local_situation: removed 2026-10-15 — Bodach's 15-min run covers it
 
   # ── Watch organs (2026-10-08) — Bodach / Night Watch / Buick 8 / Derry Clock / The Shine ──
   bodach_watch:                      # independent near-home signals clustering (scanner/CHP/heli/new device/night motion); quiet unless >= calibrated threshold and >= 2 types
@@ -152,11 +143,7 @@ tasks:
     schedule: cron 10 4 * * 0
     timeout: 600
     overlap: skip
-  night_watch:                       # 07:02 daily — 22:00-07:00 evidence summary to #nova-chat (Slack only); one line on quiet nights
-    script: nova_night_watch.py
-    schedule: cron 2 7 * * *
-    timeout: 300
-    overlap: skip
+  # night_watch: removed 2026-10-15 — PDB merged into the 07:00 morning brief
   buick8_log:                        # every 30m — feed unexplained anomalies into unexplained_events (cause stays 'unknown' without evidence)
     script: nova_buick8_log.py
     schedule: every 30m
@@ -275,7 +262,8 @@ tasks:
     overlap: skip
 
   alert_patterns:                    # WEEKLY Sunday 8:30am — alert PATTERN review over the past 2 weeks (chronic signatures + week-over-week trend, incidents, red/blue/purple, network changes). FULL detail -> Slack #nova-alerts; SANITIZED narrative -> public /operations. (Daily was overkill — the daily columns already avoid repetition via the 14-day self-history.)
-    script: nova_alert_patterns.py
+    script: nova_morse_horn.py
+    args: ["--patterns"]
     schedule: cron 30 8 * * 0
     timeout: 600
     overlap: skip
@@ -380,11 +368,7 @@ tasks:
     timeout: 1800
     overlap: skip
 
-  backup_restore_test:
-    script: nova_backup_restore_test.py
-    schedule: cron 0 4 1 * *
-    timeout: 1800
-    overlap: skip
+  # backup_restore_test: removed 2026-10-15 — folded into the weekly restore_drill (memories data check)
 
 
   config_drift:                    # running launchd config vs committed source-of-truth (#645)
@@ -950,13 +934,13 @@ tasks:
   care_checkin_ask:                # Sunday 6pm — "are you satisfied with your care?" to #nova-chat: 3-4 items from the week, reply "1 yes 2 no 3 meh"; row in nova_care_checkins
     script: nova_care_checkin.py
     args: ["--ask"]
-    schedule: cron 0 18 * * 0
+    schedule: cron 0 18 * * 0-3
     timeout: 120
     overlap: skip
   care_checkin_harvest:            # read Jordan's thread reply to open check-ins (14d) -> nova_care_checkins.reply/verdicts + memory source=jordan_feedback
     script: nova_care_checkin.py
     schedule: cron 40 8,12,17,21 * * *
-    timeout: 120
+    timeout: 300
     overlap: skip
 
   # ---- 2026-10-08: wish #70 relationship & companionship organs (nova_relationship.py) ----
@@ -1103,8 +1087,8 @@ tasks:
     timeout: 120
     overlap: skip
   pendulum:                        # every 6 h — The Pendulum: days until disks, PG and certs run out, with range and acceleration
-    script: nova_pendulum.py
-    args: ["--run"]
+    script: nova_disk_forecast.py
+    args: ["--pendulum"]
     schedule: cron 5 */6 * * *
     timeout: 300
     overlap: skip
@@ -1115,56 +1099,56 @@ tasks:
     timeout: 600
     overlap: skip
   threshold:                       # Tue 04:15 — The Threshold Ledger: every standing grant of access (SSH keys, tokens, herd senders)
-    script: nova_threshold.py
-    args: ["--run"]
+    script: nova_capability_ledger.py
+    args: ["--grants"]
     schedule: cron 15 4 * * 2
     timeout: 600
     overlap: skip
   valdemar:                        # Wed 04:15 — Valdemar Register: everything held artificially alive (.bak, disabled plists, suppressions, pins)
-    script: nova_valdemar.py
-    args: ["--run"]
+    script: nova_yellow_eye.py
+    args: ["--holds"]
     schedule: cron 15 4 * * 3
     timeout: 300
     overlap: skip
   valdemar_oldest:                 # monthly 1st 04:20 — the ten oldest live holds as one claude_queue item
-    script: nova_valdemar.py
-    args: ["--oldest"]
+    script: nova_yellow_eye.py
+    args: ["--holds", "--oldest"]
     schedule: cron 20 4 1 * *
     timeout: 300
     overlap: skip
   ae35_audit:                      # daily 05:10 — The AE-35 Rule: watcher changes made without a witness she does not control
-    script: nova_ae35_rule.py
-    args: ["--audit", "--days", "30"]
+    script: nova_action_audit.py
+    args: ["--oversight", "--days", "30"]
     schedule: cron 10 5 * * *
     timeout: 300
     overlap: skip
   butlerian_ledger:                # Mon 05:15 — The Butlerian Ledger: how much of Little Mister's judgement has moved to Nova
-    script: nova_butlerian_ledger.py
-    args: ["--run"]
+    script: nova_haven_drill.py
+    args: ["--butlerian"]
     schedule: cron 15 5 * * 1
     timeout: 300
     overlap: skip
   butlerian_drill_offer:           # quarterly — Aub's Drill offer (does nothing without consent in service_config)
-    script: nova_butlerian_ledger.py
-    args: ["--offer-drill"]
+    script: nova_haven_drill.py
+    args: ["--aub-offer"]
     schedule: cron 0 10 7 1,4,7,10 *
     timeout: 120
     overlap: skip
   earth_boxes:                     # daily 05:20 — The Earth-Box Count: places a retired thing could restart from, and restarts since burial
-    script: nova_earth_boxes.py
-    args: ["--run"]
+    script: nova_yellow_eye.py
+    args: ["--burials"]
     schedule: cron 20 5 * * *
     timeout: 600
     overlap: skip
   crain_square:                    # daily 05:30 — Crain's Square: do the house's sensors still add up (-> CARDINAL outcomes, Buick 8)
-    script: nova_crain_square.py
-    args: ["--run"]
+    script: nova_cardinal.py
+    args: ["--invariants"]
     schedule: cron 30 5 * * *
     timeout: 600
     overlap: skip
   seldon_axioms:                   # Mon 05:40 — Seldon's Axioms: prediction skill split by disclosure and self-touch (before CARDINAL)
-    script: nova_seldon_axioms.py
-    args: ["--run"]
+    script: nova_charles.py
+    args: ["--forecasts"]
     schedule: cron 40 5 * * 1
     timeout: 300
     overlap: skip
@@ -1175,8 +1159,8 @@ tasks:
     timeout: 300
     overlap: skip
   rama_window:                     # daily 06:15 — The Rama Window: perishable evidence for open cases, ranked by time to expiry
-    script: nova_rama_window.py
-    args: ["--run"]
+    script: nova_buick8_log.py
+    args: ["--expiry"]
     schedule: cron 15 6 * * *
     timeout: 300
     overlap: skip
@@ -1193,8 +1177,8 @@ tasks:
     timeout: 300
     overlap: skip
   busab:                           # Mon 09:30 — BuSab: change rate vs reliability; recommends a freeze (Little Mister decides)
-    script: nova_busab.py
-    args: ["--run"]
+    script: nova_yellow_eye.py
+    args: ["--pace"]
     schedule: cron 30 9 * * 1
     timeout: 300
     overlap: skip
@@ -1211,27 +1195,22 @@ tasks:
     timeout: 900
     overlap: skip
   evitable_conflict:               # monthly 1st 06:20 — The Evitable Conflict audit: do her small choices lean her way
-    script: nova_evitable_conflict.py
-    args: ["--run", "--days", "30"]
+    script: nova_charles.py
+    args: ["--triage", "--days", "30"]
     schedule: cron 20 6 1 * *
     timeout: 900
     overlap: skip
-  ghola_drill:                     # quarterly 15th 03:00 — The Ghola Drill: a sealed restore compared with live Nova
-    script: nova_ghola_drill.py
-    args: ["--run"]
-    schedule: cron 0 3 15 1,4,7,10 *
-    timeout: 3600
-    overlap: skip
+  # ghola_drill: removed 2026-10-15 — folded into restore_drill --ghola (quarterly, against the weekly restore)
   # === Maximum Overdrive organs (Jordan 2026-10-15) — need Keychain/HA config/Claude transcripts on .6 ===
   hendershot_cellar:               # monthly 2nd 08:00 — dormant-capability audit (proposes revocations, never revokes)
-    script: nova_hendershot_cellar.py
-    args: ["--scheduled"]
+    script: nova_capability_ledger.py
+    args: ["--dormant"]
     schedule: cron 0 8 2 * *
-    timeout: 120
+    timeout: 600
     overlap: skip
   goblin_map:                      # Mon 07:30 — control-concentration / blast-radius map; warns only on growth
-    script: nova_goblin_map.py
-    args: ["--scheduled"]
+    script: nova_capability_ledger.py
+    args: ["--blast"]
     schedule: cron 30 7 * * 1
     timeout: 120
     overlap: skip
@@ -1243,8 +1222,8 @@ tasks:
     overlap: skip
   # === Documentary organs (Jordan 2026-10-15) — need the journal on disk / Studio scheduler beat ===
   tahiti_check:                    # Endless Summer: absence claims -> searched? window vs cycle? direct checks; monthly digest
-    script: nova_tahiti_check.py
-    args: ["--scheduled"]
+    script: nova_evidence_check.py
+    args: ["--absence", "--scheduled"]
     schedule: cron 20 5 1 * *
     timeout: 600
     overlap: skip
@@ -1259,4 +1238,23 @@ tasks:
     args: ["--beat"]
     schedule: every 30m
     timeout: 30
+    overlap: skip
+  # ---- 2026-10-15 plan (60 items) ----
+  chaos_proofs:                    # #46b weekly sandboxed re-proof that never-red monitors can go red
+    script: nova_chaos_proofs.py
+    args: ["--scheduled"]
+    schedule: cron 0 4 * * 0
+    timeout: 300
+    overlap: skip
+  wargame_watchdog:                # #47 roll back any chaos experiment still running past its deadline (no-op otherwise)
+    script: nova_wargame_live.py
+    args: ["--watchdog"]
+    schedule: every 5m
+    timeout: 120
+    overlap: skip
+  weekly_retro:                    # #57 Sun 17:00 — Nova's retro -> <=3 claude_queue items; latest for the 18:00 digest
+    script: nova_hotwash.py
+    args: ["--weekly-retro"]
+    schedule: cron 0 17 * * 0
+    timeout: 300
     overlap: skip

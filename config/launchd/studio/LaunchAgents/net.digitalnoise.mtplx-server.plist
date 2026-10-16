@@ -2,29 +2,30 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>Label</key>
-    <string>net.digitalnoise.mtplx-server</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/bin/zsh</string>
-        <string>__HOME__/.openclaw/scripts/mtplx_server_start.sh</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <dict>
-        <key>Crashed</key>
-        <true/>
-    </dict>
-    <key>StandardOutPath</key>
-    <string>__HOME__/.openclaw/logs/mtplx-server.log</string>
-    <key>StandardErrorPath</key>
-    <string>__HOME__/.openclaw/logs/mtplx-server.log</string>
-    <key>WorkingDirectory</key>
-    <string>__HOME__/.openclaw/scripts</string>
-    <key>ProcessType</key>
-    <string>Interactive</string>
-    <key>ThrottleInterval</key>
-    <integer>30</integer>
+	<key>KeepAlive</key>
+	<dict>
+		<key>Crashed</key>
+		<true/>
+	</dict>
+	<key>Label</key>
+	<string>net.digitalnoise.mtplx-server</string>
+	<key>ProcessType</key>
+	<string>Interactive</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/sh</string>
+		<string>-c</string>
+		<string>sleep 120; unset PYTHONPATH; exec /opt/homebrew/bin/python3.13 -m mtplx.server.openai --model /Volumes/Data/mlx-models/mtplx/Youssofal--Qwen3.6-27B-MTPLX-Optimized-Speed --backend-id qwen3_next --host 0.0.0.0 --port 5050 --depth 3 --generation-mode mtp --profile sustained --reasoning-mode off --preserve-thinking auto --verify-strategy capture_commit --verify-core linear-gdn-from-conv-tape --draft-lm-head-bits 3 --draft-lm-head-group-size 64 --draft-lm-head-mode affine --rate-limit 0 --stream-interval 1 --scheduler-mode serial --batching-preset latency --warmup-tokens 16 --model-id mtplx-qwen36-27b-optimized-speed --paged-kv-quantization off --fan-mode default --ssd-session-cache off --ssd-session-cache-max-size 100GB --ssd-session-cache-min-prefix-tokens 512 --draft-temperature 0.7 --draft-top-p 0.95 --draft-top-k 20 --tool-prompt-mode hybrid --chat-template-profile local_qwen36 --no-strict-mlx-fork-assert --temperature 0.6 --top-p 0.95 --top-k 20 --no-enable-thinking --reasoning-parser qwen3 --reasoning-effort auto</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/.openclaw/logs/mtplx-server.log</string>
+	<key>StandardOutPath</key>
+	<string>__HOME__/.openclaw/logs/mtplx-server.log</string>
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
+	<key>WorkingDirectory</key>
+	<string>/Volumes/Data</string>
 </dict>
 </plist>

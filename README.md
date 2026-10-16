@@ -4165,3 +4165,56 @@ What the bench changed:
   failed every file.
 
 Full runbook, results and gotchas: `agent_docs` doc_type `sdr-fleet`.
+
+## Nova Is the Customer — Organs, Reliability & Chaos (2026-10-15)
+
+A day of audits (overlap, effectiveness), research (SRE/DR/MTTx, chaos engineering, RATER, ITIL/Agile) and sixteen
+films turned into a 60-item plan that Little Mister approved in full. The governing rule: **Nova's organs are for Nova.**
+She is their primary customer, closes her own loops, and keeps Jordan informed instead of asking him. Red lines
+(physical guards, two-man rule, AE-35, kill switch, live chaos) go to Claude through `claude_queue`.
+
+```mermaid
+flowchart LR
+    S[Signals: alerts, probes, scheduler runs, radio] --> T{nova_alert_triage.page_class}
+    T -- "SLO page / Tier-0 down / house or Jordan impact" --> P[Immediate message to Jordan]
+    T -- everything else --> Q[Ticket in Nova's queue]
+    Q --> PR[nova_problems: one problem per recurrence key]
+    PR -- known error --> W[Workaround applied, no new incident]
+    PR -- fix lands --> C[Closed after 14 quiet days]
+    Q --> N[Nova decides: coagency, directive_resolve, ledger_aging]
+    N -- red line --> CL[claude_queue red_line_decision -> Claude]
+    N --> D[18:00 FYI summary to Jordan]
+    CL --> D
+```
+
+```mermaid
+flowchart TB
+    subgraph Reliability
+      T0[service_tiers: Tier0 RTO 1h / RPO 15m] --> WAL[nova_wal_archive: WAL to NAS + weekly base backup]
+      T0 --> RD[nova_restore_drill weekly + --ghola quarterly]
+      SLO[nova_slo: chat_jordan SLI, freeze on exhausted budget] --> FZ[slo_freeze/*]
+      PG[nova_pg_failover: witness -> fence -> LSN gates]
+    end
+    subgraph Chaos
+      CP[nova_chaos_proofs: never-red monitors proven red] --> WG[nova_wargame: E1-E6, K1, K2, G1 registry + gates]
+      WG -- "--propose" --> CL2[Claude approves]
+      CL2 --> LV[nova_wargame_live: one run, rollback in finally/atexit/signals/watchdog]
+      LV --> HW[hotwash experiment AAR]
+    end
+```
+
+**What landed**
+- **Paging:** 82 pages/day → under 1 on a 7-day replay; 52 problem records cover 2,376 incidents; postmortems carry due
+  dates, contributing factors and SLO budget, and are reviewed by Nova (not templated).
+- **Reliability:** `backup_restore_test` fixed (silent monthly failure since August); a weekly restore now restores
+  2.84M memories; WAL archiving staged with an automatic enable at 03:30 (Tier-0 RPO from ~13–26 h to minutes);
+  `chat_jordan` SLO on real traffic (82.7% today, frozen); incident stats as p50/p90.
+- **Organs:** ~20 organs became modes of their survivors (directive conflicts 4→1; Threshold + Hendershot + Goblin →
+  `nova_capability_ledger.py`; Ghola → restore drill; Night Watch → morning brief …); four double-running schedules removed;
+  guard decisions logged; Definition of Done enforced by PRR; Mark-to-Market grades 30-day predictions.
+- **Nova as customer:** one 18:00 summary replaces ~46 Slack asks per fortnight; value-check denials are binding;
+  herd-only autonomous outreach; beliefs need evidence; unclaimed time records a real look-then-pass.
+- **Flow:** Kanban on `claude_queue` (WIP 3, stale leases requeued, flow views), weekly retro, Q4 OKR, service dependencies,
+  catch-up re-runs for weekly/monthly tasks killed by environment failures, SDR audio/SNR/API health checks.
+- **Chaos:** Phase 0 proved all 14 never-red critical monitors can go red (sandboxed); the wargame registry holds the
+  experiments with `chaos/enabled=false` until Claude approves a run.

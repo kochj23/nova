@@ -25,6 +25,8 @@ import json
 import os
 import re
 import signal
+import socket
+import subprocess
 import sys
 import time
 import uuid
@@ -70,6 +72,64 @@ ALERT_MIN_INTERVAL_S = 3600
 QUARANTINE_THRESHOLD = 10
 
 
+# ── Catch-up re-runs (#26, 2026-10-15) ──────────────────────────────────────
+# A cron task that fires less than daily and whose latest scheduled run died on an
+# ENVIRONMENT error (missing module, missing interpreter, NAS path gone, PG refusing
+# connections) otherwise waits a whole week/month/quarter for its next chance — on
+# 2026-10-11/12 the Studio's python lost psycopg2 and every weekly organ missed its slot.
+# Such a slot is re-run once the environment probes healthy again: at most `max_attempts`
+# per slot, `min_spacing_s` apart, recorded with was_retry=true / trigger='catch_up'.
+# Config: scheduler.catch_up: {enabled, max_attempts, min_spacing_s, min_period_s}.
+CATCH_UP_DEFAULTS = {"enabled": True, "max_attempts": 3, "min_spacing_s": 1800,
+                     "min_period_s": 30 * 3600, "max_per_check": 3}
+CATCH_UP_CHECK_EVERY_S = 60
+
+_ENV_PATTERNS = (
+    ("module", re.compile(r"ModuleNotFoundError|No module named|missing dependency", re.I)),
+    ("import", re.compile(r"\bImportError\b")),
+    ("interpreter", re.compile(r"No such file or directory: '[^']*/(?:python[\d.]*|zsh|bash|sh)'")),
+    ("pg", re.compile(r"(?:connection to server|could not connect to server|Connect call failed)"
+                      r"[^\n]*(?:Connection refused|\b5432\b|\b5434\b|\b6432\b)"
+                      r"|Connection refused[^\n]*(?:5432|5434|6432)", re.I)),
+    ("path", re.compile(r"can't open file|No such file or directory|Permission denied|"
+                        r"Operation not permitted|Stale (?:NFS )?file handle|"
+                        r"Transport endpoint is not connected", re.I)),
+)
+_MODULE_RE = re.compile(r"No module named '([A-Za-z_][\w.]*)'")
+_QUOTED_PATH_RE = re.compile(r"'(/[^'\n]+)'")
+_cron_period_cache: dict = {}
+
+
+def classify_env_error(text: str) -> str:
+    """Environment-error class of a failure's error tail ('' = not an environment error).
+    Only these are worth a catch-up: the script itself is fine, the host around it was not."""
+    for kind, pat in _ENV_PATTERNS:
+        if pat.search(text or ""):
+            return kind
+    return ""
+
+
+def cron_period_s(expr: str, tz_name: str = "America/Los_Angeles") -> float:
+    """Shortest gap between consecutive fires of a 5-field cron expression (cached).
+    Expressions with day-of-month, month and day-of-week all '*' fire at least daily, so
+    they short-circuit without walking the calendar."""
+    f = expr.split()
+    if len(f) != 5:
+        return 0.0
+    if f[2] == "*" and f[3] == "*" and f[4] == "*":
+        return 0.0  # fires every day (or more often) — never a catch-up candidate
+    key = (expr, tz_name)
+    if key not in _cron_period_cache:
+        t = next_cron_time(expr, time.time(), tz_name)
+        gaps = []
+        for _ in range(4):
+            n = next_cron_time(expr, t, tz_name)
+            gaps.append(n - t)
+            t = n
+        _cron_period_cache[key] = min(gaps)
+    return _cron_period_cache[key]
+
+
 # ── Data structures ──────────────────────────────────────────────────────────
 
 @dataclass
@@ -84,6 +144,14 @@ class TaskState:
     pid: int = 0
     run_count: int = 0
     _retry_pending: bool = False
+    # Catch-up (#26): the missed cron slot whose run failed on an ENVIRONMENT error, how many
+    # catch-up attempts it has had, and when the last one started. Persisted in the state file.
+    catch_up_slot: float = 0
+    catch_up_attempts: int = 0
+    catch_up_last: float = 0
+    catch_up_kind: str = ""
+    catch_up_error: str = ""  # error tail that classified the slot (the probe reads it)
+    _slot: float = 0  # scheduled slot of the run in flight (a 60s retry inherits it)
 
 
 @dataclass
@@ -229,6 +297,7 @@ class NovaScheduler:
         self._last_forced_heartbeat = 0    # timestamp of last proof-of-life heartbeat
         self._last_task_alert: dict = {}   # task_id -> ts of last failure alert (1h rate limit)
         self._quarantined: set = set()     # dead-lettered task ids (in-memory; cleared on restart)
+        self._last_catch_up_check = 0.0
 
     def load(self):
         self.sched_cfg, self.slack_cfg, self.tasks = load_config()
@@ -249,6 +318,11 @@ class NovaScheduler:
                         s.consecutive_failures = sdata.get("consecutive_failures", 0)
                         s.run_count = sdata.get("run_count", 0)
                         s._retry_pending = sdata.get("_retry_pending", False)
+                        s.catch_up_slot = sdata.get("catch_up_slot", 0)
+                        s.catch_up_attempts = sdata.get("catch_up_attempts", 0)
+                        s.catch_up_last = sdata.get("catch_up_last", 0)
+                        s.catch_up_kind = sdata.get("catch_up_kind", "")
+                        s.catch_up_error = sdata.get("catch_up_error", "")
             except Exception:
                 pass
 
@@ -263,6 +337,11 @@ class NovaScheduler:
                 "run_count": task.state.run_count,
                 "next_run": task.state.next_run,
                 "_retry_pending": task.state._retry_pending,
+                "catch_up_slot": task.state.catch_up_slot,
+                "catch_up_attempts": task.state.catch_up_attempts,
+                "catch_up_last": task.state.catch_up_last,
+                "catch_up_kind": task.state.catch_up_kind,
+                "catch_up_error": task.state.catch_up_error,
             }
         STATE_PATH.write_text(json.dumps(data, indent=2))
         HEARTBEAT_FILE.write_text(str(time.time()))
@@ -314,14 +393,21 @@ class NovaScheduler:
 
     # ── Execution ────────────────────────────────────────────────────────
 
-    async def execute_task(self, task: Task):
+    async def execute_task(self, task: Task, trigger: str = "schedule"):
+        """trigger: 'schedule' (normal slot or its 60s retry), 'catch_up' (#26) or 'manual' (/run)."""
         task.state.running = True
         self._running_count += 1
         start = time.time()
         run_id = str(uuid.uuid4())
-        scheduled_at_ms = int(task.state.next_run * 1000)
+        catch_up = trigger == "catch_up"
+        if catch_up:
+            scheduled_at_ms = int(task.state.catch_up_slot * 1000)  # the missed slot it stands in for
+        else:
+            scheduled_at_ms = int(task.state.next_run * 1000)
+            if trigger == "schedule" and not task.state._retry_pending:
+                task.state._slot = task.state.next_run
         started_at_ms   = int(start * 1000)
-        was_retry = bool(task.state._retry_pending)
+        was_retry = bool(task.state._retry_pending) or catch_up
 
         nova_ops_writer.record_run_start(
             run_id=run_id,
@@ -333,20 +419,12 @@ class NovaScheduler:
             consecutive_failures=task.state.consecutive_failures,
             run_count=task.state.run_count,
             was_retry=was_retry,
+            trigger=trigger,
+            sched_host=SCHED_HOST,
         )
 
-        script_path = SCRIPTS_DIR / task.script
-        if task.script.endswith(".py"):
-            cmd = [self.sched_cfg.get("python", "/opt/homebrew/bin/python3"), str(script_path)] + task.args
-        elif task.script.endswith(".sh"):
-            cmd = [self.sched_cfg.get("shell", "/bin/zsh"), str(script_path)] + task.args
-        else:
-            cmd = [str(script_path)] + task.args
-
-        env = {**os.environ}
-        env["PATH"] = self.sched_cfg.get("env", {}).get("PATH", env.get("PATH", ""))
-        env["PYTHONPATH"] = self.sched_cfg.get("env", {}).get("PYTHONPATH", str(SCRIPTS_DIR))
-        env.update(task.env)
+        cmd = self._task_cmd(task)
+        env = self._task_env(task)
 
         _run_status = "success"
         _stdout_tail = ""
@@ -384,7 +462,8 @@ class NovaScheduler:
                     # run row / Slack alert had an empty error (cluster_render, wifi_scan, unifi_stalker)
                     task.state.last_error = stdout.decode(errors="replace")[-500:]
                 _error_tail = task.state.last_error
-                if not task.state._retry_pending and task.state.consecutive_failures == 0:
+                if (not catch_up and not task.state._retry_pending
+                        and task.state.consecutive_failures == 0):
                     # First failure — schedule a retry in 60s instead of counting it
                     task.state._retry_pending = True
                     task.state.next_run = time.time() + 60
@@ -447,6 +526,11 @@ class NovaScheduler:
                 retry_recovered=_retry_recovered,
             )
 
+            try:
+                self._note_catch_up(task, trigger, _run_status, _error_tail)
+            except Exception as e:  # noqa: BLE001 — bookkeeping must never break a run
+                log(f"catch-up bookkeeping failed for {task.id}: {e}", level=LOG_WARN, source="scheduler")
+
             task.state.running = False
             task.state.pid = 0
             task.state.last_run = start
@@ -473,6 +557,226 @@ class NovaScheduler:
             # Don't overwrite next_run if a retry was just scheduled
             if not task.state._retry_pending:
                 self._advance_next_run(task)
+
+    def _task_cmd(self, task: Task) -> list:
+        script_path = SCRIPTS_DIR / task.script
+        if task.script.endswith(".py"):
+            return [self.sched_cfg.get("python", "/opt/homebrew/bin/python3"), str(script_path)] + task.args
+        if task.script.endswith(".sh"):
+            return [self.sched_cfg.get("shell", "/bin/zsh"), str(script_path)] + task.args
+        return [str(script_path)] + task.args
+
+    def _task_env(self, task: Task) -> dict:
+        env = {**os.environ}
+        env["PATH"] = self.sched_cfg.get("env", {}).get("PATH", env.get("PATH", ""))
+        env["PYTHONPATH"] = self.sched_cfg.get("env", {}).get("PYTHONPATH", str(SCRIPTS_DIR))
+        env.update(task.env)
+        return env
+
+    # ── Catch-up re-runs (#26) ───────────────────────────────────────────
+
+    def _catch_up_cfg(self) -> dict:
+        raw = self.sched_cfg.get("catch_up", {})
+        if isinstance(raw, bool):
+            raw = {"enabled": raw}
+        cfg = {**CATCH_UP_DEFAULTS, **(raw or {})}
+        if os.environ.get("NOVA_SCHED_CATCH_UP", "").lower() in ("0", "false", "off", "no"):
+            cfg["enabled"] = False
+        return cfg
+
+    def _catch_up_eligible_task(self, task: Task) -> bool:
+        """Only cron tasks that fire less than ~daily: frequent tasks heal on their own next slot."""
+        if not task._cron_expr:
+            return False
+        tz = self.sched_cfg.get("tz", "America/Los_Angeles")
+        return cron_period_s(task._cron_expr, tz) >= self._catch_up_cfg()["min_period_s"]
+
+    @staticmethod
+    def _clear_catch_up(st: TaskState):
+        st.catch_up_slot = 0
+        st.catch_up_attempts = 0
+        st.catch_up_last = 0
+        st.catch_up_kind = ""
+        st.catch_up_error = ""
+
+    def _note_catch_up(self, task: Task, trigger: str, status: str, error: str):
+        """Update a task's missed-slot record from the outcome of a run."""
+        st = task.state
+        if status == "success":
+            if st.catch_up_slot:
+                log(f"CATCH-UP {'OK' if trigger == 'catch_up' else 'CLEARED'} {task.id} — slot "
+                    f"{datetime.fromtimestamp(st.catch_up_slot):%Y-%m-%d %H:%M} satisfied "
+                    f"({trigger})", level=LOG_INFO, source="scheduler")
+            self._clear_catch_up(st)
+            return
+        if trigger == "catch_up":
+            new_kind = classify_env_error(error)
+            if new_kind:
+                st.catch_up_kind, st.catch_up_error = new_kind, (error or "")[-500:]
+            if st.catch_up_attempts >= self._catch_up_cfg()["max_attempts"]:
+                log(f"CATCH-UP GAVE UP {task.id} — {st.catch_up_attempts} attempts for the missed slot",
+                    level=LOG_WARN, source="scheduler")
+            return
+        if trigger != "schedule":
+            return
+        kind = classify_env_error(error)
+        if not kind or not self._catch_up_eligible_task(task):
+            self._clear_catch_up(st)  # the newest slot failed for a non-environment reason
+            return
+        slot = st._slot or st.next_run
+        if st.catch_up_slot != slot:
+            self._clear_catch_up(st)
+            st.catch_up_slot = slot
+        st.catch_up_kind, st.catch_up_error = kind, (error or "")[-500:]
+
+    def _env_probe(self, task: Task, kind: str, error: str = "") -> tuple:
+        """Has the environment that broke this task recovered? -> (ok, detail). Cheap, read-only."""
+        try:
+            if kind == "module":
+                m = _MODULE_RE.search(error or "")
+                if not m:
+                    return True, "module error without a module name — spacing is the only guard"
+                mod = m.group(1).split(".")[0]
+                py = self.sched_cfg.get("python", "/opt/homebrew/bin/python3")
+                r = subprocess.run([py, "-c", f"import {mod}"], env=self._task_env(task),
+                                   cwd=str(SCRIPTS_DIR), capture_output=True, timeout=30)
+                return r.returncode == 0, f"import {mod}: {'ok' if r.returncode == 0 else 'still failing'}"
+            if kind == "interpreter":
+                interp = self._task_cmd(task)[0]
+                ok = os.access(interp, os.X_OK)
+                return ok, f"interpreter {interp}: {'present' if ok else 'missing'}"
+            if kind == "path":
+                m = _QUOTED_PATH_RE.search(error or "")
+                target = Path(m.group(1)) if m else SCRIPTS_DIR / task.script
+                script = SCRIPTS_DIR / task.script
+                ok = os.access(script, os.R_OK) and os.path.exists(target)
+                return ok, f"{target}: {'reachable' if ok else 'still missing/denied'}"
+            if kind == "pg":
+                host = os.environ.get("NOVA_PG_HOST", _nova_dsn.DEFAULT_HOST)
+                with socket.create_connection((host, 5432), timeout=5):
+                    pass
+                return True, f"PG {host}:5432 accepting connections"
+            return True, f"no specific probe for {kind or 'unknown'} — spacing is the only guard"
+        except Exception as e:  # noqa: BLE001 — a failed probe just means "not yet"
+            return False, f"probe failed: {str(e)[:120]}"
+
+    def catch_up_report(self, now: float = None, probe: bool = True) -> list:
+        """Every task holding a missed slot, and whether it WOULD be caught up right now.
+        -> [{task, slot, kind, attempts, would, reason}]. Read-only (the dry-run uses it too)."""
+        now = time.time() if now is None else now
+        cfg = self._catch_up_cfg()
+        out = []
+        for task in self.tasks.values():
+            st = task.state
+            if not st.catch_up_slot:
+                continue
+            row = {"task": task.id, "slot": st.catch_up_slot, "kind": st.catch_up_kind,
+                   "attempts": st.catch_up_attempts, "would": False, "reason": ""}
+            out.append(row)
+            if not cfg["enabled"]:
+                row["reason"] = "catch-up disabled"
+            elif not task.enabled or task.id in self._quarantined:
+                row["reason"] = "task disabled/quarantined"
+            elif not self._catch_up_eligible_task(task):
+                row["reason"] = "not a less-than-daily cron task"
+            elif st.running or st._retry_pending:
+                row["reason"] = "running or regular retry pending"
+            elif st.catch_up_attempts >= cfg["max_attempts"]:
+                row["reason"] = f"gave up after {st.catch_up_attempts} attempts"
+            elif now - max(st.catch_up_last, st.last_run) < cfg["min_spacing_s"]:
+                wait = cfg["min_spacing_s"] - (now - max(st.catch_up_last, st.last_run))
+                row["reason"] = f"spacing: next attempt in {wait / 60:.0f}m"
+            elif st.next_run - now < cfg["min_spacing_s"]:
+                row["reason"] = "next regular slot is imminent"
+            elif probe:
+                ok, detail = self._env_probe(task, st.catch_up_kind, st.catch_up_error)
+                row["would"], row["reason"] = ok, detail
+            else:
+                row["would"], row["reason"] = True, "eligible (environment not probed)"
+        return out
+
+    async def _run_catch_ups(self, now: float, max_conc: int):
+        rows = await asyncio.to_thread(self.catch_up_report, now)
+        budget = int(self._catch_up_cfg()["max_per_check"])  # no thundering herd after an outage
+        for row in rows:
+            task = self.tasks.get(row["task"])
+            if not row["would"] or task is None or task.state.running:
+                continue
+            if self._running_count >= max_conc or budget <= 0:
+                break
+            if task.group and any(t.state.running for t in self.tasks.values()
+                                  if t.group == task.group and t.id != task.id):
+                continue
+            if task.gpu_heavy and any(t.state.running and t.gpu_heavy for t in self.tasks.values()
+                                      if t.id != task.id):
+                continue
+            budget -= 1
+            task.state.catch_up_attempts += 1
+            task.state.catch_up_last = now
+            log(f"CATCH-UP {task.id} attempt {task.state.catch_up_attempts} for missed slot "
+                f"{datetime.fromtimestamp(task.state.catch_up_slot):%Y-%m-%d %H:%M} "
+                f"({task.state.catch_up_kind}: {row['reason']})", level=LOG_WARN, source="scheduler")
+            asyncio.create_task(self.execute_task(task, trigger="catch_up"))
+
+    async def seed_catch_up_from_history(self, now: float = None):
+        """Rebuild missed-slot records from scheduler_runs, so a slot that failed before this
+        code (or before a restart that lost state) is still caught up. Best-effort."""
+        now = time.time() if now is None else now
+        todo = [t for t in self.tasks.values()
+                if t.enabled and not t.state.catch_up_slot and self._catch_up_eligible_task(t)]
+        if not todo or not self._catch_up_cfg()["enabled"]:
+            return 0
+        try:
+            import asyncpg
+            conn = await asyncpg.connect(_nova_dsn.pg_url("nova_ops"), timeout=10)
+        except Exception as e:  # noqa: BLE001
+            log(f"catch-up seed skipped (no PG/asyncpg): {e}", level=LOG_WARN, source="scheduler")
+            return 0
+        seeded = 0
+        try:
+            for task in todo:
+                try:
+                    rows = await conn.fetch(
+                        "SELECT scheduled_at, started_at, status, error_tail, was_retry, "
+                        "COALESCE(\"trigger\", 'schedule') AS trig FROM scheduler_runs "
+                        "WHERE task_id=$1 AND (sched_host IS NULL OR sched_host=$2) "
+                        "AND status <> 'running' ORDER BY started_at DESC LIMIT 10",
+                        task.id, str(SCHED_HOST))
+                except Exception:  # noqa: BLE001 — pre-migration table: no trigger/sched_host
+                    rows = await conn.fetch(
+                        "SELECT scheduled_at, started_at, status, error_tail, was_retry, "
+                        "'schedule' AS trig FROM scheduler_runs WHERE task_id=$1 "
+                        "AND status <> 'running' ORDER BY started_at DESC LIMIT 10", task.id)
+                rec = self._missed_slot_from_rows(task, [dict(r) for r in rows], now)
+                if rec:
+                    st = task.state
+                    (st.catch_up_slot, st.catch_up_attempts, st.catch_up_last,
+                     st.catch_up_kind, st.catch_up_error) = rec
+                    seeded += 1
+        finally:
+            await conn.close()
+        if seeded:
+            log(f"catch-up: seeded {seeded} missed slot(s) from run history", level=LOG_INFO,
+                source="scheduler")
+        return seeded
+
+    def _missed_slot_from_rows(self, task: Task, rows: list, now: float):
+        """rows newest-first. -> (slot, attempts, last_attempt, kind, error) or None."""
+        if not rows or rows[0]["status"] == "success":
+            return None
+        kind = classify_env_error(rows[0]["error_tail"] or "")
+        if not kind:
+            return None
+        slot_row = next((r for r in rows if r["trig"] == "schedule" and not r["was_retry"]), None)
+        if slot_row is None:
+            return None
+        slot = slot_row["scheduled_at"] / 1000.0
+        tz = self.sched_cfg.get("tz", "America/Los_Angeles")
+        if next_cron_time(task._cron_expr, slot + 1, tz) <= now:
+            return None  # a newer slot has already come and gone — this one is stale
+        tries = [r for r in rows if r["trig"] == "catch_up" and r["scheduled_at"] == slot_row["scheduled_at"]]
+        last = max((r["started_at"] for r in tries), default=0) / 1000.0
+        return slot, len(tries), last, kind, (rows[0]["error_tail"] or "")[-500:]
 
     # ── Slack ────────────────────────────────────────────────────────────
 
@@ -601,7 +905,7 @@ class NovaScheduler:
             elif path.startswith("/run/"):
                 task_id = path[5:]
                 if task_id in self.tasks:
-                    asyncio.create_task(self.execute_task(self.tasks[task_id]))
+                    asyncio.create_task(self.execute_task(self.tasks[task_id], trigger="manual"))
                     body = json.dumps({"queued": task_id}).encode()
                 else:
                     body = json.dumps({"error": "unknown task"}).encode()
@@ -703,6 +1007,13 @@ class NovaScheduler:
                 f"  Status: http://127.0.0.1:{port}/tasks"
             )
 
+        try:
+            await self.seed_catch_up_from_history()
+        except Exception as e:  # noqa: BLE001
+            log(f"catch-up seed failed: {e}", level=LOG_WARN, source="scheduler")
+        # First catch-up check waits a minute so regular overdue work starts first.
+        self._last_catch_up_check = time.time()
+
         tick = self.sched_cfg.get("tick_interval", 1)
         max_conc = self.sched_cfg.get("max_concurrent", 6)
         hb_interval = self.sched_cfg.get("heartbeat_interval", 3600)
@@ -792,6 +1103,15 @@ class NovaScheduler:
 
                 asyncio.create_task(self.execute_task(task))
 
+            # Catch-up re-runs of missed less-than-daily slots (#26)
+            if (now - self._last_catch_up_check >= CATCH_UP_CHECK_EVERY_S
+                    and self._catch_up_cfg()["enabled"]):
+                self._last_catch_up_check = now
+                try:
+                    await self._run_catch_ups(now, max_conc)
+                except Exception as e:  # noqa: BLE001 — never let catch-up stall the loop
+                    log(f"catch-up check failed: {e}", level=LOG_WARN, source="scheduler")
+
             # Heartbeat
             if now - self._last_heartbeat > hb_interval:
                 await self._heartbeat()
@@ -861,7 +1181,27 @@ class NovaScheduler:
 
 # ── Entry point ──────────────────────────────────────────────────────────────
 
+def catch_up_dry_run(probe: bool = True) -> int:
+    """Print which missed less-than-daily slots WOULD be caught up now. Runs nothing."""
+    scheduler = NovaScheduler()
+    scheduler.load()
+    asyncio.run(scheduler.seed_catch_up_from_history())
+    rows = scheduler.catch_up_report(probe=probe)
+    cfg = scheduler._catch_up_cfg()
+    print(f"catch-up {'ENABLED' if cfg['enabled'] else 'DISABLED'} — max {cfg['max_attempts']} attempts/slot, "
+          f"spacing {cfg['min_spacing_s'] // 60}m, period >= {cfg['min_period_s'] / 3600:.0f}h ({CONFIG_PATH})")
+    if not rows:
+        print("no missed slots on record")
+    for r in sorted(rows, key=lambda r: (not r["would"], r["task"])):
+        print(f"  {'WOULD RUN' if r['would'] else 'blocked  '}  {r['task']:<28} slot "
+              f"{datetime.fromtimestamp(r['slot']):%Y-%m-%d %H:%M}  {r['kind'] or '-':<11} "
+              f"attempts {r['attempts']}  {r['reason']}")
+    return 0
+
+
 def main():
+    if "--catch-up-dry-run" in sys.argv:
+        sys.exit(catch_up_dry_run(probe="--no-probe" not in sys.argv))
     scheduler = NovaScheduler()
     scheduler.load()
     asyncio.run(scheduler.run())

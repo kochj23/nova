@@ -10,7 +10,9 @@ Phases (each independent; a failure in one never blocks the others):
   1. EPISODE   — one narrative memory summarizing the day (conversations,
                  notable ingest, incidents), source='episodic'.
   2. BELIEFS   — extract stated positions from today's published articles into
-                 nova_ops.beliefs (topic, stance, confidence, evidence slugs).
+                 nova_ops.beliefs (topic, stance, confidence, evidence refs). A belief
+                 is booked only with evidence (memory id + verbatim quote); the rest
+                 are refused and counted in sleep_cycle_belief_stats.
                  New stance on an existing topic supersedes the old row —
                  this is the opinion ledger that makes drift visible.
   3. RESONANCE — the daydream pass: find high-similarity pairs ACROSS unrelated
@@ -32,6 +34,7 @@ from datetime import date, datetime
 
 import psycopg2
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import nova_dsn as _nova_dsn  # noqa: E402
 MEM_DSN = _nova_dsn.pg_dsn("nova_memories")
 import nova_dsn as _nova_dsn  # noqa: E402
@@ -113,29 +116,75 @@ def phase_episode(mc):
 
 
 # ── Phase 2: belief extraction (the opinion ledger) ──────────────────────────
+# 2026-10-15 (#30): a belief is booked ONLY with evidence — the memory id of the article chunk it
+# came from AND a verbatim quote from that chunk that supports it. Before this, all 819 rows in
+# beliefs had evidence '{}' (only the article title in article_slug). No backfill: old rows stay as
+# they are; unevidenced new ones are refused and counted (sleep_cycle_belief_stats).
+MIN_QUOTE_WORDS = 4
+
+
+def _norm_ws(s):
+    return re.sub(r"[^a-z0-9 ]+", "", re.sub(r"\s+", " ", (s or "").lower())).strip()
+
+
+def belief_evidence(b, mem_id, title, body):
+    """(evidence_refs, refusal_reason). refs non-empty only when the belief carries a real source:
+    a memory id for the article chunk AND a quote of >= MIN_QUOTE_WORDS that is actually in it. Pure."""
+    if not mem_id:
+        return [], "no memory id for the source chunk"
+    q = (b.get("quote") or "").strip().strip('"\'')
+    if len(q.split()) < MIN_QUOTE_WORDS:
+        return [], "no supporting quote"
+    if _norm_ws(q) not in _norm_ws(body):
+        return [], "quote not found in the source text"
+    refs = [f"memory:{mem_id}"]
+    if title:
+        refs.append(f"article:{title}")
+    refs.append(f"quote:{q[:240]}")
+    return refs, None
+
+
+def _record_belief_stats(oc, booked, refused, reasons):
+    """Tolerant: one row per night. Never raises (the ledger matters more than the counter)."""
+    try:
+        import nova_pg_schema
+        nova_pg_schema.safe_ddl(oc, """CREATE TABLE IF NOT EXISTS sleep_cycle_belief_stats (
+            run_date date PRIMARY KEY, booked int NOT NULL DEFAULT 0, refused int NOT NULL DEFAULT 0,
+            reasons jsonb NOT NULL DEFAULT '{}'::jsonb, updated_at timestamptz NOT NULL DEFAULT now())""")
+        oc.execute("INSERT INTO sleep_cycle_belief_stats (run_date, booked, refused, reasons) "
+                   "VALUES (%s,%s,%s,%s::jsonb) ON CONFLICT (run_date) DO UPDATE SET booked=EXCLUDED.booked, "
+                   "refused=EXCLUDED.refused, reasons=EXCLUDED.reasons, updated_at=now()",
+                   (TODAY, booked, refused, json.dumps(reasons)))
+    except Exception as e:  # noqa: BLE001
+        log(f"beliefs: stats not recorded ({e})")
+
 
 def phase_beliefs(mc, oc):
-    mc.execute("""SELECT DISTINCT metadata->>'title', left(text, 1600)
+    mc.execute("""SELECT DISTINCT ON (metadata->>'title') id, metadata->>'title', left(text, 1600)
                   FROM memories WHERE source='nova_articles'
                   AND created_at > now() - interval '24 hours'
-                  AND coalesce(metadata->>'idx','0') IN ('0','1') LIMIT 10""")
+                  AND coalesce(metadata->>'idx','0') IN ('0','1')
+                  ORDER BY metadata->>'title', created_at LIMIT 10""")
     arts = mc.fetchall()
     if not arts:
         log("beliefs: no fresh articles"); return
-    added = revised = 0
-    for title, body in arts:
+    added = revised = refused = 0
+    reasons = {}
+    for mem_id, title, body in arts:
         try:
             raw = llm(
                 "Extract Nova's clearly-stated OPINIONS from this article excerpt as JSON: "
                 '[{"topic": "<3-6 word topic>", "stance": "<one-sentence position>", '
-                '"confidence": 0.5-1.0}] — only genuine positions, max 3, [] if none. '
+                '"confidence": 0.5-1.0, "quote": "<exact words copied from the excerpt that state it>"}] '
+                "— only genuine positions, max 3, [] if none. Every item MUST carry a verbatim quote of "
+                "at least four words from the excerpt; a position you cannot quote is not booked. "
                 "FALSIFIABLE-NARROW RULE (from the herd, 2026-09-14): write each stance "
                 "so the underlying records could contradict it — a specific claim tied to "
                 "evidence ('the UNAS cutover reduced write latency'), never a self-sealing "
                 "verdict that has already decided what it means ('our infrastructure is "
                 "excellent'). If a stance can't be proven wrong by data, drop it. "
                 "Output ONLY the JSON array.\n\n"
-                f"TITLE: {title}\n\n{body}", max_tokens=300, temperature=0.2)
+                f"TITLE: {title}\n\n{body}", max_tokens=400, temperature=0.2)
             beliefs = json.loads(raw[raw.find("["):raw.rfind("]") + 1])
         except Exception as e:
             log(f"beliefs: extraction failed for '{str(title)[:40]}': {e}"); continue
@@ -144,14 +193,20 @@ def phase_beliefs(mc, oc):
             stance = (b.get("stance") or "").strip()
             if not topic or not stance:
                 continue
+            evidence, why = belief_evidence(b, mem_id, title, body)
+            if not evidence:
+                refused += 1
+                reasons[why] = reasons.get(why, 0) + 1
+                log(f"beliefs: REFUSED unevidenced '{topic}' ({why})")
+                continue
             oc.execute("SELECT id, stance FROM beliefs WHERE topic=%s AND active", (topic,))
             row = oc.fetchone()
             if row and row[1] == stance:
                 continue
             oc.execute(
-                "INSERT INTO beliefs (topic, stance, confidence, article_slug) "
-                "VALUES (%s,%s,%s,%s) RETURNING id",
-                (topic, stance, float(b.get("confidence", 0.7)), title))
+                "INSERT INTO beliefs (topic, stance, confidence, article_slug, evidence) "
+                "VALUES (%s,%s,%s,%s,%s) RETURNING id",
+                (topic, stance, float(b.get("confidence", 0.7)), title, evidence))
             new_id = oc.fetchone()[0]
             if row:
                 oc.execute("UPDATE beliefs SET active=false, superseded_by=%s, "
@@ -159,7 +214,11 @@ def phase_beliefs(mc, oc):
                 revised += 1
             else:
                 added += 1
-    log(f"beliefs: +{added} new, {revised} revised")
+    booked = added + revised
+    rate = refused / (booked + refused) if (booked + refused) else 0.0
+    log(f"beliefs: +{added} new, {revised} revised, {refused} refused without evidence "
+        f"(refusal rate {rate:.0%})")
+    _record_belief_stats(oc, booked, refused, reasons)
 
 
 # ── Phase 3: resonance (sparks) ───────────────────────────────────────────────

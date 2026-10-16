@@ -230,6 +230,19 @@ class TestFunctional(unittest.TestCase):
         note.assert_not_called()
         self.assertIn("already on the slate", out)
 
+    def test_wrapper_says_merged_and_runs_the_slate(self):
+        err = __import__("io").StringIO()
+        with mock.patch.object(fs, "run_slate", return_value=0) as rs, mock.patch("sys.stderr", new=err):
+            self.assertEqual(fs.main(["--report", "2"]), 0)
+        rs.assert_called_once_with(["--report", "2"])
+        self.assertIn("merged into nova_mark_to_market.py --slate", err.getvalue())
+
+    def test_survivor_slate_mode_reaches_run_slate(self):
+        with mock.patch.dict(sys.modules, {"nova_flop_slate": fs}), \
+                mock.patch.object(fs, "run_slate", return_value=0) as rs:
+            self.assertEqual(mtm.main(["--slate", "--scheduled", "--quarter", "2026Q3"]), 0)
+        rs.assert_called_once_with(["--scheduled", "--quarter", "2026Q3"])
+
     def test_bad_quarter_is_an_argument_error(self):
         with self.assertRaises(SystemExit), redirect_stdout(io.StringIO()), \
                 mock.patch("sys.stderr", new=io.StringIO()):
@@ -251,6 +264,8 @@ class TestFrame(unittest.TestCase):
         self.assertIn("Little Mister, 2026-10-15", SRC)
         self.assertIn("Written by Jordan Koch (via Claude).", SRC)
         self.assertIn("Nobody knows anything", SRC)
+        self.assertIn("MERGED 2026-10-15", SRC)
+        self.assertIn("def run_slate(", SRC)
 
 
 if __name__ == "__main__":

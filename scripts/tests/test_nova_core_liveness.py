@@ -210,3 +210,69 @@ class TestFrame(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── #46(a) Chanos filter: the heartbeat is earned, never a literal 'up' ─────────
+def _hb(cur):
+    return [p for s, p in cur.sql if "INSERT INTO health_checks" in s]
+
+
+class TestHeartbeatEarned(unittest.TestCase):
+    def test_unit_heartbeat_status_table(self):
+        self.assertEqual(ncl.heartbeat_status(0, 0), ("up", None))
+        self.assertEqual(ncl.heartbeat_status(2, 0)[0], "degraded")
+        self.assertEqual(ncl.heartbeat_status(2, 1)[0], "down")
+        self.assertEqual(ncl.heartbeat_status(0, 0, "OperationalError: gone")[0], "down")
+
+    def test_security_status_is_a_parameter_not_a_literal(self):
+        hb = SRC.split("def heartbeat(")[1].split("\ndef ")[0]
+        self.assertNotIn("'up',0", hb.replace(" ", ""))
+        self.assertIn("%s", hb)
+
+    def test_functional_healthy_cycle_writes_up(self):
+        cur = _Cur()
+        with patch.object(ncl, "tcp_up", return_value=True), _quiet():
+            ncl.run_once(_Conn(cur))
+        self.assertEqual(_hb(cur)[0][0], "up")
+
+    def test_functional_closed_port_keystone_writes_degraded(self):
+        # the Chanos injection: one KEYSTONE pointed at a closed port -> it pages and the heartbeat goes red
+        import socket as _s
+        sock = _s.socket(); sock.bind(("127.0.0.1", 0)); port = sock.getsockname()[1]; sock.close()
+        ncl.notify.reset_mock(); cur = _Cur()
+        with patch.object(ncl, "KEYSTONES", [("Decoy", "127.0.0.1", port, None)]), _quiet():
+            n = ncl.run_once(_Conn(cur))
+        self.assertEqual(n, 1)
+        self.assertEqual(ncl.notify.call_args.kwargs["level"], "critical")
+        self.assertEqual(_hb(cur)[0][0], "degraded")
+
+    def test_retry_undelivered_page_writes_down(self):
+        cur = _Cur(cap_age=5000)
+        with patch.object(ncl, "tcp_up", return_value=True), patch.object(ncl, "notify", return_value=False), _quiet():
+            ncl.run_once(_Conn(cur))
+        self.assertEqual(_hb(cur)[0][0], "down")
+
+    def test_integration_check_failure_writes_down_then_raises(self):
+        class C(_Cur):
+            def execute(self, sql, params=None):
+                super().execute(sql, params)
+                if "max(checked_at)" in sql:
+                    raise RuntimeError("relation gone")
+
+        class Conn(_Conn):
+            def rollback(self):
+                pass
+        cur = C()
+        with patch.object(ncl, "tcp_up", return_value=True), _quiet(), self.assertRaises(RuntimeError):
+            ncl.run_once(Conn(cur))
+        st, detail = _hb(cur)[0]
+        self.assertEqual(st, "down"); self.assertIn("relation gone", detail)
+
+    def test_performance_status_is_pure_and_fast(self):
+        t = time.perf_counter()
+        for i in range(100000):
+            ncl.heartbeat_status(i % 3, i % 2)
+        self.assertLess(time.perf_counter() - t, 1.0)
+
+    def test_frame_docstring_documents_earned_status(self):
+        self.assertIn("heartbeat_status()", SRC.split('"""')[1])

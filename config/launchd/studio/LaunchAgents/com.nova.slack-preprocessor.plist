@@ -4,8 +4,8 @@
 <dict>
 	<key>EnvironmentVariables</key>
 	<dict>
-		<key>NOVA_SLACK_BOT_TOKEN</key>
-		<string>REDACTED-use-keychain</string>
+		<key>HOME</key>
+		<string>__HOME__</string>
 		<key>PATH</key>
 		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
 	</dict>
@@ -15,8 +15,9 @@
 	<string>com.nova.slack-preprocessor</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/bin/zsh</string>
-		<string>__HOME__/.openclaw/scripts/nova_slack_preprocessor_start.sh</string>
+		<string>/bin/sh</string>
+		<string>-c</string>
+		<string>n=0; while ! T=$(security find-generic-password -a nova -s nova-slack-bot-token -w 2&gt;/dev/null) &amp;&amp; [ $n -lt 8 ]; do sleep 10; n=$((n+1)); done; [ -n "$T" ] || { echo "[preprocessor] keychain locked" &gt;&amp;2; exit 1; }; NOVA_SLACK_BOT_TOKEN="$T" exec /opt/homebrew/bin/python3 "$HOME/.openclaw/scripts/nova_slack_preprocessor.py"</string>
 	</array>
 	<key>RunAtLoad</key>
 	<false/>

@@ -213,43 +213,49 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(len(ins), n)
         self.assertGreater(n, 25)
 
-    def test_review_posts_once_per_week(self):
+    def test_review_never_asks_jordan_grants_go_to_claude(self):
+        """2026-10-15: due grants -> ONE claude_queue red_line_decision; nothing posted to Slack."""
         now = NOW()
         stale = ("grant.autonomy_caps", True, now - timedelta(days=3), "active")
-        posted = []
         cur = FakeCur([
             ("kind=%s AND resolved_at IS NULL", []),
             ("WHERE status IN ('active','stale','lapsed')", [stale]),
-            ("FROM commanders_intent \n", []),
             ("ORDER BY kind, key", [("grant.autonomy_caps", "grant", "caps", "p", "inferred", "e", True, now,
+                                     now - timedelta(days=3), None, None, "stale"),
+                                    ("never.x", "never", "rule", "p", "inferred", "e", False, now,
                                      now - timedelta(days=3), None, None, "stale")]),
-            ("kind=%s AND ref_id=%s", []),
+            ("FROM claude_queue WHERE description LIKE", []),
+            ("FROM claude_sessions", [("s1",)]),
+            ("INSERT INTO claude_queue", [(321,)]),
         ])
-        mods = {"nova_annie_rule": MagicMock(check=lambda t, oc: {"ok": True}),
-                "nova_turning_point": MagicMock(decide=lambda *a, **k: {"allowed": True}),
-                "nova_config": MagicMock(SLACK_CHAN="C1")}
-        with patch.dict(sys.modules, mods), patch.object(CI, "_post", side_effect=lambda t: posted.append(t) or "9.9"):
-            res = CI.review(cur, now=now)
-        self.assertTrue(res["posted"])
-        self.assertEqual(len(posted), 1)
-        self.assertIn("grant.autonomy_caps", posted[0])
-        self.assertTrue(any("INSERT INTO slack_prompts" in s for s, _ in cur.calls))
-
-    def test_review_held_by_turning_point(self):
-        now = NOW()
-        cur = FakeCur([
-            ("kind=%s AND resolved_at IS NULL", []),
-            ("WHERE status IN ('active','stale','lapsed')", []),
-            ("ORDER BY kind, key", [("g", "grant", "x", "p", "inferred", "e", True, now, now - timedelta(days=3),
-                                     None, None, "stale")]),
-            ("kind=%s AND ref_id=%s", []),
-        ])
-        mods = {"nova_annie_rule": MagicMock(check=lambda t, oc: {"ok": True}),
-                "nova_turning_point": MagicMock(decide=lambda *a, **k: {"allowed": False})}
-        with patch.dict(sys.modules, mods), patch.object(CI, "_post") as p:
+        with patch.object(CI, "_post") as p:
             res = CI.review(cur, now=now)
         p.assert_not_called()
         self.assertFalse(res["posted"])
+        self.assertEqual(res["red_line_queue"], 321)
+        ins = [a for s_, a in cur.calls if "INSERT INTO claude_queue" in s_]
+        self.assertEqual(len(ins), 1)
+        self.assertTrue(ins[0][2].startswith("[red_line_decision] commanders_intent #2026-W41"))
+        self.assertIn("grant.autonomy_caps", ins[0][2])
+        self.assertNotIn("never.x", ins[0][2])
+        logs = [a for s_, a in cur.calls if "INSERT INTO intent_reasoning_log" in s_]
+        self.assertTrue(any(a[0] == "never.x" and "kept in force" in a[3] for a in logs))
+        self.assertFalse(any("INSERT INTO slack_prompts" in s_ for s_, _ in cur.calls))
+
+    def test_claude_red_line_session_may_decide_grants_but_nova_may_not(self):
+        cur = FakeCur([("FROM commanders_intent WHERE key", [("grant.x", "grant", "x", "p", "inferred", "e", True,
+                                                              NOW(), NOW(), None, None, "stale")])])
+        self.assertTrue(CI.confirm(cur, "grant.x", CI.RED_LINE_BY, NOW()))
+        with self.assertRaises(PermissionError):
+            CI.confirm(cur, "grant.x", "nova:own-decision", NOW())
+
+    def test_review_no_grants_due_files_nothing(self):
+        now = NOW()
+        cur = FakeCur([("kind=%s AND resolved_at IS NULL", []), ("WHERE status IN ('active','stale','lapsed')", []),
+                       ("ORDER BY kind, key", [])])
+        res = CI.review(cur, now=now)
+        self.assertIsNone(res["red_line_queue"])
+        self.assertFalse(any("claude_queue" in s_ for s_, _ in cur.calls))
 
 
 class TestFrame(unittest.TestCase):

@@ -4,7 +4,9 @@ nova_morning_brief.py — Nova's proactive 7am morning briefing.
 
 HAL: "Good morning, Dave. I've just picked up a fault in the AE-35 unit."
 
-Pulls: weather, email priorities, meetings, GitHub, system status.
+Pulls: weather, email priorities, meetings, GitHub, system status, and (since 2026-10-15,
+consolidation #17) the Night Watch PDB for 22:00-07:00 as its own section — the separate 07:02
+Night Watch post is retired; nova_night_watch.section() builds it, gated by privacy_guards.
 Posts to Slack AND speaks through Jordan's bedroom HomePod.
 
 Cron: 7am PT daily
@@ -386,6 +388,23 @@ def get_mail_summary():
 
 # ── Vector memory ─────────────────────────────────────────────────────────────
 
+NIGHT_WATCH_TIMEOUT = 150
+
+
+def get_night_watch():
+    """The Night Watch section (nova_night_watch.section, the PDB). Fails open: a broken
+    Night Watch never stops the brief, but it says so in one line rather than vanishing."""
+    try:
+        import nova_night_watch as NW
+        text = (NW.section() or "").strip()
+    except Exception as e:  # noqa: BLE001
+        log(f"night watch section unavailable: {e}")
+        return ["_🌙 Night Watch: unavailable this morning_", ""]
+    if not text:
+        return []
+    return ["*🌙 Night Watch (22:00-07:00):*", text, ""]
+
+
 def vector_remember(text, metadata=None):
     try:
         payload = json.dumps({"text": text, "source": "morning_brief",
@@ -406,7 +425,7 @@ def main():
     date_fmt  = NOW.strftime("%B %d")
 
     # Fetch all data sources in parallel — cuts brief build time from ~30s to ~10s
-    with ThreadPoolExecutor(max_workers=7) as executor:
+    with ThreadPoolExecutor(max_workers=8) as executor:
         weather_f   = executor.submit(get_weather)
         emails_f    = executor.submit(get_email_priorities)
         meetings_f  = executor.submit(get_calendar_events)
@@ -414,6 +433,7 @@ def main():
         gh_f        = executor.submit(get_github_overnight)
         health_f    = executor.submit(get_system_health)
         autonomy_f  = executor.submit(get_autonomy_note)
+        night_f     = executor.submit(get_night_watch)
 
         weather    = weather_f.result(timeout=30)
         emails     = emails_f.result(timeout=15)
@@ -425,6 +445,10 @@ def main():
             autonomy_note = autonomy_f.result(timeout=20)
         except Exception:
             autonomy_note = []
+        try:
+            night_watch = night_f.result(timeout=NIGHT_WATCH_TIMEOUT)
+        except Exception:
+            night_watch = ["_🌙 Night Watch: timed out this morning_", ""]
 
     # ── Spoken brief (concise, warm, HomePod-friendly) ──
     spoken_parts = [
@@ -500,6 +524,9 @@ def main():
         for i in issues:
             slack_lines.append(f"  • {i}")
         slack_lines.append("")
+
+    # Night Watch PDB (merged from the 07:02 post, 2026-10-15)
+    slack_lines.extend(night_watch)
 
     # Security overnight summary (Wazuh + Big Brother)
     try:

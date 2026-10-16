@@ -158,7 +158,7 @@ class TestSecurity(unittest.TestCase):
             self.assertFalse(R.enabled(_Cur([("claude_reviewer", None)])))
 
     def test_reviewer_decisions_do_not_feed_earned_autonomy(self):
-        cur = _Cur([("SELECT status, redline_pass, value_check", ("pending_human", True, {"available": True})),
+        cur = _Cur([("SELECT status, redline_pass, value_check", ("pending_human", True, {"available": True, "allowed": True})),
                     ("SELECT target_service, proposed_action", (None, "x"))])
         with mock.patch.object(co._safety, "note_human_decision") as nhd, _quiet():
             self.assertEqual(co.mode_decide(cur, "live", 5, "approve", "n", "claude-reviewer", "pending_human"), 0)
@@ -300,11 +300,40 @@ class TestIntegration(unittest.TestCase):
 
     def test_coagency_hold_stays_pending_with_note(self):
         cur = _Cur()
-        ok, res = R.act(cur, _item(), {"decision": "HOLD", "reason": "device"})
+        ok, res = R.act(cur, _item(), {"decision": "HOLD", "reason": "device"})   # outage hold: no source
         sql, p = cur.executed("UPDATE coagency_proposals SET decision_note")[0]
         self.assertIn("status='pending_human'", sql)
-        self.assertIn("HOLD for Jordan: device", p[0])
+        self.assertIn("HOLD (retry next run): device", p[0])
         self.assertNotIn("status=", sql.split("WHERE")[0])
+        self.assertEqual(cur.executed("INSERT INTO claude_queue"), [])
+
+    def test_real_hold_becomes_red_line_decision_for_claude(self):
+        """2026-10-15: a floor/claude HOLD goes to claude_queue tagged red_line_decision, not to Jordan."""
+        cur = _Cur([("FROM claude_queue WHERE description LIKE", None), ("FROM claude_sessions", ("s1",)),
+                    ("INSERT INTO claude_queue", (77,))])
+        with _quiet():
+            ok, res = R.act(cur, _item(title="unlock the side gate"), {"decision": "HOLD", "reason": "device", "source": "floor"})
+        self.assertTrue(ok)
+        self.assertIn("claude_queue #77", res)
+        ins = cur.executed("INSERT INTO claude_queue")[0][1]
+        self.assertEqual(ins[1], 2)                                   # priority high
+        self.assertTrue(ins[2].startswith("[red_line_decision] claude_reviewer:coagency #1:"))
+        sql, p = cur.executed("SET status='awaiting_claude'")[0]
+        self.assertIn("status='pending_human'", sql)
+
+    def test_value_denied_is_declined_never_held_or_approved(self):
+        """#29: her own value-check denial is binding — DECLINE regardless of what Claude says."""
+        it = _item(vc_allowed=False, vc_denied=True)
+        out = R.decide([it], "", ask=_ask({"P1": "APPROVE"}))
+        self.assertEqual(out["P1"]["decision"], "DECLINE")
+        self.assertIn("binding", out["P1"]["reason"])
+
+    def test_mode_decide_refuses_to_approve_a_value_denied_proposal(self):
+        cur = _Cur([("SELECT status, redline_pass, value_check", ("pending_human", True, {"available": True, "allowed": False}))])
+        with _quiet():
+            self.assertEqual(co.mode_decide(cur, "live", 5, "approve", "All approved (blanket)", "jordan (slack reply)"), 1)
+            self.assertEqual(cur.executed("SET status=%s, decided_at"), [])
+            self.assertEqual(co.mode_decide(cur, "live", 5, "reject", "no", "jordan"), 0)   # declining is always allowed
 
     def test_mode_decide_refuses_already_decided(self):
         cur = _Cur([("SELECT status, redline_pass", ("approved", True, {}))])
@@ -393,7 +422,7 @@ class TestFunctional(unittest.TestCase):
         rc, posts, act = self._run(cur, _ask({"P7": "APPROVE", "W5": "DECLINE", "L1": "DECLINE"}))
         self.assertEqual(rc, 0)
         logs = {p[2]: p[4] for _, p in cur.executed("INSERT INTO claude_reviewer_log")}
-        self.assertEqual(logs["121"], "HOLD")
+        self.assertEqual(logs["121"], "DECLINE")      # her own value check denied it: binding (#29)
         self.assertEqual(logs["7"], "APPROVE")
         self.assertEqual(logs["5"], "DECLINE")
         self.assertEqual(logs["1"], "DECLINE")

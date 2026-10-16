@@ -88,6 +88,12 @@ class Unit(unittest.TestCase):
         self.assertFalse(cr.due(date(2026, 11, 14), True))
         self.assertTrue(cr.due(date(2026, 11, 2), True, force=True))
 
+    def test_rater_cell(self):
+        self.assertEqual(cr.rater_cell("annie_flags", {"blocks": 1, "checks": 8}), "1 of 8 checks")
+        self.assertEqual(cr.rater_cell("unanswered", {"unanswered_share": 0.173}), "17.3%")
+        self.assertEqual(cr.rater_cell("x", {"status": "no data"}), "no data")
+        self.assertEqual(cr.rater_cell("notification_volume", {"per_day": 412.3}), "412.3/day")
+
     def test_pct(self):
         self.assertEqual(cr._pct(0.517), "51.7%")
         self.assertEqual(cr._pct(96.41), "96.4%")
@@ -111,6 +117,14 @@ class Integration(unittest.TestCase):
         self.assertEqual(m["never_recalled_pct"], 10.0)
         self.assertEqual(m["unclaimed"]["minutes_per_day"], 60)
         self.assertTrue(all("UPDATE" not in q and "DELETE" not in q for q in oc.q + mc.q))
+        self.assertIn("rater", m)                                  # item #54: section always present
+        self.assertEqual(set(m["rater"]["scores"]), set("RATES"))
+
+    def test_rater_section_survives_broken_module(self):
+        with mock.patch.dict(sys.modules, {"nova_rater": None}):
+            r = cr.rater_section(object())
+        self.assertEqual(r["scores"], {})
+        self.assertEqual(set(r["not_instrumented"]), set(cr.RATER_LABELS))
 
 
 class Functional(unittest.TestCase):
@@ -121,6 +135,21 @@ class Functional(unittest.TestCase):
         self.assertIn("Still not instrumented", body)
         for x in cr.NOT_INSTRUMENTED:
             self.assertIn(x, body)
+
+    def test_render_has_rater_scorecard_with_not_instrumented(self):
+        r = {"days": 30, "scores": {"R": 7, "A": 5, "T": None, "E": 5, "S": 8},
+             "indicators": {"slo_attainment": {"value": 0.875}, "slo_chat_jordan": {"status": "not instrumented"},
+                            "latency": {"p50_ms": 5800, "p95_ms": 8000, "value": 1.0}}}
+        body = cr.render(_metrics(rater=r), date(2026, 11, 1))
+        self.assertIn("## RATER scorecard (last 30 days)", body)
+        self.assertIn("T not instrumented", body)
+        self.assertIn("| chat_jordan SLO | not instrumented |", body)
+        self.assertIn("| SLO attainment (share of SLOs at target) | 87.5% |", body)
+        self.assertIn("| Reply latency p50 / p95 | 5800 ms / 8000 ms |", body)
+        self.assertIn("| Annie Wilkes blocks | not instrumented |", body)   # absent indicator
+
+    def test_render_without_rater_is_unchanged(self):
+        self.assertNotIn("RATER", cr.render(_metrics(), date(2026, 10, 1)))
 
     def test_render_compares_with_last_month(self):
         prev = _metrics(beliefs=700)

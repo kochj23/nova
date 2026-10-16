@@ -34,6 +34,11 @@ os.environ.pop("NOVA_REACH_DIRECT", None)
 rc = _load("reach_under_test", SCRIPT)
 
 
+# 2026-10-15: direct reaches now wait for the 18:00 summary unless they are real impact. The tests
+# below exercise the posting mechanism itself, so the impact-only hold is off here; TestImpactOnly
+# (test_nova_reach.py) covers it on.
+rc.IMMEDIATE_ONLY_FOR_IMPACT = False
+
 class _Resp:
     def __init__(self, payload):
         self._b = json.dumps(payload).encode()
@@ -49,8 +54,9 @@ class _Resp:
 
 
 class _Cur:
-    def __init__(self, today=0, last=None, prior=(), log_rows=()):
+    def __init__(self, today=0, last=None, prior=(), log_rows=(), herd=True):
         self.today, self.last, self.prior, self.log_rows = today, last, list(prior), list(log_rows)
+        self.herd = herd            # is the audience an active herd member (2026-10-15 outbound policy)
         self.sql, self.params, self._last, self.next_id = [], [], "", 10
 
     def execute(self, sql, params=None):
@@ -75,6 +81,8 @@ class _Cur:
             return (len(self.log_rows),)
         if "to_regclass" in s:
             return (None,)
+        if "FROM herd_correspondents" in s:
+            return (1,) if self.herd else None
         return None
 
     def records(self):
@@ -394,3 +402,84 @@ class TestHonestyGate(unittest.TestCase):
     def test_docstring_admits_the_direct_path_posts(self):
         self.assertNotIn("There is no code path that sends directly", rc.__doc__)
         self.assertIn("POSTED straight to #nova-chat", rc.__doc__)
+
+
+
+class TestHerdOnlyOutbound(unittest.TestCase):
+    """Jordan's answer (2), 2026-10-15: herd members on her own judgment; anyone else is blocked."""
+
+    def _process(self, cur, reach=None):
+        fake = _fake_coagency({"filed": True, "pid": 99, "status": "pending_human"})
+        with mock.patch.dict(sys.modules, {"nova_coagency": fake}), mock.patch.object(rc, "_lineage", lambda: {}), \
+             mock.patch.object(rc, "_post_direct") as post, redirect_stdout(StringIO()):
+            st = rc.process_reach(cur, dict(reach or GOOD))
+        return st, fake, post
+
+    def test_security_non_herd_recipient_is_dropped_and_never_filed(self):
+        cur = _Cur(herd=False)
+        st, fake, post = self._process(cur)
+        self.assertEqual(st, "dropped")
+        self.assertEqual(fake._calls, [])
+        post.assert_not_called()
+        self.assertEqual(cur.records()[-1][5], "dropped")
+
+    def test_unit_lookup_fails_closed(self):
+        class Boom:
+            def execute(self, *a):
+                raise RuntimeError("db down")
+        with redirect_stdout(StringIO()):
+            self.assertFalse(rc.is_active_herd(Boom(), "gaston"))
+
+    def test_integration_lookup_is_parameterised_and_requires_active_with_address(self):
+        cur = _Cur()
+        self.assertTrue(rc.is_active_herd(cur, "x'; DROP TABLE herd_correspondents;--"))
+        sql = [q for q in cur.sql if "herd_correspondents" in q][0]
+        self.assertIn("retired_at IS NULL", sql)
+        self.assertIn("coalesce(email,'') <> ''", sql)
+        self.assertNotIn("DROP", sql)
+
+    def test_functional_active_herd_member_is_filed(self):
+        st, fake, _ = self._process(_Cur(herd=True))
+        self.assertEqual(st, "filed")
+        self.assertEqual(len(fake._calls), 1)
+
+
+class TestImpactOnly(unittest.TestCase):
+    """Jordan 2026-10-15: immediate messages to him only for real impact; the rest go to the 18:00 summary."""
+
+    def setUp(self):
+        rc.IMMEDIATE_ONLY_FOR_IMPACT = True
+
+    def tearDown(self):
+        rc.IMMEDIATE_ONLY_FOR_IMPACT = False
+
+    def _direct(self, message, **kw):
+        cur = _Cur()
+        reach = {**GOOD, "audience": "jordan", "message": message, **kw}
+        with mock.patch.object(rc, "ground_reach", return_value=(message, "ok")), \
+             mock.patch.object(rc, "in_window", return_value=True), \
+             mock.patch.object(rc, "quiet_active", return_value=False), \
+             mock.patch.object(rc, "_turning_point", return_value={"allowed": True, "reason": "t"}), \
+             mock.patch.dict(sys.modules, {"nova_annie_rule": mock.Mock(check=lambda m, oc: {"ok": True, "flags": []})}), \
+             mock.patch.object(rc, "_post_direct", return_value=True) as post, redirect_stdout(StringIO()):
+            st = rc.process_reach(cur, reach)
+        return st, post, cur
+
+    def test_ordinary_reach_is_held_for_the_summary(self):
+        st, post, cur = self._direct("I read a lovely essay on tides — source: memory 12")
+        self.assertEqual(st, "held")
+        post.assert_not_called()
+        self.assertEqual(cur.records()[-1][5], "held")
+
+    def test_real_impact_goes_now(self):
+        st, post, _ = self._direct("The water leak sensor under the sink just tripped — source: HA event 4")
+        self.assertEqual(st, "sent")
+        post.assert_called_once()
+
+    def test_urgent_flag_goes_now(self):
+        st, post, _ = self._direct("hello — source: memory 1", urgent=True)
+        self.assertEqual(st, "sent")
+
+    def test_impact_check_unavailable_holds(self):
+        with mock.patch.dict(sys.modules, {"nova_notify_jordan": None}), redirect_stdout(StringIO()):
+            self.assertFalse(rc._real_impact("smoke detected"))

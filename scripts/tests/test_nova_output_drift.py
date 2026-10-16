@@ -88,10 +88,12 @@ def _routes(seen=(), **over):
 def _main(argv=("nova_output_drift.py",), routes=None, notify=None):
     cur = _Cur(routes or _routes())
     stub = types.ModuleType("nova_notify"); stub.notify = notify or MagicMock(return_value=True)
+    roll = types.ModuleType("nova_noise_rollup"); roll.record = MagicMock(return_value=True)
     out = io.StringIO()
     with patch.object(od.psycopg2, "connect", return_value=_Conn(cur)), patch.object(sys, "argv", list(argv)), \
-         patch.dict(sys.modules, {"nova_notify": stub}), redirect_stdout(out):
+         patch.dict(sys.modules, {"nova_notify": stub, "nova_noise_rollup": roll}), redirect_stdout(out):
         rc = od.main()
+    _main.record = roll.record
     return rc, cur, stub.notify, out.getvalue()
 
 
@@ -135,14 +137,14 @@ class TestRetry(unittest.TestCase):
         rc, cur, notify, out = _main(routes=_routes(**{"FROM scheduler_runs WHERE status IN": RuntimeError("relation missing")}))
         self.assertEqual(rc, 0)
         self.assertIn("probe_tasks failed (relation missing)", out)
-        self.assertTrue(any("Chronic down" in c[0][0] for c in notify.call_args_list))     # chronic probe still ran
+        self.assertTrue(any("Chronic down" in c[0][2] for c in _main.record.call_args_list))  # chronic probe still ran
 
     def test_delivery_probe_failure_does_not_stop_the_others(self):
         # RETRY GAP: run_deliveries — one attempt per run; the next hourly run checks again
         rc, cur, notify, out = _main(routes=_routes(**{"FROM scheduler_runs WHERE task_id = ANY": RuntimeError("timeout")}))
         self.assertEqual(rc, 0)
         self.assertIn("probe_deliveries failed (timeout)", out)
-        self.assertTrue(any("Chronic down" in c[0][0] for c in notify.call_args_list))
+        self.assertTrue(any("Chronic down" in c[0][2] for c in _main.record.call_args_list))
 
 
 class TestUnit(unittest.TestCase):
@@ -209,25 +211,25 @@ class TestIntegration(unittest.TestCase):
 
 
 class TestFunctional(unittest.TestCase):
-    def test_golden_path_raises_one_warning_per_finding(self):
+    def test_golden_path_rolls_up_each_finding_and_only_the_dead_mans_switch_notifies(self):
+        # #22 (2026-10-15): per-event notify off; one roll-up row per finding key per day
         rc, cur, notify, out = _main()
         self.assertEqual(rc, 0)
         self.assertIn("4 finding(s)", out)
-        keys = sorted(c[1]["dedup_key"] for c in notify.call_args_list)
-        self.assertEqual(keys, ["dead-mans-switch-recovery", "output_drift:chronic:nova-core6:ollama",
-                                "output_drift:proactive_digest:unchanged", "output_drift:stuck:coagency#116",
-                                "output_drift:weekly_report:empty"])
-        drift = [c for c in notify.call_args_list if c[1]["dedup_key"] != "dead-mans-switch-recovery"]
-        for c in drift:
-            self.assertEqual((c[1]["level"], c[1]["category"], c[1]["source"]), ("warning", "output_drift", "nova_output_drift"))
-        stuck = next(c for c in notify.call_args_list if c[1]["dedup_key"] == "output_drift:stuck:coagency#116")
-        self.assertEqual(stuck[1]["meta"], {"host": "nova-core"})                       # host -> the correlator opens an incident
-        self.assertIn("**Nothing**", next(c for c in notify.call_args_list if "proactive" in c[1]["dedup_key"])[0][1])
+        self.assertEqual([c[1]["dedup_key"] for c in notify.call_args_list], ["dead-mans-switch-recovery"])
+        rec = _main.record.call_args_list
+        keys = sorted(c[0][1] for c in rec)
+        self.assertEqual(keys, ["output_drift:chronic:nova-core6:ollama", "output_drift:proactive_digest:unchanged",
+                                "output_drift:stuck:coagency#116", "output_drift:weekly_report:empty"])
+        for c in rec:
+            self.assertEqual((c[0][0], c[0][3]), ("nova_output_drift", "warning"))
+        stuck = next(c for c in rec if c[0][1] == "output_drift:stuck:coagency#116")
+        self.assertIn("(nova-core)", stuck[0][2])                                       # host kept in the title
+        self.assertIn("**Nothing**", next(c for c in rec if "proactive" in c[0][1])[0][4])
 
-    def test_self_dedup_skips_keys_already_on_the_bus_today(self):
-        rc, cur, notify, out = _main(routes=_routes(seen=["output_drift:proactive_digest:unchanged", "output_drift:chronic:nova-core6:ollama"]))
-        self.assertEqual(notify.call_count, 3)                                           # 2 drift + 1 delivery
-        self.assertIn("source='nova_output_drift'", cur.ran("FROM telemetry.events WHERE source")[0][0])
+    def test_rollup_needs_no_bus_lookup(self):
+        rc, cur, notify, out = _main()
+        self.assertEqual(cur.ran("FROM telemetry.events WHERE source"), [])
 
     def test_dry_run_prints_and_notifies_nothing(self):
         rc, cur, notify, out = _main(["x", "--dry-run"])
@@ -261,6 +263,43 @@ class TestFrame(unittest.TestCase):
         self.assertIn("all output-drift assertions passed", r.stdout)
         self.assertIn('if __name__ == "__main__":', SRC)
 
+
+
+class TestMergedModeNeverRed(unittest.TestCase):
+    """Consolidation item #12 (2026-10-15): Chanos Filter runs as `nova_output_drift.py --never-red`; logic stays in nova_chanos_filter."""
+
+    def _with_fake(self, rc=0):
+        fake = types.SimpleNamespace(main=MagicMock(return_value=rc))
+        had, prev = "nova_chanos_filter" in sys.modules, sys.modules.get("nova_chanos_filter")
+        sys.modules["nova_chanos_filter"] = fake
+        self.addCleanup(lambda: sys.modules.__setitem__("nova_chanos_filter", prev) if had else sys.modules.pop("nova_chanos_filter", None))
+        return fake
+
+    def test_mode_forwards_remaining_args(self):
+        fake = self._with_fake(rc=0)
+        with redirect_stdout(io.StringIO()):
+            rc = od.main(["--never-red", "--scheduled"])
+        self.assertEqual(rc, 0)
+        fake.main.assert_called_once_with(["--scheduled"])
+
+    def test_mode_propagates_exit_code(self):
+        fake = self._with_fake(rc=2)
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(od.main(["--dry-run", "--never-red"]), 2)
+        fake.main.assert_called_once_with(["--dry-run"])
+
+    def test_mode_selftest_subprocess(self):
+        r = subprocess.run([sys.executable, str(SCRIPTS / "nova_output_drift.py"), "--never-red", "--selftest"],
+                           capture_output=True, text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("selftest ok", r.stdout)
+        self.assertIn("Chanos Filter", r.stdout + r.stderr)
+
+    def test_old_script_still_runnable(self):
+        r = subprocess.run([sys.executable, str(SCRIPTS / "nova_chanos_filter.py"), "--selftest"],
+                           capture_output=True, text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("MERGED 2026-10-15", (SCRIPTS / "nova_chanos_filter.py").read_text())
 
 if __name__ == "__main__":
     unittest.main()

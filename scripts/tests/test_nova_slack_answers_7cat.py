@@ -9,6 +9,7 @@ import io
 import json
 import subprocess
 import sys
+import time
 import types
 import unittest
 import urllib.error
@@ -55,8 +56,11 @@ def _http(code):
 class _Env(unittest.TestCase):
     def setUp(self):
         self.p = [mock.patch.object(sa.subprocess, "check_output", return_value=b"xoxb-test"),
-                  mock.patch.object(sa.time, "sleep")]
-        self.tok, self.sleep = [x.start() for x in self.p]
+                  mock.patch.object(sa.time, "sleep"),
+                  # the legacy proposal-posting mechanism is kept but OFF since 2026-10-15; these
+                  # tests exercise the mechanism itself, so they switch it on
+                  mock.patch.object(sa, "ASK_JORDAN_PROPOSALS", True)]
+        self.tok, self.sleep, _ = [x.start() for x in self.p]
         self._out = redirect_stdout(io.StringIO()); self.out = self._out.__enter__()
 
     def tearDown(self):
@@ -311,6 +315,90 @@ class TestQuietFunctional(_QuietEnv):
 class TestQuietFrame(_QuietEnv):
     def test_quiet_api_present(self):
         self.assertTrue(callable(sa.quiet_active)); self.assertTrue(hasattr(sa, "_QUIET"))
+
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 2026-10-15 — Nova is her own customer: she stops asking Jordan to decide proposals.
+# ═════════════════════════════════════════════════════════════════════════════
+class _ConflictCur:
+    def __init__(self):
+        self.sql = []
+
+    def execute(self, sql, params=None):
+        self.sql.append((sql, params))
+
+
+class TestOwnCustomer(unittest.TestCase):
+    def test_security_default_never_puts_proposals_to_jordan(self):
+        self.assertFalse(sa.ASK_JORDAN_PROPOSALS)
+        cur = mock.MagicMock()
+        with mock.patch.object(sa, "POST_HOURS", range(0, 24)), mock.patch.object(sa, "slack") as sl:
+            sa.post_pending_proposals(cur, dry=False)
+        sl.assert_not_called()
+        cur.execute.assert_not_called()
+
+    def test_performance_disabled_path_touches_nothing(self):
+        cur = mock.MagicMock()
+        t = time.perf_counter()
+        for _ in range(1000):
+            sa.post_pending_proposals(cur, dry=False)
+        self.assertLess(time.perf_counter() - t, 1.0)
+        cur.execute.assert_not_called()
+
+    def test_retry_organ_unavailable_still_records_his_conflict_decision(self):
+        cur = _ConflictCur()
+        with mock.patch.dict(sys.modules, {"nova_directive_conflict": None}), \
+             mock.patch.object(sa, "read_answer", return_value=("A wins", None)), \
+             mock.patch.object(sa, "confirm"):
+            self._run_conflict(cur)
+        self.assertTrue(any("UPDATE directive_conflicts" in s_ and p[1] == 9 for s_, p in cur.sql if p))
+
+    def test_unit_flag_is_a_module_constant(self):
+        self.assertIsInstance(sa.ASK_JORDAN_PROPOSALS, bool)
+
+    def test_integration_conflict_reply_goes_through_organ_decide(self):
+        dc = mock.MagicMock(); dc.decide = mock.MagicMock(return_value=True)
+        cur = _ConflictCur()
+        with mock.patch.dict(sys.modules, {"nova_directive_conflict": dc}), \
+             mock.patch.object(sa, "read_answer", return_value=("both apply", None)), \
+             mock.patch.object(sa, "confirm"):
+            self._run_conflict(cur)
+        kw = dc.decide.call_args.kwargs
+        self.assertEqual((kw["conflict_id"], kw["decision"], kw["decided_by"]), (9, "both apply", "jordan"))
+        self.assertFalse(any("UPDATE directive_conflicts" in s_ for s_, _ in cur.sql))
+
+    def test_functional_blanket_yes_on_denied_proposal_is_not_confirmed(self):
+        hist = {"ok": True, "messages": [{"user": next(iter(sa.HUMANS)), "ts": "1000.0", "text": "All approved"}]}
+        cur = mock.MagicMock(); cur.fetchall.return_value = [(5, "168", "999.0")]
+        with mock.patch.object(sa, "slack", return_value=hist), \
+             mock.patch.object(sa, "decide_proposal", return_value=False) as dp, \
+             mock.patch.object(sa, "confirm") as cf, redirect_stdout(io.StringIO()):
+            n = sa.blanket_approvals(cur, dry=False)
+        dp.assert_called_once()
+        cf.assert_not_called()
+        self.assertEqual(n, 0)
+
+    def _run_conflict(self, cur):
+        """Drive main()'s harvest loop for one open conflict prompt (id 9)."""
+        class _C(_ConflictCur):
+            def fetchall(inner):
+                last = inner.sql[-1][0]
+                return [(1, "conflict", "9", "C", "1.1")] if "FROM slack_prompts WHERE resolved_at IS NULL" in last else []
+
+            def fetchone(inner):
+                return (0,)
+        c = _C(); c.sql = cur.sql
+        conn = mock.MagicMock(); conn.cursor.return_value = c
+        with mock.patch.object(sa.psycopg2, "connect", return_value=conn), \
+             mock.patch.object(sa, "quiet_active", return_value=False), \
+             mock.patch.object(sa, "blanket_approvals", return_value=0), \
+             mock.patch.object(sa.sys, "argv", ["nova_slack_answers.py"]), redirect_stdout(io.StringIO()):
+            self.assertEqual(sa.main(), 0)
+
+    def test_frame_module_still_imports_and_exposes_entrypoints(self):
+        for n in ("main", "post_pending_proposals", "blanket_approvals", "decide_proposal"):
+            self.assertTrue(callable(getattr(sa, n)))
 
 
 if __name__ == "__main__":

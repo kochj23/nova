@@ -31,6 +31,9 @@ Buick 8 Logbook (cause 'unknown' until evidenced), and graded F until it is expl
 Library: grade(item) -> {"code": "B2", "reliability", "credibility", "label", "spinnaker", ...}
          estimative(p) -> ICD-203 words; load_ledger(oc); record_outcome(oc, ...)
 CLI:     --score (harvest every track record, write source_ledger + history; daily)
+         --invariants [--day YYYY-MM-DD] [--dry-run]  Crain's Square (merged 2026-10-15): the house's
+                  cross-sensor residuals (nova_crain_square.run -> crain_square_residuals, feeds
+                  source_outcomes); daily 05:30, before --score
          --show [--json]   --grade '<item json>'   --selftest
 Tables:  source_ledger, source_ledger_history, source_outcomes (organ-fed outcomes)
 Written by Jordan Koch (via Claude).
@@ -783,7 +786,7 @@ def selftest() -> int:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--score", action="store_true", help="harvest track records and write source_ledger")
-    ap.add_argument("--dry-run", action="store_true", help="with --score: print, write nothing")
+    ap.add_argument("--dry-run", action="store_true", help="with --score/--invariants: print, write nothing")
     ap.add_argument("--show", action="store_true")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--grade", help="item JSON to grade against the live ledger")
@@ -792,9 +795,18 @@ def main(argv=None) -> int:
     ap.add_argument("--cause")
     ap.add_argument("--evidence")
     ap.add_argument("--by", default="jordan")
+    ap.add_argument("--invariants", action="store_true",
+                    help="Crain's Square: do the house's sensors still add up (daily, before --score)")
+    ap.add_argument("--day", type=lambda v: datetime.strptime(v, "%Y-%m-%d").date(),
+                    help="with --invariants: local day (default yesterday)")
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
+    if a.invariants:
+        import nova_crain_square as crain
+        crain.log("Crain's Square: running as nova_cardinal.py --invariants (merged 2026-10-15)")
+        crain.run(a.day, dry=a.dry_run)
+        return 0
     if a.explain:
         if not (a.cause and a.evidence):
             ap.error("--explain needs --cause and --evidence")

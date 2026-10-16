@@ -16,8 +16,18 @@ What it does, every run:
   4. Verifies: pg_restore succeeded, key tables exist (claude_memories, agent_docs,
      scheduler_runs, telemetry.events, incidents), row counts within a sane ratio of live,
      newest data timestamp in the restored copy (RPO = now - newest data), elapsed (RTO).
-  5. nova_memories (2.2M vectors): CHEAP check only — newest dump exists, size, age, and
-     `pg_restore --list` reads its TOC. Never a full restore.
+  5. nova_memories (2.2M vectors): newest dump exists, size, age, `pg_restore --list` reads its
+     TOC, and (Little Mister, 2026-10-15, #34 — folded in from the retired monthly
+     nova_backup_restore_test.py) a DATA-ONLY restore of the memories table: every row of
+     the archive is decompressed and streamed by `pg_restore --data-only -t memories -f -` and
+     counted, then compared with the live count (±10%). Streaming instead of loading avoids
+     needing pgvector in the throwaway container and the 5 GB HNSW rebuild. --no-memories-data
+     skips it.
+  5b. Tier-0 recovery objectives (#35): the measured RTA (full-restore estimate) and RPA (the
+     smaller of the dump age and, when WAL archiving has a base backup, the archiver lag from
+     pg_stat_archiver) are recorded against nova_ops's tier targets (service_tiers: RTO 1h,
+     RPO 15m) as rto_met / rpo_met. Missing a target is recorded and reported, not a drill
+     FAIL — the drill fails on integrity; the gap is a reliability finding.
   6. Records the result in nova_ops.restore_drills, drops the drill DB, removes the container,
      and alerts via nova_notify (warning on failure or RPO > 26 h).
 
@@ -57,6 +67,8 @@ RATIO_LO, RATIO_HI = 0.80, 1.05   # restored/live — live grows after the dump;
 RATIO_ABS_SLACK = 50              # small tables: an absolute diff this small is always fine
 SETTLE_S = 15 * 60                # a dump whose newest file is younger than this may be mid-rsync
 MEM_MAX_AGE_H = 26.0
+MEM_RATIO_LO, MEM_RATIO_HI = 0.90, 1.10    # the retired monthly test's ±10% band
+WAL_BASE_DIR = os.environ.get("NOVA_WAL_BASE_DIR", "/mnt/nas/backups/pg_basebackup")
 DUMP_TZ = ZoneInfo("America/Los_Angeles")   # nova_pg_backup.sh names dumps in local (Pacific) time
 
 # Key tables: (qualified name, SQL expression for the newest row as epoch seconds or None)
@@ -89,7 +101,17 @@ CREATE TABLE IF NOT EXISTS public.restore_drills (
     memories_check   jsonb,
     passed           boolean NOT NULL,
     verdict          text
-)"""
+);
+ALTER TABLE public.restore_drills
+    ADD COLUMN IF NOT EXISTS tier smallint,
+    ADD COLUMN IF NOT EXISTS rto_target_s integer,
+    ADD COLUMN IF NOT EXISTS rpo_target_s integer,
+    ADD COLUMN IF NOT EXISTS rta_s double precision,
+    ADD COLUMN IF NOT EXISTS rpa_s double precision,
+    ADD COLUMN IF NOT EXISTS rpa_source text,
+    ADD COLUMN IF NOT EXISTS rto_met boolean,
+    ADD COLUMN IF NOT EXISTS rpo_met boolean
+"""
 
 
 def log(msg):
@@ -176,6 +198,38 @@ def verdict(restore_ok, checks, rpo_s, rto_s, rpo_max_s=RPO_MAX_H * 3600, rto_ma
     if rto_s is not None and rto_s > rto_max_s:
         reasons.append(f"RTO {rto_s / 60:.0f}m > {rto_max_s / 60:.0f}m")
     return (not reasons), reasons
+
+
+def count_copy_rows(lines, table="memories"):
+    """Rows inside `COPY <schema>.<table> ... FROM stdin;` blocks of a pg_restore SQL stream
+    (text COPY format escapes newlines, so one line = one row; a lone '\\.' ends the block). Pure."""
+    n, inside = 0, False
+    head = re.compile(r"^COPY (\S+\.)?\"?" + re.escape(table) + r"\"? ")
+    for line in lines:
+        if inside:
+            if line.rstrip("\n") == "\\.":
+                inside = False
+            else:
+                n += 1
+        elif head.match(line):
+            inside = True
+    return n
+
+
+# awk twin of count_copy_rows, run inside the throwaway container next to pg_restore
+COPY_COUNT_AWK = (r"BEGIN{n=0;c=0} c&&/^\\\.$/{c=0;next} c{n++;next} "
+                  r"/^COPY ([^ ]+\.)?\"?memories\"? /{c=1} END{print n}")
+
+
+def tier_objectives(rto_full_s, rto_s, dump_rpo_s, wal_rpa_s, rto_target_s, rpo_target_s):
+    """-> dict(rta_s, rpa_s, rpa_source, rto_met, rpo_met). RTA prefers the full-restore estimate;
+    RPA is the best recovery point actually available (WAL chain beats the nightly dump). Pure."""
+    rta = rto_full_s if rto_full_s is not None else rto_s
+    cands = [(v, src) for v, src in ((dump_rpo_s, "dump"), (wal_rpa_s, "wal")) if v is not None]
+    rpa, src = min(cands) if cands else (None, None)
+    return {"rta_s": rta, "rpa_s": rpa, "rpa_source": src,
+            "rto_met": None if rta is None or not rto_target_s else rta <= rto_target_s,
+            "rpo_met": None if rpa is None or not rpo_target_s else rpa <= rpo_target_s}
 
 
 def is_settled(newest_mtime, now_epoch, settle_s=SETTLE_S):
@@ -267,12 +321,61 @@ def live_counts():
     return out
 
 
+def live_memories_count():
+    import nova_dsn
+    import psycopg2
+    try:
+        with psycopg2.connect(nova_dsn.pg_dsn("nova_memories")) as c, c.cursor() as cur:
+            cur.execute("SET statement_timeout = '300s'")
+            cur.execute("SELECT count(*) FROM memories")
+            return cur.fetchone()[0]
+    except Exception as e:
+        log(f"live nova_memories count failed: {e}")
+        return None
+
+
+def tier_targets(component=SOURCE_DB):
+    """(tier, rto_s, rpo_s) for the drilled DB from service_tiers; Tier-0 defaults if unavailable."""
+    import nova_dsn
+    import psycopg2
+    from nova_service_tiers import targets, tier_for, load
+    try:
+        with psycopg2.connect(nova_dsn.pg_dsn(SOURCE_DB)) as c, c.cursor() as cur:
+            r = tier_for([component], load(cur) or [])
+        if r:
+            return r["tier"], r["rto_s"], r["rpo_s"]
+    except Exception as e:
+        log(f"service_tiers lookup failed ({e}); using Tier-0 defaults")
+    return (0, *targets(0))
+
+
+def wal_rpa_seconds(now_epoch):
+    """Archiver lag on the primary, but only when a base backup exists to replay it onto."""
+    import nova_dsn
+    import psycopg2
+    try:
+        base = Path(WAL_BASE_DIR)
+        if not base.is_dir() or not any((p / "backup_manifest").exists() for p in base.iterdir() if p.is_dir()):
+            return None
+        with psycopg2.connect(nova_dsn.pg_dsn(SOURCE_DB)) as c, c.cursor() as cur:
+            cur.execute("SELECT extract(epoch FROM last_archived_time), "
+                        "coalesce(last_failed_time > last_archived_time, false) FROM pg_stat_archiver")
+            last, failing = cur.fetchone()
+        if last is None:
+            return None
+        return max(0.0, now_epoch - float(last))
+    except Exception as e:
+        log(f"WAL RPA unavailable: {e}")
+        return None
+
+
 def record(row):
     import nova_dsn
     import psycopg2
+    from nova_pg_schema import safe_ddl
     cols = list(row)
     with psycopg2.connect(nova_dsn.pg_dsn(SOURCE_DB)) as c, c.cursor() as cur:
-        cur.execute(SCHEMA_SQL)
+        safe_ddl(cur, SCHEMA_SQL)
         cur.execute(f"INSERT INTO public.restore_drills ({', '.join(cols)}) VALUES "
                     f"({', '.join(['%s'] * len(cols))}) RETURNING id",
                     [json.dumps(row[k]) if isinstance(row[k], (dict, list)) else row[k] for k in cols])
@@ -303,8 +406,20 @@ def start_container(remote_dump_path):
     raise RuntimeError("drill postgres never became ready")
 
 
-def memories_cheap_check(base, now_epoch):
-    """nova_memories: newest dump exists, size, age, TOC readable — never a full restore."""
+def memories_data_count(dump_name, timeout=3 * 3600):
+    """Stream every row of the memories table out of the dump (data only) and count it."""
+    r = docker("run", "--rm", "-v", f"{REMOTE_DUMP_DIR}/{dump_name}:/dump:ro", IMAGE, "bash", "-c",
+               "set -o pipefail; pg_restore --data-only -t memories -f - /dump | awk '"
+               + COPY_COUNT_AWK + "'", timeout=timeout)
+    out = (r.stdout or "").strip().splitlines()
+    if r.returncode != 0 or not out or not out[-1].isdigit():
+        return None, (r.stderr or "").strip()[:200] or f"rc={r.returncode}"
+    return int(out[-1]), None
+
+
+def memories_cheap_check(base, now_epoch, data_restore=True):
+    """nova_memories: newest dump exists, size, age, TOC readable, and (data_restore) every row of
+    the memories table decompresses and the count matches live within ±10%. Never loads it."""
     out = {"ok": False}
     p, taken, sizes = newest_complete_dump(base, "nova_memories", now_epoch)
     if not p:
@@ -321,6 +436,17 @@ def memories_cheap_check(base, now_epoch):
                  and out["bytes"] > 1 << 30)
     if r.returncode != 0:
         out["error"] = r.stderr.strip()[:200]
+    if data_restore and out["ok"]:
+        t0 = time.time()
+        live = live_memories_count()
+        restored, err = memories_data_count(p.name)
+        out.update(data_rows=restored, live_rows=live, data_s=round(time.time() - t0, 1),
+                   data_ok=ratio_ok(restored, live, MEM_RATIO_LO, MEM_RATIO_HI))
+        if err:
+            out["error"] = f"data-only restore failed: {err}"
+        elif not out["data_ok"]:
+            out["error"] = f"memories row count off: restored={restored} live={live}"
+        out["ok"] = out["ok"] and out["data_ok"]
     return out
 
 
@@ -331,6 +457,10 @@ def main(argv=None):
                     help="skip TABLE DATA of non-key tables whose compressed file exceeds N MB")
     ap.add_argument("--dry-run", action="store_true", help="pick the dump and plan; no restore")
     ap.add_argument("--no-notify", action="store_true")
+    ap.add_argument("--no-memories-data", action="store_true",
+                    help="skip the nova_memories data-only restore count (TOC check only)")
+    ap.add_argument("--ghola", action="store_true",
+                    help="also run the Ghola Drill (quarterly) against this restore before it is removed")
     a = ap.parse_args(argv)
 
     now = time.time()
@@ -400,10 +530,17 @@ def main(argv=None):
         newest = max(newest_vals) if newest_vals else None
         rto_s = time.time() - t0
         try:
-            mem = memories_cheap_check(base, time.time())
+            mem = memories_cheap_check(base, time.time(), data_restore=not a.no_memories_data)
         except Exception as e:
             mem = {"ok": False, "error": str(e)[:200]}
         log(f"nova_memories cheap check: {mem}")
+        if a.ghola and restore_ok:      # Ghola folded in 2026-10-15: no second restore on the primary
+            try:
+                import nova_ghola_drill
+                g = nova_ghola_drill.run_against_restore(lambda sql: dpsql(sql), backup=str(dump))
+                log(f"ghola: {g.get('verdict')}")
+            except Exception as e:  # noqa: BLE001 — the restore drill's own verdict never depends on Ghola
+                log(f"ghola hook failed (non-fatal): {e}")
         dpsql(f"DROP DATABASE IF EXISTS {DRILL_DB}", db="postgres")
     except Exception as e:
         rto_s = time.time() - t0
@@ -422,6 +559,8 @@ def main(argv=None):
         reasons.append("restore never reached verification")
         passed = False
     rto_full = rto_full_estimate(rto_s, b_kept, b_total)
+    tier, rto_target, rpo_target = tier_targets()
+    obj = tier_objectives(rto_full, rto_s, rpo_s, wal_rpa_seconds(time.time()), rto_target, rpo_target)
     vtxt = "PASS" if passed else "FAIL: " + "; ".join(reasons)
     row = dict(host=socket.gethostname(), source_db=SOURCE_DB, backup_path=str(dump),
                backup_taken_at=taken, backup_bytes=sum(file_sizes.values()),
@@ -430,7 +569,8 @@ def main(argv=None):
                tables_data_skipped=len(skipped), restore_errors=restore_errors,
                checks={"tables": checks, "skipped": skipped[:50], "stderr_tail": err_tail[-800:],
                        "backup_age_s": backup_age_s},
-               memories_check=mem, passed=passed, verdict=vtxt)
+               memories_check=mem, passed=passed, verdict=vtxt,
+               tier=tier, rto_target_s=rto_target, rpo_target_s=rpo_target, **obj)
     try:
         rid = record(row)
         log(f"recorded restore_drills id={rid}")
@@ -440,9 +580,14 @@ def main(argv=None):
     rpo_txt = f"{rpo_s / 3600:.1f}h" if rpo_s is not None else "?"
     summary = (f"{SOURCE_DB} restore drill {'PASSED' if passed else 'FAILED'} — RPO {rpo_txt}, "
                f"RTO {rto_s / 60:.1f}m ({mode}), dump {dump.name}")
+    missed = [f"{k.upper()} target missed: measured {v / 60:.0f}m vs Tier{tier} {t / 60:.0f}m"
+              for k, v, t, met in (("rto", obj["rta_s"], rto_target, obj["rto_met"]),
+                                   ("rpo", obj["rpa_s"], rpo_target, obj["rpo_met"])) if met is False]
+    for m in missed:
+        log(m)
     log(summary + ("" if passed else " :: " + "; ".join(reasons)))
     if not a.no_notify:
-        _notify(summary, "\n".join(f"• {r}" for r in reasons) or None, "info" if passed else "warning")
+        _notify(summary, "\n".join(f"• {r}" for r in reasons + missed) or None, "info" if passed else "warning")
     return 0 if passed else 1
 
 

@@ -268,6 +268,7 @@ class TestFunctional(unittest.TestCase):
                                return_value=mock.Mock(returncode=0, stdout="approved", stderr="")) as run, \
              mock.patch.object(sa.urllib.request, "urlopen", urlopen), \
              mock.patch.object(sa, "POST_HOURS", range(0, 24)), \
+             mock.patch.object(sa, "ASK_JORDAN_PROPOSALS", True), \
              mock.patch.object(sa.sys, "argv", list(argv)), \
              redirect_stdout(io.StringIO()) as out:
             rc = sa.main()

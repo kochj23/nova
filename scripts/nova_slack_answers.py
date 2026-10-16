@@ -9,8 +9,8 @@ when the app has the reactions:read scope). Two kinds:
                a 👍/👎 reaction counts as "yes"/"no".
   proposal  -> a reply starting yes/approve/ok/👍 approves the co-agency proposal via the
                existing CLI (so trust bookkeeping happens); no/reject/👎 rejects it.
-               Pending proposals that have never been put to him are posted here, one line
-               each, at most PROPOSALS_PER_RUN per run, so approval is one reply, not a psql.
+               (2026-10-15: no longer posts pending proposals to him — Nova decides them on her
+               own path; ASK_JORDAN_PROPOSALS = False. His replies to older prompts still count.)
 
 Read-only over Slack, writes only its own table plus the two ledgers it exists to close.
 
@@ -209,6 +209,8 @@ def blanket_approvals(cur, dry):
                     "AND posted_at <= to_timestamp(%s) AND posted_at > to_timestamp(%s) - (%s || ' minutes')::interval",
                     (float(m["ts"]), float(m["ts"]), str(BLANKET_WINDOW_MIN)))
         for sid, ref, ts in cur.fetchall():
+            # #29: a blanket yes never executes a proposal her own value_check denied — mode_decide refuses
+            # it (rc 1), so it is neither confirmed nor resolved here.
             if decide_proposal(ref, "yes", "All approved (blanket, top-level)", dry):
                 if not dry:
                     cur.execute("UPDATE slack_prompts SET resolved_at=now(), result=%s WHERE id=%s", ("All approved (blanket)", sid))
@@ -287,7 +289,16 @@ def _turning_point(cur, text, backlog):
         return {"allowed": True, "reason": f"turning point unavailable ({e})"}
 
 
+ASK_JORDAN_PROPOSALS = False   # 2026-10-15 (Jordan: "Her questions go back to her ... She shouldn't wait for
+                               # me to answer"): pending proposals are decided on Nova's own path
+                               # (nova_coagency.mode_dispose + nova_claude_reviewer as her second key; red lines
+                               # -> claude_queue 'red_line_decision'). Nothing is put to him here any more; his
+                               # replies to older prompts are still harvested below.
+
+
 def post_pending_proposals(cur, dry):
+    if not ASK_JORDAN_PROPOSALS:
+        return
     if datetime.now().hour not in POST_HOURS:
         return
     if _QUIET if _QUIET is not None else quiet_active(cur):
@@ -348,10 +359,18 @@ def main():
             if ok:
                 confirm(ch, ts, f"Recorded: {'approved' if v == 'yes' else 'rejected'} #{ref}."
                                 + (" Handed to Claude." if v == "yes" else ""), dry)
-        elif kind == "conflict":    # wish #58: any reply in the thread IS the decision (posted by nova_directive_decide.py)
+        elif kind == "conflict":    # wish #58: any reply in the thread IS the decision (older posts; Nova no longer asks)
             if not dry:
-                cur.execute("UPDATE directive_conflicts SET status='decided', decided_by='jordan', decided_at=now(), "
-                            "decision_note=%s WHERE id=%s AND status IN ('open','decided')", (answer[:600], int(ref)))
+                ok_organ = False
+                try:   # the directive organ's decide() closes an OPEN row (nova_directive_conflict, 2026-10-15)
+                    import nova_directive_conflict as _dc
+                    ok_organ = bool(_dc.decide(conflict_id=int(ref), decision=answer[:600], decided_by="jordan",
+                                               reason="his reply in the Slack thread", cur=cur))
+                except Exception as e:  # noqa: BLE001
+                    log(f"directive organ decide() unavailable ({e}) — recording directly")
+                if not ok_organ:   # already decided (by Nova) or organ unavailable: his word overrides hers
+                    cur.execute("UPDATE directive_conflicts SET status='decided', decided_by='jordan', decided_at=now(), "
+                                "decision_note=%s WHERE id=%s AND status IN ('open','decided')", (answer[:600], int(ref)))
             ok = True
             confirm(ch, ts, f"Recorded your decision on directive conflict #{ref}. Thank you.", dry)
         elif kind == "wish":        # wish announcements (nova_aspirations._post_wish): his reply decides it

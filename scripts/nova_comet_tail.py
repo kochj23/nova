@@ -42,7 +42,16 @@ Never acts: read, record, notify. No deletes, no restarts.
 Measured for the monthly continuity review (--report): detections per month, % with a named
 cause, and accuracy over rows where a human or organ has filled comet_tail.confirmed.
 
+CHANGE LINKING (Little Mister, 2026-10-15, plan item #55): --changes joins recent changes — git
+commits in this repo and executed co-agency proposals — to the incidents that opened within 24 h
+after them and plausibly relate (the incident's root source script is a file the commit touched,
+or the change text names its source / host / category). Each change gets a class (standard /
+normal / emergency, nova_change_class) and an outcome (success / failed / rolled_back / pending),
+stored in change_outcomes and mirrored onto coagency_proposals. --report prints the monthly
+change-failure rate (failed + rolled_back over decided changes).
+
 CLI:   --scheduled            the 15-minute run (last 2h, write + notify)
+       --changes [--since 35d]  link changes -> incidents and print the monthly CFR (daily)
        --dry-run              evaluate and print, write nothing, notify nothing
        --window MINUTES       onset window (default 30)
        --since 24h|7d|90m     look back further than 2h (backfill / review)
@@ -173,8 +182,88 @@ CREATE INDEX IF NOT EXISTS comet_tail_ts ON comet_tail (ts);
 """
 
 
+CHANGES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS change_outcomes (
+  change_ref text PRIMARY KEY,
+  kind text NOT NULL,
+  at timestamptz NOT NULL,
+  title text,
+  change_class text NOT NULL,
+  outcome text NOT NULL,
+  incident_id bigint,
+  computed_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS change_outcomes_at ON change_outcomes (at);
+"""
+CHANGE_WINDOW_H = 24
+CHANGE_LOOKBACK_DAYS = 35
+
+
 def log(m: str) -> None:
     print(f"[comet-tail {datetime.now():%H:%M:%S}] {m}", flush=True)
+
+
+# ---------------------------------------------------------------- change linking (#55, pure)
+
+def _stem(name: str | None) -> str:
+    return Path(str(name or "")).name.removesuffix(".py").lower()
+
+
+SCRIPT_TOKEN_RE = re.compile(r"\b(nova_[a-z0-9_]+)(?:\.py)?\b", re.I)
+
+
+def change_components(change: dict) -> set:
+    """Script stems a change touched (commit files) or names (proposal target/text). Pure."""
+    comps = {_stem(f) for f in change.get("files") or [] if str(f).endswith((".py", ".sh"))
+             and "/tests/" not in f"/{f}" and not _stem(f).startswith("test_")}   # tests never page
+    if change.get("kind") == "proposal":
+        comps |= {m.lower() for m in SCRIPT_TOKEN_RE.findall(f"{change.get('target') or ''} {change.get('title') or ''}")}
+        if change.get("target"):
+            comps.add(_stem(change["target"]))
+    return {c for c in comps if len(c) >= 6}
+
+
+def change_relates(change: dict, inc: dict) -> bool:
+    """Does incident `inc` plausibly come from `change`? Pure. Only on a component match: the change
+    touched/names the incident's root source script, or a touched/named script appears in the incident
+    title (scheduler incidents name the failing task). Host/category words are too common to count."""
+    comps = change_components(change)
+    if not comps:
+        return False
+    if _stem(inc.get("source")) in comps:
+        return True
+    words = set(re.findall(r"[a-z0-9_]+", (inc.get("title") or "").lower()))
+    return bool(comps & words)
+
+
+def change_outcome(change: dict, incidents: list, now: datetime, reverted: bool = False):
+    """-> (outcome, incident_id). Pure. Incidents must carry opened_at."""
+    if reverted:
+        return "rolled_back", None
+    at, end = change["at"], change["at"] + timedelta(hours=CHANGE_WINDOW_H)
+    hits = sorted((i for i in incidents if at <= i["opened_at"] <= end and change_relates(change, i)),
+                  key=lambda i: i["opened_at"])
+    if hits:
+        return "failed", hits[0]["id"]
+    if now < end:
+        return "pending", None
+    return "success", None
+
+
+def monthly_cfr(rows: list) -> list:
+    """rows: [(month 'YYYY-MM', outcome)] -> [{month, changes, failed, cfr_pct}] newest first. Pure.
+    pending changes are not decided yet and are left out."""
+    by: dict = {}
+    for month, outcome in rows:
+        if outcome == "pending":
+            continue
+        m = by.setdefault(month, {"month": month, "changes": 0, "failed": 0})
+        m["changes"] += 1
+        m["failed"] += outcome in ("failed", "rolled_back")
+    out = []
+    for m in sorted(by.values(), key=lambda x: x["month"], reverse=True):
+        m["cfr_pct"] = round(100.0 * m["failed"] / m["changes"], 1) if m["changes"] else None
+        out.append(m)
+    return out
 
 
 # ---------------------------------------------------------------- pure helpers
@@ -802,6 +891,75 @@ def print_detection(det: dict) -> None:
         print(f"  explains? {i['started_at'][:16]} {i['title']}")
 
 
+def gather_changes(cur, since: datetime, commits: list | None = None) -> list:
+    """Commits + executed co-agency proposals since `since`, classified, with revert marks."""
+    import nova_change_class as cc
+    commits = cc.git_commits(max(1, (datetime.now(timezone.utc) - since).days + 1)) if commits is None else commits
+    reverted_subj, reverted_sha = set(), set()
+    for c in commits:
+        subj, sha = cc.reverted_target(c["subject"])
+        if subj:
+            reverted_subj.add(subj)
+        if sha:
+            reverted_sha.add(sha)
+    out = []
+    for c in commits:
+        if c["at"] < since:
+            continue
+        out.append({"ref": f"commit:{c['sha'][:12]}", "kind": "commit", "at": c["at"], "title": c["subject"],
+                    "files": c["files"], "target": "", "class": cc.classify_commit(c["subject"], c["files"]),
+                    "reverted": c["subject"] in reverted_subj or any(c["sha"].startswith(x) for x in reverted_sha)})
+    cur.execute("SELECT to_regclass('coagency_proposals') IS NOT NULL")
+    if (cur.fetchone() or (False,))[0]:
+        cur.execute("SELECT id, executed_at, proposed_action, rationale, origin, target_service, "
+                    "coalesce(execution_result, '') FROM coagency_proposals WHERE status='executed' "
+                    "AND executed_at >= %s", (since,))
+        for pid, at, act, why, origin, target, res in cur.fetchall():
+            out.append({"ref": f"proposal:{pid}", "kind": "proposal", "id": pid, "at": at, "title": act or "",
+                        "files": [], "target": target or "", "class": cc.classify_proposal(act, why, origin),
+                        "reverted": bool(re.search(r"\b(rolled back|reverted)\b", res, re.I))})
+    return out
+
+
+def link_changes(cur, days: int = CHANGE_LOOKBACK_DAYS, now: datetime | None = None,
+                 commits: list | None = None) -> dict:
+    """#55: change -> incidents within 24h -> outcome. Upserts change_outcomes, mirrors proposals."""
+    import nova_change_class as cc
+    import nova_pg_schema
+    now = now or datetime.now(timezone.utc)
+    since = now - timedelta(days=days)
+    nova_pg_schema.safe_ddl(cur, CHANGES_SCHEMA)
+    cc.ensure_columns(cur)
+    changes = gather_changes(cur, since, commits)
+    cur.execute("SELECT i.id, i.opened_at, i.host, e.category, e.source, i.title FROM telemetry.incidents i "
+                "LEFT JOIN telemetry.events e ON e.id = i.root_event WHERE i.opened_at >= %s", (since,))
+    incs = [dict(zip(("id", "opened_at", "host", "category", "source", "title"), r)) for r in cur.fetchall()]
+    tally: dict = {}
+    for ch in changes:
+        outcome, inc_id = change_outcome(ch, incs, now, ch["reverted"])
+        tally[outcome] = tally.get(outcome, 0) + 1
+        cur.execute("INSERT INTO change_outcomes (change_ref, kind, at, title, change_class, outcome, incident_id) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (change_ref) DO UPDATE SET outcome=EXCLUDED.outcome, "
+                    "incident_id=EXCLUDED.incident_id, change_class=EXCLUDED.change_class, computed_at=now()",
+                    (ch["ref"], ch["kind"], ch["at"], (ch["title"] or "")[:300], ch["class"], outcome, inc_id))
+        if ch["kind"] == "proposal":
+            cur.execute("UPDATE coagency_proposals SET change_class=coalesce(change_class, %s), outcome=%s, "
+                        "outcome_incident_id=%s, outcome_at=now() WHERE id=%s",
+                        (ch["class"], outcome, inc_id, ch["id"]))
+    log(f"changes: {len(changes)} linked over {days}d -> {tally}")
+    return tally
+
+
+def print_cfr(cur) -> None:
+    cur.execute("SELECT to_regclass('change_outcomes') IS NOT NULL")
+    if not (cur.fetchone() or (False,))[0]:
+        return
+    cur.execute("SELECT to_char(date_trunc('month', at), 'YYYY-MM'), outcome FROM change_outcomes")
+    print("\nChange-failure rate (monthly, #55):")
+    for m in monthly_cfr(cur.fetchall())[:12]:
+        print(f"  {m['month']}  changes {m['changes']:>4}  failed/rolled back {m['failed']:>3}  CFR {m['cfr_pct']}%")
+
+
 def report(cur, n: int) -> None:
     cur.execute("SELECT to_regclass('comet_tail') IS NOT NULL")
     if not (cur.fetchone() or (False,))[0]:
@@ -821,6 +979,7 @@ def report(cur, n: int) -> None:
     for m in monthly_stats(cur.fetchall()):
         print(f"  {m['month']}  detections {m['detections']:>3}  named {m['named_pct'] if m['named_pct'] is not None else '-'}%  "
               f"confirmed {m['confirmed']}  accuracy {m['accuracy_pct'] if m['accuracy_pct'] is not None else '-'}%")
+    print_cfr(cur)
 
 
 def main(argv=None) -> int:
@@ -830,6 +989,7 @@ def main(argv=None) -> int:
     ap.add_argument("--window", type=int, default=WINDOW_MIN, metavar="MINUTES", help="onset window (default 30)")
     ap.add_argument("--since", default=None, help="look back further than 2h: 90m, 24h, 7d")
     ap.add_argument("--report", nargs="?", const=20, type=int, metavar="N", help="last N detections + monthly stats")
+    ap.add_argument("--changes", action="store_true", help="link commits/executed proposals to incidents; print CFR")
     a = ap.parse_args(argv)
     if a.window < 1 or a.window > 24 * 60:
         ap.error("--window must be 1..1440 minutes")
@@ -839,6 +999,11 @@ def main(argv=None) -> int:
     try:
         if a.report is not None:
             report(cur, a.report)
+            return 0
+        if a.changes:
+            days = max(1, parse_since(a.since) // 1440) if a.since else CHANGE_LOOKBACK_DAYS
+            link_changes(cur, days)
+            print_cfr(cur)
             return 0
         lookback = parse_since(a.since) if a.since else LOOKBACK_MIN
         dets = evaluate(cur, lookback, a.window,

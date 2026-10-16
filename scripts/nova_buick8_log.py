@@ -105,10 +105,11 @@ def log_unexplained(kind: str, signature: str, description: str, evidence: dict 
                       (ts, rid))
             return rid
         new_ev = (existing + [ev])[-MAX_EVIDENCE:]
+        # a DORMANT entry (aged out by nova_ledger_aging, 2026-10-15 #25) wakes up on a new occurrence
         c.execute(
             "UPDATE unexplained_events SET occurrences=occurrences+1, "
             "first_seen=least(first_seen, %s), last_seen=greatest(last_seen, %s), "
-            "evidence=%s::jsonb WHERE id=%s",
+            "evidence=%s::jsonb, status=CASE WHEN status='dormant' THEN 'open' ELSE status END WHERE id=%s",
             (ts, ts, json.dumps(new_ev, default=str), rid))
         return rid
     finally:

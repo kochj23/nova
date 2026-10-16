@@ -251,5 +251,165 @@ class TestQuietFrame(unittest.TestCase):
         self.assertLessEqual(nj.QUIET_MAX_ITEMS, nj.MAX_ITEMS)
 
 
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 2026-10-15 — ONE daily 18:00 summary + immediate messages only for real impact
+# ═════════════════════════════════════════════════════════════════════════════
+import time  # noqa: E402
+from datetime import date  # noqa: E402
+
+
+class _SumCur:
+    """Answers by SQL substring; records statements. Missing sources raise like a missing table."""
+    def __init__(self, answers=(), missing=()):
+        self.answers, self.missing, self.sql, self._rows = list(answers), tuple(missing), [], []
+        self.connection = mock.MagicMock()
+
+    def execute(self, sql, params=None):
+        self.sql.append((sql, params))
+        for m in self.missing:
+            if m in sql:
+                raise RuntimeError(f'relation "{m}" does not exist')
+        self._rows = next((v for k, v in self.answers if k in sql), [])
+
+    def fetchall(self):
+        return list(self._rows)
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def stmts(self, frag):
+        return [(q, p) for q, p in self.sql if frag in q]
+
+
+DAY = date(2026, 10, 15)
+FULL = [("FROM coagency_proposals", [("dropped", 2), ("approved", 1)]),
+        ("FROM directive_conflicts", [(3, "ask first")]),
+        ("FROM claude_reviewer_log", [("APPROVE", 4)]),
+        ("FROM autonomy_ledger", [("restart:x", 2)]),
+        ("FROM outbound_ledger", [("email", 1)]),
+        ("FROM claude_queue\n                     WHERE completed_at", [(5, "Build wish #9")]),
+        ("FROM problems", [("DNS flaps",)]),
+        ("FROM postmortems", [("PM: NAS outage",)]),
+        ("FROM letting_go_log", [("organ", "fishbowl daily")]),
+        ("FROM herd_correspondents", []),
+        ("FROM flop_slate", []),
+        ("FROM claude_queue WHERE description LIKE", [(1, 2)]),
+        ("FROM reach_log", [(7, TS, "t", "the moon is close tonight")]),
+        ("FROM nova_daily_summaries", [])]
+
+
+def _daily(cur, post=None, dry=False, question=None):
+    ask = types.SimpleNamespace(question_for_summary=lambda c: question)
+    with mock.patch.dict(sys.modules, {"nova_ask_one": ask, "nova_pg_schema": mock.MagicMock()}), \
+         mock.patch.object(nj, "_annie_ok", return_value=True), redirect_stdout(io.StringIO()) as out:
+        rc = nj.daily(cur, dry=dry, day=DAY, post=post)
+    return rc, out.getvalue()
+
+
+class TestDailySecurity(unittest.TestCase):
+    def test_impact_bar_lets_only_real_impact_through(self):
+        for t in ("Smoke detected in the garage", "water leak sensor under the sink", "front door unlocked at 2am",
+                  "tier-0 gateway is down", "card was charged $400", "backups were deleted"):
+            self.assertTrue(nj.is_real_impact(t)[0], t)
+        for t in ("I read a lovely essay about tides", "a disk is 81% full", "new episode of a show you like"):
+            self.assertFalse(nj.is_real_impact(t)[0], t)
+        self.assertTrue(nj.is_real_impact("x", tier=0)[0])
+        self.assertTrue(nj.is_real_impact("x", level="critical", category="security")[0])
+        self.assertFalse(nj.is_real_impact("x", level="info", category="security")[0])
+
+    def test_summary_sql_is_parameterised(self):
+        cur = _SumCur(FULL)
+        _daily(cur, post=lambda t: (True, "9.9"))
+        for q, p in cur.sql:
+            if "nova_daily_summaries" in q and "CREATE" in q:
+                continue
+            self.assertIsNotNone(p, q)
+
+
+class TestDailyPerformance(unittest.TestCase):
+    def test_compose_is_bounded_and_fast(self):
+        big = {k: [f"item {i}" for i in range(500)] for k in ("decided", "did", "fixed", "retired", "claude")}
+        t = time.perf_counter()
+        text = nj.compose_daily(DAY, big)
+        self.assertLess(time.perf_counter() - t, 0.5)
+        self.assertLess(len(text), 1200)          # terse: SUMMARY_LINES per section
+
+
+class TestDailyRetry(unittest.TestCase):
+    def test_failed_post_records_error_and_returns_1_for_a_retry(self):
+        cur = _SumCur(FULL)
+        rc, _ = _daily(cur, post=lambda t: (False, None))
+        self.assertEqual(rc, 1)
+        (_, p), = cur.stmts("INSERT INTO nova_daily_summaries")
+        self.assertEqual(p[-1], "post failed")
+        self.assertFalse(cur.stmts("UPDATE reach_log"))
+
+    def test_already_posted_today_is_a_no_op(self):
+        cur = _SumCur([("FROM nova_daily_summaries", [(TS,)])])
+        post = mock.MagicMock()
+        rc, _ = _daily(cur, post=post)
+        self.assertEqual(rc, 0)
+        post.assert_not_called()
+
+
+class TestDailyUnit(unittest.TestCase):
+    def test_compose_omits_empty_sections_and_nothing_means_none(self):
+        self.assertIsNone(nj.compose_daily(DAY, {}))
+        t = nj.compose_daily(DAY, {"fixed": ["problem closed: DNS"]})
+        self.assertIn("*Fixed:* problem closed: DNS", t)
+        self.assertNotIn("Decided", t)
+        self.assertIn("FYI", t)
+
+    def test_question_is_optional_and_about_him(self):
+        t = nj.compose_daily(DAY, {}, question=(12, "Do you prefer warmer light in the evening?"))
+        self.assertIn("Q#12", t)
+        self.assertIn("only if you feel like it", t)
+
+
+class TestDailyIntegration(unittest.TestCase):
+    def test_missing_sources_drop_lines_not_the_summary(self):
+        cur = _SumCur(FULL, missing=("postmortems", "outbound_ledger", "letting_go_log"))
+        posted = []
+        rc, _ = _daily(cur, post=lambda t: posted.append(t) or (True, "1.2"))
+        self.assertEqual(rc, 0)
+        self.assertIn("*Decided:*", posted[0])
+        self.assertNotIn("postmortem", posted[0])
+
+
+class TestDailyFunctional(unittest.TestCase):
+    def test_golden_path_posts_once_marks_drawer_and_records_question(self):
+        cur = _SumCur(FULL)
+        posted = []
+        rc, _ = _daily(cur, post=lambda t: posted.append(t) or (True, "1700.1"),
+                       question=(12, "Do you prefer warmer light in the evening?"))
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(posted), 1)
+        t = posted[0]
+        for frag in ("*Decided:* proposals: 2 dropped, 1 approved", "3 directive conflict(s) resolved myself",
+                     "*Did:*", "*Fixed:* problem closed: DNS flaps", "*Retired:* organ: fishbowl daily",
+                     "*Red lines → Claude:* 1 new", "*Noticed* (1)", "Q#12"):
+            self.assertIn(frag, t)
+        self.assertEqual(cur.stmts("UPDATE reach_log SET status='sent'")[0][1], ([7],))
+        self.assertEqual(cur.stmts("INSERT INTO slack_prompts")[0][1], ("12", "C_TEST_CHAT", "1700.1"))
+
+    def test_dry_run_prints_and_writes_nothing(self):
+        cur = _SumCur(FULL)
+        post = mock.MagicMock()
+        rc, out = _daily(cur, post=post, dry=True)
+        post.assert_not_called()
+        self.assertIn("Nova — Thu Oct 15", out)
+        self.assertFalse(cur.stmts("INSERT"))
+        self.assertFalse(cur.stmts("UPDATE"))
+
+
+class TestDailyFrame(unittest.TestCase):
+    def test_cli_has_daily(self):
+        import subprocess
+        r = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--daily", r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

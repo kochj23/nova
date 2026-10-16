@@ -37,6 +37,10 @@ table, schedule and posting rule; the logic of the absorbed two stays in their m
   --oversight  the AE-35 audit, nova_ae35_rule.audit(): changes to Nova's own watchers acted on
                without a witness. Table ae35_events; claude_queue questions. Daily 05:10, --days 30.
 
+  --why        the plain-language view (was nova_action_why.py, merged 2026-10-15): each recent
+               claude_actions row and its recorded rationale, or "no rationale was recorded".
+               Read-only, on demand (no schedule). --limit / --target / --missing-only.
+
 Usage: nova_action_audit.py --complete [--hours 24] | --rationale [--days 7] | --oversight [--days 30]
        [--dry-run] | --selftest | --help      (--audit is the old name of --complete)
 Written by Jordan Koch (via Claude).
@@ -443,6 +447,11 @@ def main(argv=None) -> int:
                       help="P4: stated rationale vs the objective record (weekly, --days 7)")
     mode.add_argument("--oversight", action="store_true",
                       help="AE-35: watcher changes acted on without a witness (daily, --days 30)")
+    mode.add_argument("--why", action="store_true",
+                      help="what Nova did recently and why (claude_actions + rationale; read-only)")
+    ap.add_argument("--limit", type=int, default=10, help="--why: actions shown")
+    ap.add_argument("--target", help="--why: only actions whose target contains this text")
+    ap.add_argument("--missing-only", action="store_true", help="--why: only actions with no recorded rationale")
     ap.add_argument("--dry-run", action="store_true", help="read and print, write nothing")
     ap.add_argument("--hours", type=int, default=24, help="--complete window")
     ap.add_argument("--days", type=int, help="--rationale (default 7) / --oversight (default 30) window")
@@ -450,6 +459,9 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
+    if a.why:
+        import nova_action_why
+        return nova_action_why.run(a.limit, a.target, a.missing_only)
     if a.rationale:
         rationale(a.days or 7, a.dry_run)
         return 0

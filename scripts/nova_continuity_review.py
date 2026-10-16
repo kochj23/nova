@@ -134,7 +134,70 @@ def measure(oc, mc, since="2026-09-14"):
     m["herd_reaches_sent_30d"] = _one(oc, "SELECT count(*) FROM reach_log WHERE status='sent' "
                                           "AND ts > now() - interval '30 days' AND audience <> 'jordan'")
     m["not_instrumented"] = list(NOT_INSTRUMENTED)
+    m["rater"] = rater_section(oc)
     return m
+
+
+RATER_DAYS = 30
+RATER_LABELS = {   # indicator -> how it reads in the table (plan item #54, 2026-10-15)
+    "slo_attainment": "SLO attainment (share of SLOs at target)",
+    "slo_chat_jordan": "chat_jordan SLO",
+    "promises_kept": "Promises kept",
+    "mark_to_market_realisation": "Mark-to-market realisation (mean class ratio)",
+    "cited_reply_share": "Grounded/cited reply share (proxy)",
+    "calibration": "Calibration (soft certainty gap)",
+    "weight_of_presence": "Weight of presence (there for his asks)",
+    "annie_flags": "Annie Wilkes blocks",
+    "latency": "Reply latency p50 / p95",
+    "unanswered": "Unanswered share of his asks",
+    "journal_pageviews": "Journal pageviews (visitors)",
+    "notification_volume": "Notification volume (sent/day)",
+}
+
+
+def rater_section(oc, days=RATER_DAYS) -> dict:
+    """Monthly RATER scorecard from nova_rater (same indicators as the weekly self-assessment). A missing
+    source is 'not instrumented'; the review never fails because one indicator could not be read."""
+    try:
+        import nova_rater
+        return nova_rater.assess(oc, days)
+    except Exception as e:  # noqa: BLE001
+        return {"days": days, "scores": {}, "indicators": {}, "error": str(e)[:200],
+                "not_instrumented": sorted(RATER_LABELS)}
+
+
+def rater_cell(key, ind) -> str:
+    """One indicator -> its table cell. Pure."""
+    ind = ind or {}
+    if ind.get("status"):
+        return ind["status"]
+    if key == "latency":
+        return f"{ind.get('p50_ms', '—')} ms / {ind.get('p95_ms', '—')} ms"
+    if key == "annie_flags":
+        return f"{ind.get('blocks', 0)} of {ind.get('checks', 0)} checks"
+    if key == "journal_pageviews":
+        return f"{ind.get('pageviews', '—')} ({ind.get('visitors', '—')})"
+    if key == "notification_volume":
+        return f"{ind.get('per_day', '—')}/day"
+    if key == "unanswered":
+        return _pct(ind.get("unanswered_share"))
+    if key == "calibration":
+        return f"gap {ind.get('gap')}, hit rate {ind.get('hit_rate')}"
+    return _pct(ind.get("value"))
+
+
+def render_rater(r) -> list:
+    if not r:
+        return []
+    sc = r.get("scores") or {}
+    out = ["", f"## RATER scorecard (last {r.get('days', RATER_DAYS)} days)", "",
+           "Scores 1-10 from my own tables (nova_rater.py): " +
+           ", ".join(f"{k} {sc.get(k) if sc.get(k) is not None else 'not instrumented'}" for k in "RATES") + ".",
+           "", "| Indicator | Now |", "|---|---|"]
+    ind = r.get("indicators") or {}
+    out += [f"| {label} | {rater_cell(k, ind.get(k) or {'status': 'not instrumented'})} |"
+            for k, label in RATER_LABELS.items()]
+    return out
 
 
 def _pct(v):
@@ -184,6 +247,7 @@ def render(m, month: date, prev=None) -> str:
            f"[September 14]({FIRST}).*", "",
            "| Measure | Baseline 9-14 | Last month | Now |", "|---|---|---|---|"]
     out += [f"| {a} | {b} | {c} | {d} |" for a, b, c, d in rows]
+    out += render_rater(m.get("rater"))
     out += ["", "**Unclaimed-wake outcomes (last 30 days, from the memories they left):** " +
             ", ".join(f"{k} {v}" for k, v in sorted(m["unclaimed_outcomes_30d"].items(), key=lambda x: -x[1])),
             "", "**Skill pursuits (last 30 days):** " +

@@ -124,7 +124,55 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(WB.selftest(), 0)
 
 
-class TestIntegration(unittest.TestCase):
+class InstrumentCases:
+    """Item #24 (2026-10-15): one compact line per own organ in the turnover."""
+    NOWT = datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)
+
+    def _routes(self):
+        ts = self.NOWT - timedelta(minutes=20)
+        return {"to_regclass": [(True,)],
+                "lag(reliability)": [(2,)],
+                "DISTINCT ON (source_id)": [("A", 1), ("F", 9)],
+                "FROM pendulum_blades": [("disk:root", "disk", 4.2, False, True), ("cert:x", "cert", 59.0, True, False)],
+                "FROM federal_hill_lights": [("face_ttl", "held"), ("quarantine", "unavailable")],
+                "FROM derry_monthly": [(2026, 10, "scanner_transmissions", 28644.0)],
+                "FROM jade_amulet_manifest": [("h1", 136, ts)],
+                "FROM embodiment_state": [(ts, "calm", -0.37)],
+                "FROM affect_state": [(ts, "mildly keyed-up", 0.275, 0.55)],
+                "FROM time_sense": [(ts, "usual", 3)]}
+
+    def test_eight_compact_lines(self):
+        with mock.patch.object(W, "now_utc", return_value=self.NOWT):
+            lines = WB.instruments(Cur(self._routes()))
+        self.assertEqual(len(lines), 8)
+        joined = "\n".join(lines)
+        for part in ("CARDINAL: 10 sources graded — A1 F9; 2 grade change(s)", "Pendulum: 2 blades; nearest disk:root",
+                     "inside lead", "1 held, 0 breached, 1 unavailable (quarantine)", "Derry Clock 2026-10",
+                     "Jade Amulet: 136 items", "Embodiment: house calm", "Affect: mildly keyed-up",
+                     "Time sense: tempo usual for 3 h (20 min ago)"):
+            self.assertIn(part, joined)
+        self.assertTrue(all(len(l) < 200 for l in lines))
+
+    def test_missing_tables_skipped_quietly(self):
+        cur = Cur({"to_regclass": [(False,)]})
+        self.assertEqual(WB.instruments(cur), [])
+        self.assertTrue(all("to_regclass" in q for q, _ in cur.sql))     # nothing else was queried
+
+    def test_one_failing_organ_never_sinks_the_rest(self):
+        with mock.patch.object(WB, "inst_pendulum", side_effect=TypeError("bad row")), \
+                mock.patch.object(WB, "INSTRUMENTS", (("pendulum_blades", lambda c: WB.inst_pendulum(c)),
+                                                      ("time_sense", WB.inst_time_sense))), \
+                mock.patch.object(W, "now_utc", return_value=self.NOWT):
+            lines = WB.instruments(Cur(self._routes()))
+        self.assertEqual(len(lines), 1)
+        self.assertIn("Time sense", lines[0])
+
+    def test_instruments_are_read_only(self):
+        sec = SRC[SRC.index("# ── instruments"):SRC.index("def turnover(")]
+        self.assertNotRegex(sec, r"(?i)\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE)\b")
+
+
+class TestIntegration(InstrumentCases, unittest.TestCase):
     def test_uses_cardinal_grade_and_escalation_deferred(self):
         self.assertIn("C.grade(it[\"item\"], ledger=ledger)", SRC)
         self.assertIn("from nova_escalation import deferred_since", SRC)
@@ -143,6 +191,14 @@ class TestIntegration(unittest.TestCase):
         self.assertTrue(any("blind: mmwave:patio" in x for x in gp))
         self.assertTrue(any("silent pipeline" in x for x in gp))
 
+    def test_gaps_folds_whole_picture_lines_and_fails_open(self):
+        import nova_directive_conflict as DC
+        with mock.patch.object(DC, "gaps_lines", return_value=["3 directive conflict(s) still open"]):
+            gp = WB.gaps(Cur(), {}, {}, None)
+        self.assertIn("3 directive conflict(s) still open", gp)
+        with mock.patch.object(DC, "gaps_lines", side_effect=RuntimeError("pg down")):
+            self.assertEqual(WB.gaps(Cur(), {}, {}, None), [])
+
 
 class TestFunctional(unittest.TestCase):
     def test_turnover_saved_not_posted(self):
@@ -157,6 +213,8 @@ class TestFunctional(unittest.TestCase):
         self.assertIn("Would surprise me", text)
         self.assertTrue(any("INSERT INTO watch_turnover" in s for s, _ in cur.sql))
         self.assertIn("Boiler 82/100", text)
+        self.assertIn("Own instruments: none", text)       # no to_regclass route: every instrument skipped
+        self.assertEqual(t["instruments"], [])
 
     def test_full_pdb_golden(self):
         t = {"degraded": ["source suspect: detector:x — recent hit-rate 3% (n=9) is below its long-run floor 57%"],

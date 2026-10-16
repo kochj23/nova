@@ -14,6 +14,11 @@ a suppressed real outage is worse than a noisy false one. So:
     confidence, only into a known-benign class.
   * Anything the model is unsure about PAGES (annotated). Learning trims noise; it
     never hides a fire.
+  * RULE C (Little Mister, 2026-10-15, #39): a would-be page reaches Jordan only for an SLO
+    page, Tier-0 impact (PG nova_ops / memory server / gateway-chat) or real house/Jordan
+    impact (page_class). Anything else — hard-critical body matches included — becomes a
+    TICKET: never suppressed, delivered to #nova-digest, kept in Nova's incident queue.
+    7-day replay of alert_triage_log: 82 page decisions/day -> 0.9/day.
 
 Every alert is also ANNOTATED with likely cause + similar past incidents, so even a
 page arrives smarter. Every decision is logged to nova_ops.alert_triage_log for the
@@ -52,6 +57,54 @@ _HARD_CRITICAL = re.compile(
 _VERDICTS = {"real_actionable", "known_self_healing", "expected_change",
              "duplicate", "learned_normal", "detector_fault"}
 
+# ── WHO GETS PAGED (Little Mister, 2026-10-15, plan item #39) ────────────────────────────────
+# A page (#nova-alerts + mesh relay) is for exactly three things; everything else is a TICKET
+# for Nova's own queue (incident record + #nova-digest), which she works and closes herself:
+#   1. SLO pages     — category 'slo' at critical (nova_slo's multiwindow burn-rate page)
+#   2. Tier-0 impact — PG nova_ops / the memory server / the gateway+chat path down or failing
+#   3. real house / Jordan impact — life safety, a break-in, an emergency order, a hard-critical
+#      security/data-loss signature in the TITLE of a non-feed alert, or an emitter that declares
+#      meta {"impact": "house"|"jordan"|"tier0"}
+# Baseline 2026-10-08..14: ~70 posts/day to #nova-alerts; target < 5/day. A ticket is never a
+# suppression: it is logged, delivered to #nova-digest and stays in Nova's incident queue.
+# Written by Jordan Koch (via Claude).
+TIER0_RE = re.compile(
+    r"(postgres(ql)?\b|\bpg[ _-]?(primary|bouncer)|pgbouncer|nova_ops\b|memory[ _-]?(server|roundtrip|recall)|"
+    r"\bgateway\b|nova[ _-]?gateway|\bchat\b|inference[ _-]?(vantage|router))", re.I)
+TIER0_BAD_RE = re.compile(r"\b(down|unreachable|offline|dead|fail(ed|ing|ure)?|refus\w*|crash\w*|"
+                          r"not responding|timed? ?out|lost|= ?down|stale)\b", re.I)
+HOUSE_RE = re.compile(
+    r"smoke alarm|smoke detected|\bco alarm|carbon monoxide|fire alarm|water leak|leak detected|\bflood(ing|ed)?\b|"
+    r"\bbreak-?in\b|\bintruder|glass ?break|door forced|forced entry|evacuat|shelter in place|"
+    r"medical emergency|fall detected|panic button", re.I)
+HOUSE_CATEGORIES = frozenset({"emergency", "life_safety", "smoke", "leak", "intrusion"})
+# Feed/ambient categories: their TITLES quote the world ("LEAKED texts", "Corruption w/…"), so a
+# hard-critical word there is news, not an event in this house.
+FEED_CATEGORIES = frozenset({"media", "news", "security_news", "journal", "tv", "ingest", "scheduler",
+                             "digest", "morning_brief", "email", "calendar", "traffic_watch", "local"})
+PAGE_IMPACTS = frozenset({"house", "jordan", "tier0"})
+
+
+def page_class(title, level="info", category=None, meta=None):
+    """Pure. -> ("page"|"ticket", why). Decides whether a would-be page may wake Jordan.
+    Title + category only (bodies quote alerts and news and matched the hard regex: the
+    Scheduler Heartbeat paged 25x in a week on its body)."""
+    t, cat = title or "", (category or "").lower()
+    m = meta if isinstance(meta, dict) else {}
+    if str(m.get("impact") or "").lower() in PAGE_IMPACTS:
+        return "page", f"emitter declared impact={m.get('impact')}"
+    if cat == "slo":
+        return ("page", "SLO burn-rate page") if level == "critical" else ("ticket", "SLO ticket (slow burn)")
+    if cat in HOUSE_CATEGORIES and level == "critical":
+        return "page", f"house/Jordan impact ({cat})"
+    if cat not in FEED_CATEGORIES and HOUSE_RE.search(t):
+        return "page", "house/Jordan impact (life safety / intrusion)"
+    if level in ("warning", "critical") and TIER0_RE.search(t) and TIER0_BAD_RE.search(t):
+        return "page", "Tier-0 impact (PG / memory server / gateway-chat)"
+    if cat not in FEED_CATEGORIES and _HARD_CRITICAL.search(t):
+        return "page", "hard-critical signature in the alert itself"
+    return "ticket", "no SLO / Tier-0 / house impact — ticket for Nova's queue"
+
 
 def apply_evidence(evidence, hard, level):
     """EVIDENCE CHECK (2026-10-05, incident #3675). When the raw source row contradicts the
@@ -64,6 +117,25 @@ def apply_evidence(evidence, hard, level):
         return None
     return ("detector_fault", 0.95, "suppress",
             ("evidence contradicts detector: " + (evidence.get("note") or ""))[:200])
+
+
+def _ev_meta(ev):
+    """meta of the bus event (dict or JSON text) -> dict. Never raises."""
+    m = (ev or {}).get("meta") if isinstance(ev, dict) else None
+    if isinstance(m, str):
+        try:
+            m = json.loads(m)
+        except Exception:
+            m = None
+    return m if isinstance(m, dict) else {}
+
+
+def apply_page_rule(title, level, category, meta, reason=""):
+    """Pure. A would-be page -> ("page", reason) or ("ticket", reason) per page_class()."""
+    cls, why = page_class(title, level, category, meta)
+    if cls == "page":
+        return "page", (f"{reason} · page: {why}" if reason else f"page: {why}")[:200]
+    return "ticket", (f"ticket (RULE C): {why}" + (f" · {reason}" if reason else ""))[:200]
 
 
 def _log(m): print(f"[alert-triage {datetime.now().strftime('%H:%M:%S')}] {m}", flush=True)
@@ -188,8 +260,10 @@ def triage(title, body="", level="info", category=None, source=None, dedup_key=N
     annotation, likely, verdict, conf, reason, next_action = "", "", "real_actionable", 0.5, "", ""
 
     if hard:
-        decision, verdict, conf = "page", "real_actionable", 1.0
-        reason = "hard-critical signature — always pages"
+        # never suppressed or downgraded; pages only with SLO/Tier-0/house impact, else a ticket (#39)
+        verdict, conf = "real_actionable", 1.0
+        decision, reason = apply_page_rule(title, level, category, _ev_meta(ev),
+                                           "hard-critical signature — never suppressed")
     elif ev_decided:
         verdict, conf, decision, reason = ev_decided
         likely = (evidence.get("note") or "")[:200]
@@ -243,6 +317,11 @@ def triage(title, body="", level="info", category=None, source=None, dedup_key=N
             decision = "downgrade"
             reason = ("info→feed (RULE A): " + (reason or "info is ambient/feed material"))[:200]
 
+        # RULE C — page only for SLO / Tier-0 / house impact (#39, 2026-10-15). Any other
+        # would-be page becomes a TICKET: delivered to #nova-digest, kept in Nova's queue.
+        if decision == "page":
+            decision, reason = apply_page_rule(title, level, category, _ev_meta(ev), reason)
+
         # RULE B — dedup backoff. A still-firing non-hard alert pages ONCE per escalating
         # window (1h/4h/24h) then suppresses repeats of the same dedup_key until the
         # window elapses. Only acts on a would-be PAGE; hard-critical is exempt (above).
@@ -276,7 +355,7 @@ def triage(title, body="", level="info", category=None, source=None, dedup_key=N
         _log(f"log write failed: {e}")
 
     return {"decision": decision, "verdict": verdict, "confidence": conf,
-            "level": ("warning" if decision == "downgrade" and level == "critical" else level),
+            "level": ("warning" if decision in ("downgrade", "ticket") and level == "critical" else level),
             "annotation": annotation, "reason": reason, "likely_cause": likely,
             "hard_override": hard, "similar": sim_ids}
 

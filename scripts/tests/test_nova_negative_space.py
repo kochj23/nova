@@ -47,8 +47,10 @@ def _run(cur, alert=True):
     conn = mock.Mock(); conn.cursor.return_value = cur
     with mock.patch.object(ns.psycopg2, "connect", return_value=conn) as connect, \
             mock.patch("nova_notify.notify") as notify, \
+            mock.patch("nova_noise_rollup.record", return_value=True) as record, \
             mock.patch("sys.stdout", new_callable=io.StringIO) as out:
         rc = ns.main(alert)
+    _run.record = record
     return rc, notify, out.getvalue(), conn, connect
 
 
@@ -71,7 +73,8 @@ class TestPerformance(unittest.TestCase):
         observers = [("busy", 10_000)] + [(f"o{i}", 1) for i in range(5_000)]
         t0 = time.perf_counter()
         _, notify, _, _, _ = _run(_Cur(observers=observers))
-        self.assertEqual(notify.call_count, 5_000)
+        self.assertEqual(_run.record.call_count, 5_000)       # #22: roll-up, not 5,000 notifications
+        notify.assert_not_called()
         keys = [ns.negspace_dedup_key("sensor_quiet", f"Presence method 'm{i}' has reported nothing for 9:00:0{i % 10}")
                 for i in range(10_000)]
         self.assertLess(time.perf_counter() - t0, 5.0)
@@ -136,30 +139,39 @@ class TestIntegration(unittest.TestCase):
 
 
 class TestFunctional(unittest.TestCase):
-    def test_findings_alert_with_stable_dedup_keys(self):
+    def test_findings_go_to_the_rollup_with_stable_keys(self):
         last = _dt.datetime.now() - _dt.timedelta(hours=9)
         cur = _Cur(stale=[("Alex", last)], humans=0)
         rc, notify, out, conn, _ = _run(cur)
         self.assertEqual(rc, 0)
-        kinds = [c[1]["dedup_key"].split(":")[1] for c in notify.call_args_list]
-        self.assertEqual(kinds, ["device_no_human"])
-        self.assertTrue(all(c[1]["meta"] == {"dedup_window_s": 28800} for c in notify.call_args_list))
+        notify.assert_not_called()                              # #22: per-event notify off
+        keys = [c[0][1].split(":")[1] for c in _run.record.call_args_list]
+        self.assertEqual(keys, ["device_no_human"])
+        self.assertEqual(_run.record.call_args[0][0], "nova_negative_space.py")
         conn.close.assert_called_once()
 
-    def test_alert_findings_is_the_shared_bus_path(self):
-        # what nova_freshness_monitor calls for sensor_quiet: same source/category/key/window
-        sent = []
+    def test_stranger_at_the_property_still_notifies_now(self):
+        rc, notify, out, _, _ = _run(_Cur(arrivals=5, owned=0, wifi=0))
+        self.assertEqual(notify.call_count, 1)
+        k = notify.call_args[1]
+        self.assertEqual(k["meta"], {"dedup_window_s": 28800, "impact": "house"})
+        self.assertTrue(k["dedup_key"].startswith("negspace:arrival_no_device:"))
+        _run.record.assert_not_called()
+
+    def test_alert_findings_is_the_shared_rollup_path(self):
+        # what nova_freshness_monitor calls for sensor_quiet: same source/key, counted in the roll-up
+        rec = []
         msg = lambda gap: f"Presence method 'mmwave' has reported nothing for {gap} (last: 2026-10-09 01:00)."
         with mock.patch("sys.stdout", new_callable=io.StringIO):
-            n = ns.alert_findings([("sensor_quiet", msg("9:00:05"))], notify=lambda *a, **k: sent.append((a, k)))
-            ns.alert_findings([("sensor_quiet", msg("13:07:00"))], notify=lambda *a, **k: sent.append((a, k)))
+            n = ns.alert_findings([("sensor_quiet", msg("9:00:05"))], notify=lambda *a, **k: 1 / 0,
+                                  record=lambda *a, **k: rec.append(a))
+            ns.alert_findings([("sensor_quiet", msg("13:07:00"))], record=lambda *a, **k: rec.append(a))
         self.assertEqual(n, 1)
-        (a1, k1), (_, k2) = sent
-        self.assertTrue(a1[0].startswith("Negative-space: Presence method 'mmwave'"))
-        self.assertEqual((k1["source"], k1["category"], k1["level"]), ("nova_negative_space.py", "security", "warning"))
-        self.assertEqual(k1["meta"], {"dedup_window_s": 28800})
-        self.assertEqual(k1["dedup_key"], k2["dedup_key"])          # ticking gap -> same key
-        self.assertTrue(k1["dedup_key"].startswith("negspace:sensor_quiet:"))
+        (s1, k1, t1, l1), (_, k2, _, _) = rec
+        self.assertEqual((s1, l1), ("nova_negative_space.py", "warning"))
+        self.assertTrue(t1.startswith("Negative-space: Presence method 'mmwave'"))
+        self.assertEqual(k1, k2)                                # ticking gap -> same key
+        self.assertTrue(k1.startswith("negspace:sensor_quiet:"))
         self.assertEqual(ns.alert_findings([]), 0)
 
     def test_quiet_world_and_no_alert_flag(self):
