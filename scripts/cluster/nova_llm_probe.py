@@ -4,7 +4,7 @@
 Jordan, 2026-10-16: "I would like this same view for the cluster as a whole on what the entire cluster is doing as
 far as LLMs as a different app." -> the Nova Cluster app reads the hub's /cluster, built from these snapshots.
 
-Read-only and cheap. Every PUSH_S it:
+Read-only and cheap. Every PUSH_S (1 s) it:
   * finds every llama-server process (Ollama's model runners and any standalone llama.cpp server) from `ps`,
     names its model from the Ollama manifests next to the blob, and reads its /slots (local loopback client):
     per slot whether it is generating, prompt size / prompt processed, tokens decoded, the task counter;
@@ -30,7 +30,7 @@ import urllib.request
 from datetime import datetime
 
 DIR = os.path.expanduser("~/.nova-probe")
-PUSH_S = 3
+PUSH_S = 1          # 1 s: short requests and the last tokens before a request ends are not missed
 VERSION = "1.0"
 LINUX = platform.system() == "Linux"
 _NAMES: dict = {}          # models dir -> {blob digest: model name}, refreshed every 5 min

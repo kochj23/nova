@@ -1279,7 +1279,7 @@ tasks:
     overlap: skip
   work_lessons:                    # Nova's work reader: lessons, not dialogue (Jordan 2026-10-15). Fills free nova-core10 slots (2) and its own Ollama (net.digitalnoise.ollama-bulk :11436, 3 slots) concurrently, else one Studio call at a time; backs off when embeddings slow; per-tier switches service_config work_lessons/backfill_enabled_{A,B,C}
     script: nova_work_lessons.py
-    args: ["--scheduled", "--minutes", "25", "--streams", "5"]
+    args: ["--scheduled", "--minutes", "20", "--streams", "5"]   # 20 + finishing in-flight reads (~8-12) < 30: back-to-back runs, no skipped slot (2026-10-16)
     schedule: every 30m
     timeout: 2700
     overlap: skip

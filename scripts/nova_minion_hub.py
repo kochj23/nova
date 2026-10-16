@@ -229,19 +229,38 @@ def slot_events(node: str, prev: dict | None, cur: dict, dt: float) -> tuple[lis
                 continue
             p = pr["slots"][i]
             if p.get("task") is not None and s.get("task") != p.get("task") and p.get("busy") is not None:
-                if p.get("decoded") or p.get("prompt"):
+                if p.get("busy") and (p.get("decoded") or p.get("prompt")):
                     events.append({"node": node, "model": r.get("model"), "prompt": p.get("prompt") or 0,
                                    "decoded": p.get("decoded") or 0})
+                # NOT counted: task-id jumps. llama-server's task counter also ticks for every /slots query (ours,
+                # once a second) and other slots' work, so a jump is not a request count. A request that starts and
+                # ends between two 1 s samples is missed — mostly sub-second embeddings.
             elif p.get("busy") and not s.get("busy") and s.get("task") == p.get("task"):
-                events.append({"node": node, "model": r.get("model"), "prompt": s.get("prompt") or 0,
-                               "decoded": s.get("decoded") or 0})
+                # the runner zeroes its decoded counter when a request ends: keep the highest value seen
+                events.append({"node": node, "model": r.get("model"),
+                               "prompt": max(s.get("prompt") or 0, p.get("prompt") or 0),
+                               "decoded": max(s.get("decoded") or 0, p.get("decoded") or 0)})
             elif s.get("busy") and s.get("task") == p.get("task") and dt > 0:
                 dec += max(0, (s.get("decoded") or 0) - (p.get("decoded") or 0)) / dt
                 pre += max(0, (s.get("prompt_done") or 0) - (p.get("prompt_done") or 0)) / dt
     return events, round(dec, 1), round(pre, 1)
 
 
-def llm_push(node: str, snap: dict):
+def count_tokens(cur, node: str, events: list):
+    """Cumulative counters (llm_tokens_daily): finished requests + their prompt/decoded tokens, per day and node.
+    A request's decoded count is its last value seen by the probe (<= 3 s before it finished)."""
+    if not events:
+        return
+    cur.execute("INSERT INTO llm_tokens_daily (day, node, requests, prompt_tokens, decoded_tokens) "
+                "VALUES (current_date, %s, %s, %s, %s) ON CONFLICT (day, node) DO UPDATE SET "
+                "requests = llm_tokens_daily.requests + EXCLUDED.requests, "
+                "prompt_tokens = llm_tokens_daily.prompt_tokens + EXCLUDED.prompt_tokens, "
+                "decoded_tokens = llm_tokens_daily.decoded_tokens + EXCLUDED.decoded_tokens",
+                (node, sum(int(e.get("unseen") or 1) for e in events), sum(int(e.get("prompt") or 0) for e in events),
+                 sum(int(e.get("decoded") or 0) for e in events)))
+
+
+def llm_push(node: str, snap: dict, cur=None):
     now = time.time()
     with _LLM_LOCK:
         old = _LLM.get(node)
@@ -253,6 +272,11 @@ def llm_push(node: str, snap: dict):
             _EVENTS.append({**e, "t": now})
         del _EVENTS[:-400]
         _LLM[node] = {"snap": snap, "t": now, "tok_s": dec, "prefill_tok_s": pre}
+    if cur is not None:
+        try:
+            count_tokens(cur, node, ev)
+        except Exception as e:  # noqa: BLE001 — the live view never fails for the counter
+            log(f"token counter not updated ({e})")
 
 
 def cluster(cur) -> dict:
@@ -263,12 +287,13 @@ def cluster(cur) -> dict:
                       "prefill_tok_s": 0.0, "req_min": 0}
     with _LLM_LOCK:
         recent = [e for e in _EVENTS if now - e["t"] < 60]
+        recent_n = sum(int(e.get("unseen") or 1) for e in recent)
         for node, d in sorted(_LLM.items()):
             sn, live = d["snap"], now - d["t"] < LLM_FRESH_S
             runners = sn.get("runners", [])
             busy = sum(1 for r in runners for s in r.get("slots", []) if s.get("busy"))
             vram = round(sum(m.get("vram_gb") or 0 for m in sn.get("loaded", [])), 1)
-            req = sum(1 for e in recent if e["node"] == node)
+            req = sum(int(e.get("unseen") or 1) for e in recent if e["node"] == node)
             nodes.append({"node": node, "live": live, "age_s": round(now - d["t"], 1), "os": sn.get("os"),
                           "chip": sn.get("chip"), "cores": sn.get("cores"), "mem_gb": sn.get("mem_gb"),
                           "free_gb": sn.get("free_gb"), "load": sn.get("load"), "loaded": sn.get("loaded", []),
@@ -282,10 +307,23 @@ def cluster(cur) -> dict:
                 tot["busy_slots"] += busy
                 tot["tok_s"] = round(tot["tok_s"] + d["tok_s"], 1)
                 tot["prefill_tok_s"] = round(tot["prefill_tok_s"] + d["prefill_tok_s"], 1)
-        tot["req_min"] = len(recent)
-        events = [{k: v for k, v in e.items() if k != "t"} for e in reversed(_EVENTS[-100:])]
+        tot["req_min"] = recent_n
+        tot["tok_s_total"] = round(tot["tok_s"] + tot["prefill_tok_s"], 1)   # every token the cluster handles, live
+        events = [{k: v for k, v in e.items() if k != "t"} for e in reversed(_EVENTS[-100:]) if not e.get("unseen")]
     # the whole cluster (Jordan 2026-10-16): fold in what each machine is doing FOR Nova as a minion — reading
     # for lessons, transcribing — plus the fleet's lessons, so one view shows traffic and the work it serves
+    # cumulative: today and since the probes started (llm_tokens_daily)
+    cur.execute("SELECT node, sum(requests) FILTER (WHERE day = current_date), sum(prompt_tokens) FILTER (WHERE day = current_date), "
+                "sum(decoded_tokens) FILTER (WHERE day = current_date), sum(requests), sum(prompt_tokens), sum(decoded_tokens) "
+                "FROM llm_tokens_daily GROUP BY node")
+    cum = {r[0]: [int(x or 0) for x in r[1:]] for r in cur.fetchall()}
+    t = [sum(v[i] for v in cum.values()) for i in range(6)]
+    tot["today"] = {"requests": t[0], "prompt_tokens": t[1], "decoded_tokens": t[2], "tokens": t[1] + t[2]}
+    tot["all_time"] = {"requests": t[3], "prompt_tokens": t[4], "decoded_tokens": t[5], "tokens": t[4] + t[5]}
+    for n in nodes:
+        v = cum.get(n["node"], [0] * 6)
+        n["today"] = {"requests": v[0], "prompt_tokens": v[1], "decoded_tokens": v[2], "tokens": v[1] + v[2]}
+        n["tok_s_total"] = round((n.get("tok_s") or 0) + (n.get("prefill_tok_s") or 0), 1)
     fl = fleet(cur)
     by_node = {m["node"]: m for m in fl.get("minions", [])}
     for n in nodes:
@@ -363,7 +401,7 @@ class Handler(BaseHTTPRequestHandler):
                 node = str(d.get("node") or "")
                 if not authed(db(), node, self.headers.get("X-Minion-Token")):
                     return self._send(403, {"error": "unknown node or bad token"})
-                llm_push(node, d)
+                llm_push(node, d, db())
                 return self._send(200, {"ok": True})
             except Exception as e:  # noqa: BLE001
                 _LOCAL.conn = None
@@ -420,6 +458,11 @@ def selftest() -> int:
                                                          {"busy": True, "task": 10, "prompt": 7, "prompt_done": 0, "decoded": 0}]}]}
     ev, dec, pre = slot_events("n", a, b, 2.0)
     assert ev == [{"node": "n", "model": "m", "prompt": 10, "decoded": 30}] and dec == 10.0 and pre == 30.0
+    c = {"runners": [{"port": 1, "model": "m", "slots": [{"busy": False, "task": 5, "prompt": 100, "prompt_done": 0, "decoded": 0},
+                                                         {"busy": True, "task": 13, "prompt": 7, "prompt_done": 7, "decoded": 2}]}]}
+    ev2 = slot_events("n", b, c, 1.0)[0]
+    assert {"node": "n", "model": "m", "prompt": 100, "decoded": 20} in ev2          # max(seen) survives the reset
+    assert not any(e.get("unseen") for e in ev2)                                      # task jumps are not requests
     assert slot_events("n", None, b, 0)[0] == []
     assert token_hash("a") == hashlib.sha256(b"a").hexdigest()
     assert _NODE.match("nova-core10") and not _NODE.match("../etc") and not _NODE.match("")
