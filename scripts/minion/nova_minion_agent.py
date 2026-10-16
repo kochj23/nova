@@ -7,8 +7,9 @@ Every 30 s it decides whether this Mac is free for Nova and tells the hub (nova_
   away       someone is using it (or on battery / throttled / outside the window) -> no new work; the model is
              unloaded so the person at the keyboard gets the memory back
   dedicated  config "dedicated": true — a fleet node that is always available (never unloads)
-It also serves http://127.0.0.1:37591/status for the Nova Minion screensaver (a cached proxy of the hub's
-/status for this node), so the screensaver never needs the hub's address or the token.
+It also serves :37591/status for the Nova Minion screensaver (a cached proxy of the hub's /status for this
+node). It listens on every interface (Jordan 2026-10-16: nothing binds 127.0.0.1); a caller on this machine
+(the screensaver) needs no token, a caller from the network must send this minion's X-Minion-Token.
 
 macOS: idle = screensaver up or no keyboard/mouse input. Linux (2026-10-16, servers without a screen): idle = 5-min
 load below max_load_per_core and nobody logged in on a TTY/desktop. Both: free memory must stay above min_free_gb
@@ -40,7 +41,7 @@ CONF = os.path.expanduser("~/.nova-minion/config.json")
 LOCAL_PORT = 37591
 BEAT_S = 30
 STATUS_TTL_S = 4
-VERSION = "1.3"
+VERSION = "1.4"
 _cache = {"t": 0.0, "body": None, "lock": threading.Lock()}
 _state = {"state": "offline", "since": None}
 
@@ -232,6 +233,10 @@ class Status(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
+        if not local_caller(self.client_address[0]) and self.headers.get("X-Minion-Token") != self.tok:
+            self.send_response(403)              # lesson text is Nova's own: the network needs the token
+            self.end_headers()
+            return
         with _cache["lock"]:
             if time.time() - _cache["t"] > STATUS_TTL_S:
                 try:
@@ -250,6 +255,10 @@ class Status(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+
+def local_caller(addr: str) -> bool:
+    return addr in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
 
 
 def selftest() -> int:
@@ -276,6 +285,7 @@ def selftest() -> int:
     assert os_label(os_release='PRETTY_NAME="Arch Linux"\n') == "Arch Linux"
     assert os_label(os_release='PRETTY_NAME="Linux Mint 20.3"\n') == "Linux Mint 20.3"
     assert os_label(mac_ver="26.6") == "macOS 26.6"
+    assert local_caller("127.0.0.1") and local_caller("::1") and not local_caller("192.168.1.6")
     assert linux_busy({}, "0.10 3.50 1.0 1/1 1", "", 6) is True                         # load 3.5/6 > 0.5
     assert linux_busy({}, "0.10 0.50 1.0 1/1 1", "kochj pts/0 2026-10-16 (10.0.0.9)", 6) is False   # ssh is fine
     assert linux_busy({}, "0.10 0.50 1.0 1/1 1", "kochj tty2 2026-10-16", 6) is True     # someone at the console
@@ -295,8 +305,8 @@ def main() -> int:
         print(tick(conf, tok))
         return 0
     Status.conf, Status.tok = conf, tok
-    threading.Thread(target=HTTPServer(("127.0.0.1", LOCAL_PORT), Status).serve_forever, daemon=True).start()
-    log(f"minion {conf['node']} up; hub {conf['hub']}; status on 127.0.0.1:{LOCAL_PORT}")
+    threading.Thread(target=HTTPServer(("0.0.0.0", LOCAL_PORT), Status).serve_forever, daemon=True).start()
+    log(f"minion {conf['node']} up; hub {conf['hub']}; status on :{LOCAL_PORT} (network callers need the token)")
     while True:
         try:
             tick(conf, tok)
