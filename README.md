@@ -4269,6 +4269,10 @@ The reader was queuing behind chat and embeddings on the Studio's main Ollama (~
 qwen3:30b-a3b, 3 parallel slots; the scheduler runs 3 streams. It is tried first, needs no one-call Studio slot
 and ignores the whisper lock, but still backs off while the main Ollama's embeddings are slow (shared GPU).
 Switch: `service_config work_lessons/bulk_url` (`""` = off), `bulk_slots`.
+Measured the same day: the Studio's shared GPU gives each reader call ~22 tok/s, nova-core10's qwen3:30b-a3b
+~67 tok/s. So the reader fills free nova-core10 slots (2, `NOVA_WORK_REMOTE_SLOTS`) and the bulk Ollama at the
+same time — 5 streams — polling whichever frees first, instead of waiting on one. Thinking on/off in the mapping
+pass made little difference (prompt processing dominates), so it stays on.
 
 Every non-film work is now judged for **credibility** — `FRINGE_RX` title markers first (conspiracy,
 pseudo-science, occult, "ordered never to talk about" clickbait), else the mapping pass returns

@@ -1234,10 +1234,30 @@ def main_embed_ok(sleep=time.sleep) -> bool:
     return False
 
 
-def bulk_call(base: str, model: str, prompt: str, max_tokens: int, temperature: float) -> str:
+REMOTE_SLOTS = int(os.environ.get("NOVA_WORK_REMOTE_SLOTS", "2"))   # concurrent reader calls per remote strong node
+_REMOTE = {"sems": {}, "lock": threading.Lock()}
+
+
+def remote_sem(base: str) -> threading.BoundedSemaphore:
+    with _REMOTE["lock"]:
+        return _REMOTE["sems"].setdefault(base, threading.BoundedSemaphore(REMOTE_SLOTS))
+
+
+def remote_try(base: str, model: str, prompt: str, max_tokens: int, temperature: float) -> str | None:
+    """A free slot on a remote strong node: call it (None when every slot there is busy)."""
+    sem = remote_sem(base)
+    if not sem.acquire(blocking=False):
+        return None
+    try:
+        return ollama_chat(base, model, prompt, max_tokens, temperature, NUM_CTX)
+    finally:
+        sem.release()
+
+
+def bulk_call(base: str, model: str, prompt: str, max_tokens: int, temperature: float, wait_s: float = 900) -> str:
     if not main_embed_ok():
         raise RuntimeError("main Ollama embeddings slow — not adding GPU load")
-    if not _BULK["sem"].acquire(timeout=900):
+    if not _BULK["sem"].acquire(timeout=wait_s):
         raise RuntimeError("no free bulk slot")
     try:
         return ollama_chat(base, model, prompt, max_tokens, temperature, NUM_CTX)
@@ -1257,17 +1277,35 @@ def llm_work(prompt: str, oc=None, max_tokens: int = 1400, temperature: float = 
             if not gateway_busy():
                 break
             time.sleep(5)
+        # 2026-10-16: nova-core10's 30B runs ~3x the Studio's shared GPU. Fill free remote slots first, then the
+        # bulk Ollama without waiting; when everything is busy, wait for whichever frees first (polling).
         bulk = bulk_url(oc)
-        if bulk:                                    # the reader's own Ollama first: no Studio slot, no whisper wait
-            for model in (models or STRONG_MODELS):
-                if model in installed(bulk):
+        bmodel = next((m for m in (models or STRONG_MODELS) if bulk and m in installed(bulk)), None)
+        rank0 = None if os.environ.get("NOVA_WORK_LLM") else ps.load_ranking()
+        remotes = [e for e in strong_endpoints(rank0, models=models) if ps._host(e[0]) not in me]
+        if remotes or bmodel:
+            give_up = time.monotonic() + 900
+            while time.monotonic() < give_up:
+                for base, model in remotes:
                     try:
-                        txt = bulk_call(bulk, model, prompt, max_tokens, temperature)
+                        txt = remote_try(base, model, prompt, max_tokens, temperature)
                         if txt:
                             return txt, model
                     except Exception as e:  # noqa: BLE001
-                        log(f"bulk {model} not used ({e}); next endpoint")
-                    break                           # one strong model on the bulk node; else the fleet below
+                        log(f"{model} at {ps._host(base)} not used ({e}); next endpoint")
+                if bmodel:
+                    try:
+                        txt = bulk_call(bulk, bmodel, prompt, max_tokens, temperature, wait_s=5)
+                        if txt:
+                            return txt, bmodel
+                    except Exception as e:  # noqa: BLE001
+                        if "no free bulk slot" not in str(e):
+                            log(f"bulk {bmodel} not used ({e})")
+                            if not remotes:
+                                break
+                elif not remotes:
+                    break
+                time.sleep(3)
         held = gpu_lock_held(oc) if oc is not None else False
         ranking = None if os.environ.get("NOVA_WORK_LLM") else ps.load_ranking()
         eps = strong_endpoints(ranking, avoid_local=held, models=models)
