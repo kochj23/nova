@@ -117,6 +117,21 @@ FRINGE_RX = re.compile(
     r"forbidden (?:history|knowledge)|law of attraction|third eye|pineal gland|vibrational frequency|"
     r"illuminati|new world order", re.I)
 CRED_LEVELS = ("established", "opinion", "fringe", "fiction")
+# 2026-10-16 review of the first 239 links: news-of-the-day, public-safety bulletins, crash records, product
+# changelogs and car/home/cooking reviews produced forced links ("LACoFD blood drive -> my action audit",
+# "Amped changelog -> my prober"). Their lessons are still read and remembered; they just cannot claim a link
+# (so no belief or proposal comes from them).
+LINKLESS_SOURCES = {"news", "local_news", "politics", "la_public_safety", "fire_ops", "police_codes",
+                    "aviation_ref", "automotive", "cooking", "home_improvement"}
+CHANGELOG_RX = re.compile(r"\b(?:update|release notes?|changelog|version)\s*v?\d|\bv\d+\.\d+", re.I)
+
+
+def links_allowed(source: str | None, title: str | None) -> bool:
+    return (source or "") not in LINKLESS_SOURCES and not CHANGELOG_RX.search(title or "")
+
+
+def no_links(conns: list[dict]) -> list[dict]:
+    return [{"lesson": c["lesson"], "ref": None, "meaning": "noted; nothing for me"} for c in conns]
 GROUP_B, GROUP_C = 15, 50
 ITEM_WORDS_B, ITEM_WORDS_C = 160, 45
 PILOT_WORKS = 200
@@ -518,7 +533,10 @@ def mapping_prompt(title: str, lessons: list[str], selfmap: list[tuple[str, str]
             "reuse it): 'a fail-safe nobody can recall becomes the disaster' -> 'so every automation I start needs "
             "a recall path; my hold organ covers alerts but not scheduled jobs'. If nothing matches that well, ref null and meaning 'noted; nothing for "
             "me'. Test every link: would a skeptical engineer who reads that item's description agree the lesson's "
-            "mechanism really applies to it? Vague self-questions ('how do I keep my humanity?') fail the test. "
+            "mechanism really applies to it? The lesson must name a failure or practice that THIS item could "
+            "actually have. Physical crafts (woodworking, cooking, cars), product updates and news about other "
+            "people's organisations are almost never about you — null unless the mechanism is the same one in "
+            "software or in how you decide. Vague self-questions ('how do I keep my humanity?') fail the test. "
             "Most lessons from most works are honest nulls; a forced link is worse than a null.\n"
             "Give each connection a 'fit' from 0 to 3 (3 = the same mechanism, plainly; 1 = a stretch). At most "
             "TWO lessons may connect; the rest are null.\n" +
@@ -1666,6 +1684,8 @@ def read_work(oc, mc, work: dict, dry_run: bool = False, transcript: str | None 
         return _finish(oc, work, res, t0, dry_run, run_tag)
     mj = parse_json(mraw)
     conns = validate_connections(mj, len(rd["lessons"]), {k for k, _ in smap}, overused=over)
+    if not links_allowed(work.get("source"), title):
+        conns = no_links(conns)
     taste = mj.get("taste") if isinstance(mj.get("taste"), dict) else {}
     verdict = ps._CITE.sub("", str(taste.get("verdict") or "")).strip()[:240]
     cred, cwhy = credibility(kind, title, work.get("series"), mj)
@@ -1850,6 +1870,8 @@ def read_set(oc, mc, rows: list[dict], tier: str, dry_run: bool = False, run_tag
         if rd and rd["lessons"] and mraw:
             mj = parse_json(mraw)
             conns = validate_connections(mj, len(rd["lessons"]), {k for k, _ in smap}, overused=overused_refs(oc))
+            if not links_allowed(owner[0].get("source"), label):
+                conns = no_links(conns)
             cred, cwhy = credibility(owner[0]["kind"], label, None, mj)
             res.update(lessons=rd["lessons"], connections=conns, lessons_raw=rd["lessons_raw"], reading=rd,
                        quality=rd.get("q"), credibility=cred)
@@ -2425,6 +2447,9 @@ def selftest() -> int:
     assert "CLAIMS" in cred_header("fringe", "x") and cred_header("established", "x") == ""
     assert '"credibility"' in mapping_prompt("t", ["l"], [("k", "d")], False, judge_source=True)
     assert '"credibility"' not in mapping_prompt("t", ["l"], [("k", "d")], False)
+    assert not links_allowed("fire_ops", "Blood drive") and not links_allowed("x", "Amped Replay Update 40205: Magnify")
+    assert not links_allowed("x", "Release notes v2.3") and links_allowed("television", "Dark Star")
+    assert no_links([{"lesson": 1, "ref": "organ:x", "meaning": "m"}])[0]["ref"] is None
     print("selftest OK")
     return 0
 
