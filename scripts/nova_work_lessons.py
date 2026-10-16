@@ -48,6 +48,13 @@ Coexist: 24/7 at low priority. Two strong streams + one fleet stream. Before eac
   gateway has chat in flight; while nova_media_reingest holds the GPU lock 'nova_gpu_whisper' the Studio's
   own GPU is whisper's — strong calls go to the other strong node instead (or wait). The lock is only
   OBSERVED (pg_locks), never taken, so whisper always gets it at 23:00.
+Bulk reader (2026-10-16): a dedicated Ollama on this host (launchd net.digitalnoise.ollama-bulk, 127.0.0.1:11435,
+  same model files, its own qwen3:30b-a3b copy, 3 parallel slots) is tried FIRST. It is not the memory server's
+  Ollama, so it needs no one-call Studio slot and ignores the whisper lock; it still backs off while the main
+  Ollama's embeddings are slow (shared GPU). service_config work_lessons/bulk_url ('' = off), bulk_slots.
+Credibility (2026-10-16): every non-film work is judged established / opinion / fringe / fiction (title markers
+  FRINGE_RX first, else the mapping pass). Fringe: the reading is kept as the work's CLAIMS (memory says so),
+  but no belief and no proposal is booked. Opinion: beliefs book at confidence 0.5 instead of 0.6.
 Hook for ingesters: --since HOURS enqueues works created in that window at priority -1 (same-day reading).
 Series roll-up hook: rollup_candidates() lists series with >= ROLLUP_MIN read episodes (per-episode first).
 
@@ -98,6 +105,18 @@ PLOT_CHARS = 4200
 WEB_PER_DAY = int(os.environ.get("NOVA_WORK_WEB_PER_DAY", "120"))
 CAPS = {"beliefs": 50, "proposals": 3, "taste": 20}
 MAX_BELIEFS_PER_WORK = 2
+BULK_URL_DEFAULT = "http://127.0.0.1:11435"   # the reader's own Ollama (net.digitalnoise.ollama-bulk)
+BULK_SLOTS_DEFAULT = 3
+# Title/series markers of conspiracy, pseudo-science, occult and "secret list" clickbait. A match is fringe
+# without asking the model; everything else non-film is judged in the mapping pass.
+FRINGE_RX = re.compile(
+    r"emerald tablets?|anunnaki|nephilim|reptilian|lizard people|flat earth|hollow earth|chemtrail|starseed|"
+    r"akashic|frequency map|lower dimension|fifth dimension|\b5d\b|souls? (?:who|are) |recycled into|"
+    r"ancient aliens?|tartaria|mud ?flood|adrenochrome|qanon|plandemic|crisis actors?|"
+    r"they don'?t want you to know|ordered never to talk|ordered to never talk|banned (?:video|documentary)|"
+    r"forbidden (?:history|knowledge)|law of attraction|third eye|pineal gland|vibrational frequency|"
+    r"illuminati|new world order", re.I)
+CRED_LEVELS = ("established", "opinion", "fringe", "fiction")
 GROUP_B, GROUP_C = 15, 50
 ITEM_WORDS_B, ITEM_WORDS_C = 160, 45
 PILOT_WORKS = 200
@@ -447,13 +466,48 @@ def overused_refs(oc, window: int = DIVERSITY_WINDOW, n: int = DIVERSITY_MAX, ex
         return set()
 
 
+CRED_ASK = ("Judge the SOURCE before you trust it: 'established' = mainstream reporting, science, documented "
+            "history or a practical how-to; 'opinion' = commentary, advocacy, satire, reviews, one person's take; "
+            "'fringe' = conspiracy, pseudo-science, occult or unfalsifiable claims, 'secret/terrifying things' "
+            "clickbait; 'fiction' = a scripted story (a podcast, vlog, review or talk is never fiction). Be strict: an extraordinary claim with no evidence in the sources is "
+            "fringe.\n")
+
+
+def credibility(kind: str, title: str, series: str | None = None, mj: dict | None = None) -> tuple[str, str]:
+    """(level, why). Films are fiction; a FRINGE_RX title/series marker is fringe without the model; else the
+    mapping pass's own judgment; 'unknown' when it gave none (treated like established)."""
+    if kind == "film":
+        return "fiction", "a film"
+    m = FRINGE_RX.search(f"{title or ''} {series or ''}")
+    if m:
+        return "fringe", f"title marker '{m.group(0)}'"
+    c = (mj or {}).get("credibility")
+    c = c if isinstance(c, dict) else {"level": c} if isinstance(c, str) else {}
+    lvl = str(c.get("level") or "").strip().lower()
+    if lvl in CRED_LEVELS:
+        return lvl, ps._CITE.sub("", str(c.get("why") or "")).strip()[:200]
+    return "unknown", "not judged"
+
+
+def cred_header(level: str, why: str) -> str:
+    if level == "fringe":
+        return (f"Source credibility: FRINGE ({why}). What follows are this work's CLAIMS, not things I hold "
+                "true; no belief was booked from it.\n")
+    if level == "opinion":
+        return f"Source credibility: opinion ({why}). One side's view, weighed as such.\n"
+    return ""
+
+
 def mapping_prompt(title: str, lessons: list[str], selfmap: list[tuple[str, str]], verdict: bool,
-                   overused: set[str] | None = None) -> str:
+                   overused: set[str] | None = None, judge_source: bool = False, kind: str = "") -> str:
     les = "\n".join(f"L{i}. {ps._CITE.sub('', x).strip()}" for i, x in enumerate(lessons, 1))
     me = "\n".join(f"{k} — {d}" for k, d in selfmap)
     taste = ('"taste": {"verdict": "<one dry sentence: your own opinion of the work, grounded in the lessons>", '
              '"valence": <-1.0..1.0>}, ') if verdict else ""
-    return (f"You are Nova. You just read '{title}' and drew these lessons:\n{les}\n\n"
+    cred = '"credibility": {"level": "established|opinion|fringe|fiction", "why": "<short reason>"}, ' \
+        if judge_source else ""
+    what = f"the {kind} " if kind else ""
+    return (f"You are Nova. You just read {what}'{title}' and drew these lessons:\n{les}\n\n"
             f"Your own world (key — what it is):\n{me}\n\n"
             "For EACH lesson decide honestly whether its MECHANISM matches how ONE item above actually works. "
             "If it does, give that item's exact key and one sentence 'what this means for me': first person, "
@@ -471,9 +525,9 @@ def mapping_prompt(title: str, lessons: list[str], selfmap: list[tuple[str, str]
             (f"Do NOT use these — you have leaned on them in recent works: {', '.join(sorted(overused))}.\n"
              if overused else "") +
             "If — and only if — one connected lesson suggests one concrete, small change to one of your organs or "
-            "behaviours, give it as proposal (else null).\n"
+            "behaviours, give it as proposal (else null).\n" + (CRED_ASK if judge_source else "") +
             'Output ONLY JSON: {"connections": [{"lesson": 1, "ref": "<exact key or null>", "fit": 0, "meaning": "..."}], '
-            f'{taste}"proposal": null or {{"lesson": 1, "action": "...", "rationale": "..."}}}}')
+            f'{taste}{cred}"proposal": null or {{"lesson": 1, "action": "...", "rationale": "..."}}}}')
 
 
 def parse_json(raw: str) -> dict:
@@ -900,6 +954,7 @@ CREATE TABLE IF NOT EXISTS work_lessons (
     belief_ids int[], proposal_id bigint, claude_queue_id bigint, taste_id int, memory_id text, plot_url text,
     model text, n_sources int, lessons_raw int, lessons_kept int, elapsed_s real, detail text);
 ALTER TABLE work_lessons ADD COLUMN IF NOT EXISTS quality jsonb;
+ALTER TABLE work_lessons ADD COLUMN IF NOT EXISTS credibility text;
 ALTER TABLE work_lessons ADD COLUMN IF NOT EXISTS set_id text;
 CREATE INDEX IF NOT EXISTS work_lessons_queue_idx ON work_lessons (status, tier, priority, recall DESC, last_seen DESC);
 CREATE INDEX IF NOT EXISTS work_lessons_group_idx ON work_lessons (group_key) WHERE status = 'queued';
@@ -1134,6 +1189,62 @@ def _call(base: str, model: str, prompt: str, max_tokens: int, temperature: floa
         return ollama_chat(base, model, prompt, max_tokens, temperature, num_ctx)
 
 
+_BULK = {"url": None, "slots": BULK_SLOTS_DEFAULT, "sem": None, "t": 0.0, "embed": (0.0, None),
+         "lock": threading.Lock()}
+MAIN_OLLAMA = os.environ.get("NOVA_MAIN_OLLAMA", "http://127.0.0.1:11434")
+
+
+def bulk_url(oc) -> str | None:
+    """The reader's dedicated Ollama when it answers (config re-read every 5 min); None = not configured/down."""
+    with _BULK["lock"]:
+        if time.time() - _BULK["t"] > 300:
+            url = os.environ.get("NOVA_WORK_BULK")
+            slots = BULK_SLOTS_DEFAULT
+            if url is None and oc is not None:
+                url = cfg_get(oc, "bulk_url", BULK_URL_DEFAULT)
+                try:
+                    slots = max(1, int(cfg_get(oc, "bulk_slots", BULK_SLOTS_DEFAULT)))
+                except (TypeError, ValueError):
+                    pass
+            url = (url if url is not None else BULK_URL_DEFAULT).rstrip("/") or None
+            if url:
+                try:
+                    ps._http_json(url + "/api/version", timeout=3, attempts=1)
+                except Exception:  # noqa: BLE001
+                    url = None
+            if _BULK["sem"] is None or slots != _BULK["slots"]:
+                _BULK["sem"] = threading.BoundedSemaphore(slots)
+            _BULK.update(url=url, slots=slots, t=time.time())
+        return _BULK["url"]
+
+
+def main_embed_ok(sleep=time.sleep) -> bool:
+    """The bulk Ollama shares the GPU with the memory server's: back off while ITS embeddings are slow
+    (cached 20 s across streams)."""
+    for i in range(STUDIO_BACKOFF_TRIES):
+        t, p50 = _BULK["embed"]
+        if time.time() - t > 20:
+            p50 = embed_p50(MAIN_OLLAMA)
+            _BULK["embed"] = (time.time(), p50)
+        if p50 is not None and p50 <= EMBED_P50_MAX:
+            return True
+        log(f"bulk: main embeddings slow (p50 {p50}) — backing off {STUDIO_BACKOFF_S}s")
+        if i < STUDIO_BACKOFF_TRIES - 1:
+            sleep(STUDIO_BACKOFF_S)
+    return False
+
+
+def bulk_call(base: str, model: str, prompt: str, max_tokens: int, temperature: float) -> str:
+    if not main_embed_ok():
+        raise RuntimeError("main Ollama embeddings slow — not adding GPU load")
+    if not _BULK["sem"].acquire(timeout=900):
+        raise RuntimeError("no free bulk slot")
+    try:
+        return ollama_chat(base, model, prompt, max_tokens, temperature, NUM_CTX)
+    finally:
+        _BULK["sem"].release()
+
+
 def llm_work(prompt: str, oc=None, max_tokens: int = 1400, temperature: float = 0.3, fleet_only: bool = False,
              models=None, allow_fleet: bool = True):
     """(text, model). The strong model on OTHER nodes first; this host (the Studio, where the memory server's
@@ -1146,6 +1257,17 @@ def llm_work(prompt: str, oc=None, max_tokens: int = 1400, temperature: float = 
             if not gateway_busy():
                 break
             time.sleep(5)
+        bulk = bulk_url(oc)
+        if bulk:                                    # the reader's own Ollama first: no Studio slot, no whisper wait
+            for model in (models or STRONG_MODELS):
+                if model in installed(bulk):
+                    try:
+                        txt = bulk_call(bulk, model, prompt, max_tokens, temperature)
+                        if txt:
+                            return txt, model
+                    except Exception as e:  # noqa: BLE001
+                        log(f"bulk {model} not used ({e}); next endpoint")
+                    break                           # one strong model on the bulk node; else the fleet below
         held = gpu_lock_held(oc) if oc is not None else False
         ranking = None if os.environ.get("NOVA_WORK_LLM") else ps.load_ranking()
         eps = strong_endpoints(ranking, avoid_local=held, models=models)
@@ -1339,7 +1461,7 @@ _BELIEF_LOCK = threading.Lock()
 
 
 def book_belief(oc, lesson: dict, srcs: list[dict], title: str, work_key: str, lesson_mid: str | None,
-                pool: list | None = None) -> tuple[int | None, str]:
+                pool: list | None = None, confidence: float = 0.6) -> tuple[int | None, str]:
     """nova_sleep_cycle's rule: evidence = the source chunk's memory id + a verbatim quote that is in it.
     A near-duplicate of an existing work belief STRENGTHENS it (evidence appended, confidence up) instead of
     booking a new one; a new one counts against the daily cap. Returns (belief id, 'new'|'strengthened'|why)."""
@@ -1374,7 +1496,7 @@ def book_belief(oc, lesson: dict, srcs: list[dict], title: str, work_key: str, l
         if row and row[1] == stance:
             return row[0], "exists"
         oc.execute("INSERT INTO beliefs (topic, stance, confidence, article_slug, evidence) VALUES (%s,%s,%s,%s,%s) "
-                   "RETURNING id", (topic, stance, 0.6, f"work_lessons:{title}"[:200], ev))
+                   "RETURNING id", (topic, stance, confidence, f"work_lessons:{title}"[:200], ev))
         new_id = oc.fetchone()[0]
         if row:
             oc.execute("UPDATE beliefs SET active=false, superseded_by=%s, last_revised=now() WHERE id=%s",
@@ -1497,7 +1619,7 @@ def read_work(oc, mc, work: dict, dry_run: bool = False, transcript: str | None 
     smap = self_map(oc)
     over = overused_refs(oc, exclude_key=work["work_key"])
     mraw, mmodel = llm_work(mapping_prompt(title, [l["lesson"] for l in rd["lessons"]], smap, verdict=True,
-                                           overused=over), oc, max_tokens=900, temperature=0.3, models=MAP_MODELS,
+                                           overused=over, judge_source=kind != "film", kind=kind), oc, max_tokens=900, temperature=0.3, models=MAP_MODELS,
                             allow_fleet=False)
     res["model"] = model if mmodel in ("", model) else f"{model} + {mmodel}"
     if not mraw:
@@ -1508,21 +1630,23 @@ def read_work(oc, mc, work: dict, dry_run: bool = False, transcript: str | None 
     conns = validate_connections(mj, len(rd["lessons"]), {k for k, _ in smap}, overused=over)
     taste = mj.get("taste") if isinstance(mj.get("taste"), dict) else {}
     verdict = ps._CITE.sub("", str(taste.get("verdict") or "")).strip()[:240]
-    res.update(connections=conns, verdict=verdict, status="done")
-    text = render_memory(title, kind, year, rd, conns, verdict, srcs)
+    cred, cwhy = credibility(kind, title, work.get("series"), mj)
+    res.update(connections=conns, verdict=verdict, status="done", credibility=cred, credibility_why=cwhy)
+    text = cred_header(cred, cwhy) + render_memory(title, kind, year, rd, conns, verdict, srcs)
     res["text"] = text
     if dry_run:
         res["proposal_draft"] = mj.get("proposal")
         return _finish(oc, work, res, t0, dry_run, run_tag)
     meta = {"type": "work_lessons", "kind": kind, "title": title, "year": year, "work_key": work["work_key"][:300],
             "privacy": "local-only", "evidence_ids": res["evidence_ids"][:60], "plot_url": plot_url,
-            "model": model, "date": TODAY, "themes": rd["themes"], "n_lessons": len(rd["lessons"])}
+            "model": model, "date": TODAY, "themes": rd["themes"], "n_lessons": len(rd["lessons"]),
+            "credibility": cred}
     try:
         res["memory_id"] = remember(text, meta)
     except Exception as e:  # noqa: BLE001
         log(f"remember failed (non-fatal): {e}")
     prev = previous_read(oc, work["work_key"])
-    _write_back(oc, res, rd, conns, srcs, title, kind, work, mj, verdict, taste)
+    _write_back(oc, res, rd, conns, srcs, title, kind, work, mj, verdict, taste, cred=cred)
     supersede_previous(oc, mc, prev, res)
     return _finish(oc, work, res, t0, dry_run, run_tag)
 
@@ -1555,11 +1679,15 @@ def supersede_previous(oc, mc, prev: dict | None, res: dict):
         log(f"supersede of the previous read failed ({e})")
 
 
-def _write_back(oc, res, rd, conns, srcs, title, kind, work, mj, verdict, taste):
+def _write_back(oc, res, rd, conns, srcs, title, kind, work, mj, verdict, taste, cred: str = "unknown"):
     connected = [c for c in conns if c["ref"]]
+    if cred == "fringe":                           # her reading of its claims is kept; nothing becomes hers
+        res["beliefs"] = [{"lesson": c["lesson"], "id": None, "how": "fringe source"} for c in connected]
+        connected, mj = [], {**mj, "proposal": None}
     for c in connected[:MAX_BELIEFS_PER_WORK]:
         try:
-            bid, how = book_belief(oc, rd["lessons"][c["lesson"] - 1], srcs, title, work["work_key"], res["memory_id"])
+            bid, how = book_belief(oc, rd["lessons"][c["lesson"] - 1], srcs, title, work["work_key"], res["memory_id"],
+                                   confidence=0.5 if cred == "opinion" else 0.6)
             res["beliefs"].append({"lesson": c["lesson"], "id": bid, "how": how})
         except Exception as e:  # noqa: BLE001
             log(f"belief not booked ({e})")
@@ -1597,8 +1725,8 @@ def _finish(oc, work, res, t0, dry_run, run_tag):
         oc.execute("""INSERT INTO work_lessons (work_key, kind, source, wtype, title, series, year, tier, status,
                         processed_at, run_tag, lessons_json, connections_json, belief_ids, proposal_id, claude_queue_id,
                         taste_id, memory_id, plot_url, model, n_sources, lessons_raw, lessons_kept, elapsed_s, detail,
-                        quality)
-                      VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,now(),%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        quality, credibility)
+                      VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,now(),%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                       ON CONFLICT (work_key) DO UPDATE SET status=EXCLUDED.status, processed_at=now(),
                         run_tag=EXCLUDED.run_tag, year=coalesce(EXCLUDED.year, work_lessons.year),
                         lessons_json=EXCLUDED.lessons_json, connections_json=EXCLUDED.connections_json,
@@ -1607,7 +1735,7 @@ def _finish(oc, work, res, t0, dry_run, run_tag):
                         memory_id=EXCLUDED.memory_id, plot_url=EXCLUDED.plot_url, model=EXCLUDED.model,
                         n_sources=EXCLUDED.n_sources, lessons_raw=EXCLUDED.lessons_raw,
                         lessons_kept=EXCLUDED.lessons_kept, elapsed_s=EXCLUDED.elapsed_s, detail=EXCLUDED.detail,
-                        quality=EXCLUDED.quality
+                        quality=EXCLUDED.quality, credibility=EXCLUDED.credibility
                       WHERE work_lessons.status <> 'done' OR EXCLUDED.status = 'done'""",
                    (work["work_key"], work["kind"], work["source"], work.get("wtype"), res["title"][:300],
                     work.get("series"), res.get("year"), work.get("tier") or "A", res["status"], run_tag,
@@ -1616,7 +1744,7 @@ def _finish(oc, work, res, t0, dry_run, run_tag):
                     p.get("proposal_id"), p.get("claude_queue_id"), res.get("taste"), res.get("memory_id"),
                     res.get("plot_url"), res.get("model"), res.get("n_sources"), res.get("lessons_raw"),
                     len(res.get("lessons") or []), res["elapsed_s"], (res.get("detail") or "")[:400],
-                    json.dumps(res.get("quality") or {})))
+                    json.dumps(res.get("quality") or {}), res.get("credibility")))
     except Exception as e:  # noqa: BLE001
         log(f"work_lessons row not written ({e})")
     return res
@@ -1661,6 +1789,11 @@ def read_set(oc, mc, rows: list[dict], tier: str, dry_run: bool = False, run_tag
         if rd and rd["lessons"]:
             rd["lessons"], gen = filter_generic(oc, rd["lessons"], f"set:{label}", rd.get("q"))
             rd["dropped"] += gen
+            fringe = {i for i, w in enumerate(owner, 1) if FRINGE_RX.search(f"{w.get('title') or ''} {w.get('series') or ''}")}
+            if fringe:
+                keep = [l for l in rd["lessons"] if set(l.get("cites") or []) - fringe]
+                rd["dropped"] += [f"fringe item: {l['lesson'][:160]}" for l in rd["lessons"] if l not in keep]
+                rd["lessons"] = keep
         res["status"] = ("llm_down" if not raw else "fizzled" if not parsed else
                          "done" if rd and rd["lessons"] else "thin")
         res["quality"] = (rd or {}).get("q") or {"parse_failed": 1}
@@ -1670,16 +1803,19 @@ def read_set(oc, mc, rows: list[dict], tier: str, dry_run: bool = False, run_tag
         if rd and rd["lessons"]:
             smap = self_map(oc)
             mraw, _ = llm_work(mapping_prompt(label, [l["lesson"] for l in rd["lessons"]], smap, verdict=False,
-                                              overused=overused_refs(oc)), oc, max_tokens=900,
+                                              overused=overused_refs(oc),
+                                              judge_source=owner[0]["kind"] != "film",
+                                              kind=f"set of {owner[0]['kind']}s"), oc, max_tokens=900,
                                fleet_only=fleet, allow_fleet=fleet, models=None if fleet else TIER_A_MODELS)
             if not mraw:
                 res["status"] = "llm_down"
         if rd and rd["lessons"] and mraw:
             mj = parse_json(mraw)
             conns = validate_connections(mj, len(rd["lessons"]), {k for k, _ in smap}, overused=overused_refs(oc))
+            cred, cwhy = credibility(owner[0]["kind"], label, None, mj)
             res.update(lessons=rd["lessons"], connections=conns, lessons_raw=rd["lessons_raw"], reading=rd,
-                       quality=rd.get("q"))
-            text = render_memory(f"set — {label}", f"{len(srcs)} related works", None, rd, conns, None, srcs)
+                       quality=rd.get("q"), credibility=cred)
+            text = cred_header(cred, cwhy) + render_memory(f"set — {label}", f"{len(srcs)} related works", None, rd, conns, None, srcs)
             res["text"] = text
             if not dry_run:
                 try:
@@ -1690,7 +1826,7 @@ def read_set(oc, mc, rows: list[dict], tier: str, dry_run: bool = False, run_tag
                                                        "model": model})
                 except Exception as e:  # noqa: BLE001
                     log(f"remember failed (non-fatal): {e}")
-                _write_back(oc, res, rd, conns, srcs, label, "set", {"work_key": f"set:{label}"}, mj, "", {})
+                _write_back(oc, res, rd, conns, srcs, label, "set", {"work_key": f"set:{label}"}, mj, "", {}, cred=cred)
         elif rd:
             res["lessons_raw"] = rd["lessons_raw"]
     res["elapsed_s"] = round(time.monotonic() - t0, 1)
@@ -1717,12 +1853,14 @@ def _finish_set(oc, rows, owner, srcs, res, run_tag):
         try:
             oc.execute("""UPDATE work_lessons SET status=%s, processed_at=now(), run_tag=%s, lessons_json=%s,
                           connections_json=%s, memory_id=%s, model=%s, n_sources=%s, lessons_raw=%s, lessons_kept=%s,
-                          belief_ids=%s, elapsed_s=%s, detail=%s, quality=%s, set_id=%s WHERE work_key=%s""",
+                          belief_ids=%s, elapsed_s=%s, detail=%s, quality=%s, set_id=%s, credibility=%s WHERE work_key=%s""",
                        (st, run_tag, json.dumps(mine), json.dumps(mine_c), res.get("memory_id"), res.get("model"),
                         len(srcs), round(per_raw), len(mine),
                         [b["id"] for b in res["beliefs"] if b.get("id")] or None, res["elapsed_s"],
                         f"set of {len(rows)}; {len(res['lessons'])} set lesson(s)",
-                        json.dumps(res.get("quality") or {}) if w is rows[0] else None, set_id, w["work_key"]))
+                        json.dumps(res.get("quality") or {}) if w is rows[0] else None, set_id,
+                        "fringe" if FRINGE_RX.search(f"{w.get('title') or ''} {w.get('series') or ''}")
+                        else res.get("credibility"), w["work_key"]))
         except Exception as e:  # noqa: BLE001
             log(f"set row not updated ({e})")
 
@@ -2241,6 +2379,14 @@ def selftest() -> int:
                             "beliefs": 5, "beliefs_no_evidence": 0, "private_rows": 0, "distinct_lessons": 80})
     assert ok and not why
     assert projection({"A": 100}, {"A": 50})["total_hours"] == 2.0
+    assert credibility("video", "The Emerald Tablets Contain a Frequency Map")[0] == "fringe"
+    assert credibility("video", "10 Terrifying Things Submarine Crews Saw And Were Ordered Never To Talk About")[0] == "fringe"
+    assert credibility("film", "Atlantis: The Lost Empire")[0] == "fiction"
+    assert credibility("video", "Formlabs Studio 1 Review", None, {"credibility": {"level": "Opinion", "why": "a review"}}) == ("opinion", "a review")
+    assert credibility("article", "Space Shuttle Atlantis returns")[0] == "unknown"
+    assert "CLAIMS" in cred_header("fringe", "x") and cred_header("established", "x") == ""
+    assert '"credibility"' in mapping_prompt("t", ["l"], [("k", "d")], False, judge_source=True)
+    assert '"credibility"' not in mapping_prompt("t", ["l"], [("k", "d")], False)
     print("selftest OK")
     return 0
 

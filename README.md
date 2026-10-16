@@ -4261,3 +4261,32 @@ beliefs through the sleep-cycle evidence rule, daily caps 50 beliefs / 3 proposa
 consolidation. One Studio Ollama call at a time with embedding-latency backoff — after the reader's pilot
 starved the memory server's embeddings for ~10 minutes. Tiers B and C stay off until their gates pass
 (B: 8 of 45 works yielded a lesson; C: not enough grounded lessons yet). Queue: A 34k, B 131k, C 297k.
+
+### Work reader: own Ollama + source credibility (2026-10-16)
+The reader was queuing behind chat and embeddings on the Studio's main Ollama (~14 Tier A works/hour, a
+~100-day backlog). It now has its own Ollama: launchd daemon `net.digitalnoise.ollama-bulk`
+(`scripts/net.digitalnoise.ollama-bulk.plist`, `__HOME__` = the user home), `127.0.0.1:11435`, the same model files, its own resident
+qwen3:30b-a3b, 3 parallel slots; the scheduler runs 3 streams. It is tried first, needs no one-call Studio slot
+and ignores the whisper lock, but still backs off while the main Ollama's embeddings are slow (shared GPU).
+Switch: `service_config work_lessons/bulk_url` (`""` = off), `bulk_slots`.
+
+Every non-film work is now judged for **credibility** — `FRINGE_RX` title markers first (conspiracy,
+pseudo-science, occult, "ordered never to talk about" clickbait), else the mapping pass returns
+established / opinion / fringe / fiction. Fringe: her reading is kept as the work's *claims* (the memory says
+so) but no belief or proposal is booked. Opinion: beliefs book at confidence 0.5. Stored in
+`work_lessons.credibility`; the 2 fringe works already read were flagged and their beliefs retired.
+
+```mermaid
+flowchart LR
+    Q[(work_lessons queue)] --> S{3 streams}
+    S --> B[ollama-bulk :11435<br/>qwen3:30b-a3b]
+    B -.down or busy.-> R[other strong nodes]
+    R -.-> M[Studio main Ollama<br/>one call at a time]
+    B --> G[grounding + generic filter]
+    G --> C{credibility}
+    C -->|fringe| K[memory as claims only]
+    C -->|opinion| O[beliefs at 0.5]
+    C -->|established / fiction| E[beliefs at 0.6]
+    E --> N[(beliefs / taste / proposals)]
+    O --> N
+```

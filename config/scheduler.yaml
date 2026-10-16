@@ -1271,9 +1271,9 @@ tasks:
     schedule: cron 30 21 * * 0
     timeout: 900
     overlap: skip
-  work_lessons:                    # Nova's work reader: lessons, not dialogue (Jordan 2026-10-15). One Studio Ollama call at a time, backs off when embeddings slow; per-tier switches service_config work_lessons/backfill_enabled_{A,B,C}
+  work_lessons:                    # Nova's work reader: lessons, not dialogue (Jordan 2026-10-15). Reads on its own Ollama (net.digitalnoise.ollama-bulk :11435, 3 slots) first, else one Studio call at a time; backs off when embeddings slow; per-tier switches service_config work_lessons/backfill_enabled_{A,B,C}
     script: nova_work_lessons.py
-    args: ["--scheduled", "--minutes", "25", "--streams", "2"]
+    args: ["--scheduled", "--minutes", "25", "--streams", "3"]
     schedule: every 30m
     timeout: 2700
     overlap: skip
