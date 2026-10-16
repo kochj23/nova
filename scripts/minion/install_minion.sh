@@ -7,18 +7,16 @@
 # Written by Jordan Koch (via Claude).
 set -euo pipefail
 NODE="${1:?node}"; HUB="${2:?hub url}"; TOKEN="${3:?token}"; shift 3
-DEDICATED=false; HOURS=""; IDLE_MIN=10; MODEL="qwen3:30b-a3b"
+DEDICATED=false; HOURS=""; IDLE_MIN=10; MODEL="qwen3:30b-a3b"; MINFREE=0
 while [ $# -gt 0 ]; do case "$1" in
   --dedicated) DEDICATED=true ;; --hours) HOURS="$2"; shift ;; --idle-min) IDLE_MIN="$2"; shift ;;
-  --model) MODEL="$2"; shift ;; *) echo "unknown option $1"; exit 2 ;; esac; shift; done
+  --model) MODEL="$2"; shift ;; --min-free-gb) MINFREE="$2"; shift ;; *) echo "unknown option $1"; exit 2 ;; esac; shift; done
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DIR="$HOME/.nova-minion"
 mkdir -p "$DIR"
 cp "$HERE/nova_minion_agent.py" "$DIR/"
 /usr/bin/python3 "$DIR/nova_minion_agent.py" --selftest
 
-OLLAMA="$(command -v ollama || ls /opt/homebrew/bin/ollama /usr/local/bin/ollama 2>/dev/null | head -1 || true)"
-[ -n "$OLLAMA" ] || { echo "Ollama is not installed: brew install ollama (or the Ollama app), then rerun."; exit 3; }
 IP="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)"
 [ -n "$IP" ] || { echo "no LAN address on en0/en1"; exit 3; }
 OLLAMA_URL="http://$IP:11434"
@@ -26,13 +24,18 @@ if ! curl -s -m 3 "$OLLAMA_URL/api/version" >/dev/null; then
   echo "Ollama is not reachable on $OLLAMA_URL — it must listen on the LAN:"
   echo "  launchctl setenv OLLAMA_HOST 0.0.0.0   (then restart Ollama)"; exit 3
 fi
-curl -s -m 5 "$OLLAMA_URL/api/tags" | grep -q "\"$MODEL\"" || "$OLLAMA" pull "$MODEL"
+# Ollama may live anywhere (a custom LaunchDaemon path, the app, brew): talk to its API, not its binary
+if ! curl -s -m 5 "$OLLAMA_URL/api/tags" | grep -q "\"$MODEL\""; then
+  echo "pulling $MODEL into Ollama on $OLLAMA_URL ..."
+  curl -s -m 3600 "$OLLAMA_URL/api/pull" -d "{\"name\": \"$MODEL\", \"stream\": false}" | grep -q success \
+    || { echo "pull of $MODEL failed"; exit 3; }
+fi
 
-/usr/bin/python3 - "$DIR/config.json" "$NODE" "$HUB" "$OLLAMA_URL" "$IDLE_MIN" "$HOURS" "$DEDICATED" "$MODEL" <<'PY'
+/usr/bin/python3 - "$DIR/config.json" "$NODE" "$HUB" "$OLLAMA_URL" "$IDLE_MIN" "$HOURS" "$DEDICATED" "$MODEL" "$MINFREE" <<'PY'
 import json, sys
-p, node, hub, url, idle, hours, ded, model = sys.argv[1:]
+p, node, hub, url, idle, hours, ded, model, minfree = sys.argv[1:]
 c = {"node": node, "hub": hub.rstrip("/"), "ollama_url": url, "idle_after_min": int(idle),
-     "dedicated": ded == "true", "models": [model]}
+     "dedicated": ded == "true", "models": [model], "min_free_gb": float(minfree)}
 if hours:
     c["hours"] = hours
 json.dump(c, open(p, "w"), indent=2)

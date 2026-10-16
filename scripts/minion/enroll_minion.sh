@@ -1,6 +1,7 @@
 #!/bin/bash
 # enroll_minion.sh — run on the Studio: enroll a Mac as a Nova minion and install it over SSH.
-#   enroll_minion.sh SSH_HOST NODE [--dedicated] [--hours 22-07] [--idle-min 10]
+#   enroll_minion.sh SSH_HOST NODE [--dedicated] [--hours 22-07] [--idle-min 10] [--min-free-gb N] [--model M]
+# macOS or Linux (uname picks install_minion.sh / install_minion_linux.sh).
 # Mints a token (only its hash stays in minion_nodes), copies the agent/installer/plist (and the screensaver from
 # the binaries export when present) to the Mac, and runs install_minion.sh there.
 # Written by Jordan Koch (via Claude).
@@ -12,10 +13,13 @@ HUB="http://$STUDIO_IP:37590"
 DED=""; for a in "$@"; do [ "$a" = "--dedicated" ] && DED="--dedicated"; done
 TOKEN="$(/opt/homebrew/bin/python3 "$HERE/../nova_minion_hub.py" --enroll "$NODE" $DED)"
 STAGE="$(mktemp -d)"
-cp "$HERE/nova_minion_agent.py" "$HERE/install_minion.sh" "$HERE/net.digitalnoise.nova-minion.plist.template" "$STAGE/"
+cp "$HERE/nova_minion_agent.py" "$HERE/install_minion.sh" "$HERE/install_minion_linux.sh" \
+   "$HERE/net.digitalnoise.nova-minion.plist.template" "$STAGE/"
 SAVER="/Volumes/Data/xcode/binaries/NovaMinion.saver"
 [ -d "$SAVER" ] && /usr/bin/ditto "$SAVER" "$STAGE/NovaMinion.saver"
 ssh -o BatchMode=yes "$HOST" 'mkdir -p ~/.nova-minion/install'
 scp -q -r -o BatchMode=yes "$STAGE"/* "$HOST:.nova-minion/install/"
-ssh -o BatchMode=yes "$HOST" "bash ~/.nova-minion/install/install_minion.sh '$NODE' '$HUB' '$TOKEN' $*" </dev/null
+OS="$(ssh -o BatchMode=yes "$HOST" uname -s </dev/null)"
+INSTALLER=install_minion.sh; [ "$OS" = "Linux" ] && INSTALLER=install_minion_linux.sh
+ssh -o BatchMode=yes "$HOST" "bash ~/.nova-minion/install/$INSTALLER '$NODE' '$HUB' '$TOKEN' $*" </dev/null
 echo "enrolled $NODE on $HOST (hub $HUB)"

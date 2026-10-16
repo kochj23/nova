@@ -10,9 +10,13 @@ Every 30 s it decides whether this Mac is free for Nova and tells the hub (nova_
 It also serves http://127.0.0.1:37591/status for the Nova Minion screensaver (a cached proxy of the hub's
 /status for this node), so the screensaver never needs the hub's address or the token.
 
+macOS: idle = screensaver up or no keyboard/mouse input. Linux (2026-10-16, servers without a screen): idle = 5-min
+load below max_load_per_core and nobody logged in on a TTY/desktop. Both: free memory must stay above min_free_gb
+(macOS free+inactive+purgeable, Linux MemAvailable) — a minion never squeezes the work the machine is there for.
 Python 3.9 stdlib only (runs on the system python3 of a fresh Mac). Config: ~/.nova-minion/config.json
   {"node": "studio-2", "hub": "http://<studio>:37590", "ollama_url": "http://<this mac>:11434",
-   "idle_after_min": 10, "hours": "22-07" (optional), "dedicated": false, "models": ["qwen3:30b-a3b"]}
+   "idle_after_min": 10, "hours": "22-07" (optional), "dedicated": false, "models": ["qwen3:30b-a3b"],
+   "min_free_gb": 4 (optional), "max_load_per_core": 0.5 (Linux)}
 Token: login Keychain, service 'nova-minion', account <node>; else ~/.nova-minion/token (0600, SSH installs)
   python3 nova_minion_agent.py [--once] [--selftest]
 Written by Jordan Koch (via Claude).
@@ -21,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import re
 import subprocess
 import sys
@@ -34,7 +39,7 @@ CONF = os.path.expanduser("~/.nova-minion/config.json")
 LOCAL_PORT = 37591
 BEAT_S = 30
 STATUS_TTL_S = 4
-VERSION = "1.0"
+VERSION = "1.1"
 _cache = {"t": 0.0, "body": None, "lock": threading.Lock()}
 _state = {"state": "offline", "since": None}
 
@@ -80,6 +85,30 @@ def throttled(therm_out: str | None = None) -> bool:
     return bool(m and int(m.group(1)) < 100)
 
 
+LINUX = platform.system() == "Linux"
+
+
+def free_gb(vm_stat_out: str | None = None, meminfo: str | None = None) -> float:
+    """Memory the machine could hand over: Linux MemAvailable; macOS free + inactive + purgeable + speculative."""
+    if LINUX or meminfo is not None:
+        txt = meminfo if meminfo is not None else open("/proc/meminfo").read()
+        m = re.search(r"MemAvailable:\s+(\d+)", txt)
+        return int(m.group(1)) / 2**20 if m else 0.0
+    out = vm_stat_out if vm_stat_out is not None else sh("/usr/bin/vm_stat")
+    ps_ = re.search(r"page size of (\d+)", out)
+    page = int(ps_.group(1)) if ps_ else 16384
+    n = sum(int(m.group(2)) for m in re.finditer(r"Pages (free|inactive|purgeable|speculative):\s+(\d+)", out))
+    return n * page / 2**30
+
+
+def linux_busy(conf: dict, loadavg: str | None = None, who_out: str | None = None, ncpu: int | None = None) -> bool:
+    la = loadavg if loadavg is not None else open("/proc/loadavg").read()
+    load5 = float(la.split()[1])
+    users = who_out if who_out is not None else sh("/usr/bin/who")
+    interactive = any(re.search(r"\s(tty\d+|:\d+|seat\d+)\b", l) for l in users.splitlines())
+    return load5 / float(ncpu or os.cpu_count() or 1) > float(conf.get("max_load_per_core", 0.5)) or interactive
+
+
 def in_hours(spec: str | None, hour: int) -> bool:
     """'22-07' -> 22:00..06:59 (wraps midnight); empty -> always."""
     if not spec:
@@ -88,11 +117,14 @@ def in_hours(spec: str | None, hour: int) -> bool:
     return a <= hour < b if a < b else (hour >= a or hour < b)
 
 
-def decide(conf: dict, idle_s: float, saver: bool, ac: bool, hot: bool, hour: int) -> str:
-    """Pure: the state this Mac should report."""
+def decide(conf: dict, idle_s: float, saver: bool, ac: bool, hot: bool, hour: int, mem_gb: float = 1e9,
+           busy: bool | None = None) -> str:
+    """Pure: the state this machine should report. busy (Linux) replaces the keyboard/screensaver test."""
+    if mem_gb < float(conf.get("min_free_gb", 0)):
+        return "away"                                  # never squeeze what the machine is there for
     if conf.get("dedicated"):
         return "dedicated"
-    free = saver or idle_s >= float(conf["idle_after_min"]) * 60
+    free = (not busy) if busy is not None else (saver or idle_s >= float(conf["idle_after_min"]) * 60)
     return "idle" if free and ac and not hot and in_hours(conf.get("hours"), hour) else "away"
 
 
@@ -123,6 +155,13 @@ def models_here(ollama: str) -> list:
         return []
 
 
+def loaded_here(ollama: str) -> list:
+    try:
+        return [m["name"] for m in http(ollama.rstrip("/") + "/api/ps", timeout=5).get("models", [])]
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def set_loaded(ollama: str, models: list, load: bool):
     """Preload the reader's model when Nova may use this Mac; unload it when a person is back."""
     for m in models:
@@ -134,8 +173,14 @@ def set_loaded(ollama: str, models: list, load: bool):
 
 
 def tick(conf: dict, tok: str) -> str:
-    state = decide(conf, idle_seconds(), screensaver_up(), on_ac(), throttled(), datetime.now().hour)
     ollama = conf.get("ollama_url") or ""
+    # the memory guard is about LOADING a model: one that is already resident costs nothing more to use
+    resident = bool(ollama) and any(m in loaded_here(ollama) for m in conf["models"])
+    mem = 1e9 if resident else free_gb()
+    if LINUX:
+        state = decide(conf, 0, False, True, False, datetime.now().hour, mem, busy=linux_busy(conf))
+    else:
+        state = decide(conf, idle_seconds(), screensaver_up(), on_ac(), throttled(), datetime.now().hour, mem)
     have = models_here(ollama) if ollama else []
     if not have and state != "away":
         state = "away"                           # Ollama is down: nothing to lend
@@ -151,7 +196,8 @@ def tick(conf: dict, tok: str) -> str:
     try:
         http(conf["hub"].rstrip("/") + "/heartbeat",
              {"node": conf["node"], "state": state, "ollama_url": ollama, "models": have,
-              "info": {"agent": VERSION, "ac": on_ac(), "throttled": throttled(), "idle_s": int(idle_seconds())}},
+              "info": {"agent": VERSION, "os": platform.system(), "free_gb": round(free_gb(), 1),
+                       **({} if LINUX else {"ac": on_ac(), "throttled": throttled(), "idle_s": int(idle_seconds())})}},
              token=tok)
     except Exception as e:  # noqa: BLE001
         log(f"heartbeat failed ({e})")
@@ -204,6 +250,15 @@ def selftest() -> int:
     assert decide(c, 700, False, True, True, 12) == "away"            # throttled
     assert decide({**c, "hours": "22-07"}, 700, False, True, False, 12) == "away"
     assert decide({**c, "dedicated": True}, 0, False, False, True, 12) == "dedicated"
+    assert decide({**c, "min_free_gb": 24}, 700, False, True, False, 12, mem_gb=6) == "away"     # memory guard
+    assert decide({**c, "dedicated": True, "min_free_gb": 24}, 0, False, True, False, 12, mem_gb=6) == "away"
+    assert decide(c, 0, False, True, False, 12, busy=False) == "idle" and decide(c, 0, False, True, False, 12, busy=True) == "away"
+    assert abs(free_gb(meminfo="MemTotal: 32704500 kB\nMemAvailable:   31643520 kB\n") - 30.18) < 0.01
+    assert abs(free_gb(vm_stat_out="Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free: 65536.\n"
+                                   "Pages inactive: 65536.\nPages speculative: 0.\n") - 2.0) < 1e-6
+    assert linux_busy({}, "0.10 3.50 1.0 1/1 1", "", 6) is True                         # load 3.5/6 > 0.5
+    assert linux_busy({}, "0.10 0.50 1.0 1/1 1", "kochj pts/0 2026-10-16 (10.0.0.9)", 6) is False   # ssh is fine
+    assert linux_busy({}, "0.10 0.50 1.0 1/1 1", "kochj tty2 2026-10-16", 6) is True     # someone at the console
     print("selftest OK")
     return 0
 

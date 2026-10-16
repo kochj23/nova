@@ -4273,7 +4273,12 @@ minion with a fresh heartbeat, notes what each one is reading (`minion_activity`
 (`work_lessons.host`). The agent serves `127.0.0.1:37591/status` for the screensaver, so the saver needs no
 address or token. Enroll a Mac from the Studio: `scripts/minion/enroll_minion.sh <ssh-host> <node> [--hours 22-07]
 [--dedicated]` (token minted by the hub, only its hash stored; on the Mac in the Keychain, or a 0600 file when
-installed over SSH). First minion: nova-core10 (dedicated).
+installed over SSH). Minions (2026-10-16): **mac-studio** and **nova-core10** (dedicated, 30B),
+**nova-core9** TV-Movies and **nova-core6** (idle-gated, 8B for the batch tiers). A memory guard (`min_free_gb`) keeps a
+minion from loading a model into memory its own job needs (a model already resident is free to use). **Linux**
+minions are supported (`install_minion_linux.sh`, systemd `nova-minion`; idle = low 5-min load and nobody at the
+console) but none of today's servers is enrolled: nova-core4 is the gateway standby on a 6-core i5 (~3-5 tok/s
+for the 8B), nova-core7 has under 2 GB free, the rest are the PG primary/standbys and radio ingest.
 
 ```mermaid
 flowchart LR

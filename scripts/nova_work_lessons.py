@@ -1213,7 +1213,10 @@ def _call(base: str, model: str, prompt: str, max_tokens: int, temperature: floa
     with StudioSlot() as slot:
         if not slot.acquired:
             raise RuntimeError("another reader call holds the studio slot")
-        return ollama_chat(base, model, prompt, max_tokens, temperature, num_ctx)
+        out = ollama_chat(base, model, prompt, max_tokens, temperature, num_ctx)
+        if getattr(_TL, "host", None) is None:
+            _TL.host = STUDIO_NODE
+        return out
 
 
 _BULK = {"url": None, "slots": BULK_SLOTS_DEFAULT, "sem": None, "t": 0.0, "embed": (0.0, None),
@@ -1266,6 +1269,7 @@ def main_embed_ok(sleep=time.sleep) -> bool:
 # on a remote node notes what it is reading in minion_activity, and the work row records which node read it —
 # that is what the Nova Minion screensaver shows.
 MINION_FRESH_S = 90
+STUDIO_NODE = "mac-studio"          # reads on this host (bulk or main Ollama) are recorded under this minion name
 _MIN = {"t": 0.0, "rows": [], "lock": threading.Lock()}
 _TL = threading.local()
 
@@ -1376,7 +1380,7 @@ def bulk_call(base: str, model: str, prompt: str, max_tokens: int, temperature: 
     try:
         out = ollama_chat(base, model, prompt, max_tokens, temperature, NUM_CTX)
         if getattr(_TL, "host", None) is None:
-            _TL.host = "studio-bulk"
+            _TL.host = STUDIO_NODE
         return out
     finally:
         _BULK["sem"].release()
@@ -1446,11 +1450,32 @@ def llm_work(prompt: str, oc=None, max_tokens: int = 1400, temperature: float = 
         if not allow_fleet:
             log("no strong model answered — not degrading this read to the 8b; it stays queued")
             return "", ""
-    for base, model in [(r["url"].rstrip("/"), FLEET_MODEL) for r in ((ps.load_ranking() or {}).get("ollama") or [])
-                        if r.get("status") == "up" and FLEET_MODEL in (r.get("loaded") or [])
-                        and ps._host(r["url"]) not in ps.CPU_ONLY_HOSTS and ps._host(r["url"]) not in me]:
+    # fleet 8b: idle/dedicated minions that have it, then the llm-ping nodes — minus any enrolled minion that is
+    # 'away' (someone is using it, or its memory guard tripped) (2026-10-16)
+    minions = minion_rows()
+    usable = {(u or "").rstrip("/") for _, u, _ in minions}
+    try:
+        cur = _minion_conn().cursor()
+        cur.execute("SELECT ollama_url, info->>'os' FROM minion_nodes WHERE ollama_url IS NOT NULL "
+                    "AND coalesce(role,'minion')='minion'")
+        rows_e = cur.fetchall()
+        enrolled = {(r[0] or "").rstrip("/") for r in rows_e}
+        cpu_minions = {(r[0] or "").rstrip("/") for r in rows_e if r[1] == "Linux"}   # no GPU on the Linux minions
+    except Exception:  # noqa: BLE001
+        enrolled, cpu_minions = set(), set()
+    fleet = [(u.rstrip("/"), FLEET_MODEL) for _, u, ms in minions if FLEET_MODEL in (ms or []) and ps._host(u) not in me]
+    fleet += [(r["url"].rstrip("/"), FLEET_MODEL) for r in ((ps.load_ranking() or {}).get("ollama") or [])
+              if r.get("status") == "up" and FLEET_MODEL in (r.get("loaded") or [])
+              and ps._host(r["url"]) not in ps.CPU_ONLY_HOSTS and ps._host(r["url"]) not in me
+              and (r["url"].rstrip("/") not in enrolled or r["url"].rstrip("/") in usable)
+              and (r["url"].rstrip("/"), FLEET_MODEL) not in fleet]
+    fleet.sort(key=lambda e: e[0] in cpu_minions)                  # CPU-only minions last (stable)
+    for base, model in fleet:
         try:
+            _TL.model = model
+            note_activity(base, True)
             txt = ollama_chat(base, model, prompt, max_tokens, temperature, 8192)
+            note_activity(base, False)
             if txt:
                 return txt, model
         except Exception:  # noqa: BLE001
