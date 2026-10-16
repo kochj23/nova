@@ -112,6 +112,15 @@ def heartbeat(cur, node: str, hb: dict):
     return state
 
 
+def transcribed(cur, node: str | None, win: str) -> tuple[int, float]:
+    """(episodes, hours of audio) re-transcribed in the window — by one node, or the fleet when node is None."""
+    cur.execute("SELECT count(*), coalesce(sum(audio_s),0) / 3600.0 FROM media_reingest_queue "
+                "WHERE status = 'done' AND updated_at > now() - %s::interval AND (%s::text IS NULL OR node = %s)",
+                (win, node, node))
+    n, h = cur.fetchone()
+    return int(n), round(float(h), 1)
+
+
 def iso(t):
     return t.astimezone().isoformat(timespec="seconds") if t else None
 
@@ -142,13 +151,17 @@ def status(cur, node: str) -> dict:
     cur.execute("""SELECT count(*), coalesce(sum(lessons_kept),0), coalesce(sum(cardinality(belief_ids)),0)
                    FROM work_lessons WHERE status='done' AND host=%s AND processed_at > now() - %s::interval""", (node, win))
     w, l, b = cur.fetchone()
-    out["tonight"] = {"works": int(w), "lessons": int(l), "beliefs": int(b)}
+    te, th = transcribed(cur, node, win)
+    out["tonight"] = {"works": int(w), "lessons": int(l), "beliefs": int(b), "transcribed": te, "audio_h": th}
     cur.execute("""SELECT count(*), coalesce(sum(lessons_kept),0) FROM work_lessons
                    WHERE status='done' AND processed_at > now() - %s::interval""", (win,))
     fw, fl = cur.fetchone()
     cur.execute("SELECT count(*) FROM minion_nodes WHERE state IN ('idle','dedicated') AND last_seen > now() - "
                 "%s * interval '1 second'", (FRESH_S,))
-    out["fleet_tonight"] = {"works": int(fw), "lessons": int(fl), "minions": int(cur.fetchone()[0])}
+    nmin = int(cur.fetchone()[0])                  # read before the next query reuses the cursor
+    fte, fth = transcribed(cur, None, win)
+    out["fleet_tonight"] = {"works": int(fw), "lessons": int(fl), "minions": nmin,
+                            "transcribed": fte, "audio_h": fth}
     cur.execute("""SELECT w.title, w.kind, l->>'lesson', w.host, w.processed_at FROM work_lessons w,
                    jsonb_array_elements(coalesce(w.lessons_json,'[]')) l
                    WHERE w.status='done' AND coalesce(w.credibility,'') <> 'fringe' AND w.processed_at > now() - interval '48 hours'
@@ -184,7 +197,9 @@ def fleet(cur) -> dict:
     out["minions"] = [{"node": n, "state": stt, "since": iso(si), "dedicated": bool(d),
                        "os": (info or {}).get("os_name") or (info or {}).get("os"),
                        "tok_s": (info or {}).get("tok_s"), "now_reading": act.get(n, []),
-                       "tonight": {"works": int(w), "lessons": int(l)}} for n, stt, si, info, d, w, l in rows]
+                       "tonight": {"works": int(w), "lessons": int(l),
+                                   **dict(zip(("transcribed", "audio_h"), transcribed(cur, n, f"{WINDOW_H} hours")))}}
+                      for n, stt, si, info, d, w, l in rows]
     for r in out["recent_lessons"]:
         r.pop("mine", None)
     return out

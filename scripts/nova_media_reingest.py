@@ -240,6 +240,7 @@ def connect(dbname: str):
 def ensure_schema(cur) -> None:
     import nova_pg_schema
     nova_pg_schema.safe_ddl(cur, SCHEMA)
+    cur.execute("ALTER TABLE media_reingest_queue ADD COLUMN IF NOT EXISTS node text")
 
 
 def cfg(cur, key: str, default=None):
@@ -607,7 +608,8 @@ def guards(oc, check_movie: bool = True) -> str | None:
     return None
 
 
-def do_item(oc, mc, item: tuple, left: float, stats: dict, post=None, transcribe=None, tag: str = "") -> bool:
+def do_item(oc, mc, item: tuple, left: float, stats: dict, post=None, transcribe=None, tag: str = "",
+            node: str = "mac-studio") -> bool:
     """Process one claimed file and book the result. False = the window closed mid-file (stop the loop)."""
     log(f"▶{tag} {item[1]} — {item[2][:70]}")
     try:
@@ -626,7 +628,8 @@ def do_item(oc, mc, item: tuple, left: float, stats: dict, post=None, transcribe
     finish(oc, item[0], r["status"], old_chunks=r["old_chunks"], old_words=r["old_words"],
            legacy_chunks=r["legacy_chunks"],
            new_chunks=r.get("stored", 0), words=r["new_words"] if r["status"] == "done" else 0,
-           superseded=r["superseded"], audio_s=r["audio_s"], gpu_s=r["gpu_s"], wall_s=r["wall_s"], error=None)
+           superseded=r["superseded"], audio_s=r["audio_s"], gpu_s=r["gpu_s"], wall_s=r["wall_s"], error=None,
+           node=node)                    # which machine's Whisper did it (minion displays count it)
     stats[r["status"]] += 1
     stats["audio_s"] += r["audio_s"]
     stats["gpu_s"] += r["gpu_s"]
@@ -681,7 +684,7 @@ def minion_worker(node: str, deadline: datetime, stats: dict, lock: threading.Lo
                    "ON CONFLICT (node, work_key) DO UPDATE SET started_at=now()", (node, key, f"{item[1]} — {item[2]}"[:300]))
         try:
             ok = do_item(oc, mc, item, (deadline - datetime.now()).total_seconds(), mine,
-                         transcribe=lambda wav, t: transcribe_remote(node, wav, t), tag=f" [{node}]")
+                         transcribe=lambda wav, t: transcribe_remote(node, wav, t), tag=f" [{node}]", node=node)
         finally:
             oc.execute("DELETE FROM minion_activity WHERE node=%s AND work_key=%s", (node, key))
         if not ok:
