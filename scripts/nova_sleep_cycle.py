@@ -121,6 +121,11 @@ def phase_episode(mc):
 # beliefs had evidence '{}' (only the article title in article_slug). No backfill: old rows stay as
 # they are; unevidenced new ones are refused and counted (sleep_cycle_belief_stats).
 MIN_QUOTE_WORDS = 4
+# Journal sections that carry her OWN positions. Everything else under source nova_articles is a report of
+# something she watched (radio digests 'local', alert write-ups 'operations', news 'digests') or a raw
+# transcript; booking those as opinions put "the police feed has a low signal-to-noise ratio" at 0.95 and
+# leaked the prompt's own example into a belief (2026-10-16, beliefs 919-982 deactivated).
+OPINION_SECTIONS = ("opinions", "essays", "research", "synthesis", "meta")
 
 
 def _norm_ws(s):
@@ -162,9 +167,10 @@ def _record_belief_stats(oc, booked, refused, reasons):
 def phase_beliefs(mc, oc):
     mc.execute("""SELECT DISTINCT ON (metadata->>'title') id, metadata->>'title', left(text, 1600)
                   FROM memories WHERE source='nova_articles'
+                  AND metadata->>'type' = 'article' AND metadata->>'section' = ANY(%s)
                   AND created_at > now() - interval '24 hours'
                   AND coalesce(metadata->>'idx','0') IN ('0','1')
-                  ORDER BY metadata->>'title', created_at LIMIT 10""")
+                  ORDER BY metadata->>'title', created_at LIMIT 10""", (list(OPINION_SECTIONS),))
     arts = mc.fetchall()
     if not arts:
         log("beliefs: no fresh articles"); return
@@ -180,7 +186,7 @@ def phase_beliefs(mc, oc):
                 "at least four words from the excerpt; a position you cannot quote is not booked. "
                 "FALSIFIABLE-NARROW RULE (from the herd, 2026-09-14): write each stance "
                 "so the underlying records could contradict it — a specific claim tied to "
-                "evidence ('the UNAS cutover reduced write latency'), never a self-sealing "
+                "evidence (e.g. naming a component and a measured effect), never a self-sealing "
                 "verdict that has already decided what it means ('our infrastructure is "
                 "excellent'). If a stance can't be proven wrong by data, drop it. "
                 "Output ONLY the JSON array.\n\n"

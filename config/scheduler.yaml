@@ -1289,6 +1289,11 @@ tasks:
     schedule: cron 30 4 * * 0
     timeout: 900
     overlap: skip
+  growth_loop:                     # Nova grows from her reading (Jordan 2026-10-16): 3 different works pointing at one part of her -> an earned practice in her chat context + a gated co-agency proposal; nova_practices / growth_signals
+    script: nova_growth_loop.py
+    schedule: every 30m
+    timeout: 900
+    overlap: skip
   lessons_daily:                   # daily 17:45 — "Lessons learned — <date>" in /operations from the work_lessons ledger (Jordan 2026-10-16); window starts where the last one ended; out before the 18:00 summary
     script: nova_lessons_daily.py
     args: ["--scheduled"]

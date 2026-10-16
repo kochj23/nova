@@ -208,7 +208,11 @@ RED_LINES = {   # nova_red_line's classes, described for the self-map — things
     "redline:proteus_physical": "RED LINE, never mine alone: locks, garage, alarms, covers, extreme climate in the house",
     "redline:chaos_live": "RED LINE, never mine alone: live chaos or wargame runs against production (I do NOT run them)",
 }
-_CLAIMS_DOING = re.compile(r"\bI (already |routinely |regularly )?(run|do|perform|engage|execute|conduct)\b", re.I)
+# A red line is something she never does alone, so any "I already <verb>" / "this confirms it" on one is false.
+# The verb list alone let "I already adhere to the AE-35 rule" and "I already use ..." through (14 of 18 red-line
+# links on 2026-10-16).
+_CLAIMS_DOING = re.compile(r"\bI (?:already|routinely|regularly) \w+|\bI (?:run|do|perform|engage|execute|conduct)\b"
+                           r"|\bconfirms (?:it|this|that)\b", re.I)
 
 
 def log(m):
@@ -527,7 +531,9 @@ def mapping_prompt(title: str, lessons: list[str], selfmap: list[tuple[str, str]
             "For EACH lesson decide honestly whether its MECHANISM matches how ONE item above actually works. "
             "If it does, give that item's exact key and one sentence 'what this means for me': first person, "
             "naming the item, that CONCLUDES — a concrete change ('so my <item> should also <do X>') or a "
-            "confirmation ('I already <do Y> in <item> — this confirms it') — never a question. Do NOT restate the "
+            "confirmation ('I already <do Y> in <item> — this confirms it') — never a question. Look for the GAP first: "
+            "what does the lesson's failure need that the item, as described, does not yet do? Confirm only when "
+            "the description plainly already covers it — 'I already do it' is how you stop growing. Do NOT restate the "
             "lesson and do NOT invent duties an item does not have; RED LINE items are things you never do alone, "
             "so a lesson can only argue for keeping one — never 'I already do it'. The bar (an example from ANOTHER film — never "
             "reuse it): 'a fail-safe nobody can recall becomes the disaster' -> 'so every automation I start needs "

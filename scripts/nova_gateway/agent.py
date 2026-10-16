@@ -1103,6 +1103,16 @@ async def _self_model_block(ctx: GatewayContext) -> str:
     return ""
 
 
+async def _practices_block(ctx: GatewayContext) -> str:
+    """Practices Nova earned from her reading (nova_growth_loop.py: three different works pointing the same way at
+    one part of her). Slow-changing, so it sits with the self-model. Non-fatal."""
+    pool = await get_pg(ctx)
+    rows = await pool.fetch("SELECT ref, practice, strength FROM nova_practices WHERE status='earned' "
+                            "ORDER BY strength DESC, last_reinforced DESC LIMIT 8")
+    from nova_growth_loop import practices_block
+    return practices_block([(r["ref"], r["practice"], r["strength"]) for r in rows])
+
+
 async def _cross_context_block(ctx: GatewayContext, session_id: str) -> str:
     """Cross-channel context — what was said on Jordan's OTHER channels recently."""
     pool = await get_pg(ctx)
@@ -1148,9 +1158,10 @@ async def do_agent_work(ctx: GatewayContext, message: str, session_id: str,
     async def _no_recent():
         return ""
 
-    (bootstrap, self_model, extra, cross_ctx, exp_ctx, memory_ctx, recent) = await asyncio.gather(
+    (bootstrap, self_model, practices, extra, cross_ctx, exp_ctx, memory_ctx, recent) = await asyncio.gather(
         _safe("agent docs", _load_agent_docs(ctx, agent_id)),
         _safe("self-model", _self_model_block(ctx)),
+        _safe("practices", _practices_block(ctx)),
         _safe("sentience", _sentience_block()),
         _safe("cross-context", _cross_context_block(ctx, session_id)),
         _safe("experiential recall", _experience_recall(ctx, message)),
@@ -1161,7 +1172,7 @@ async def do_agent_work(ctx: GatewayContext, message: str, session_id: str,
 
     sys_prompt = _system_prompt(agent_id, bootstrap)
     # Order matters for the backend's prompt cache: the slow-changing blocks first, the per-turn ones last.
-    for block in (self_model, extra, cross_ctx, recent):
+    for block in (self_model, practices, extra, cross_ctx, recent):
         if block:
             sys_prompt = f"{sys_prompt}\n\n{block}"
     if recent:

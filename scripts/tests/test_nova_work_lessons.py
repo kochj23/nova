@@ -255,6 +255,23 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(wl.validate_connections(ok, 1, keys)[0]["ref"], "organ:ae35_rule")
         self.assertIsNone(wl.validate_connections(ok, 1, keys, overused={"organ:ae35_rule"})[0]["ref"])
 
+    def test_red_line_never_claims_i_already(self):
+        keys = {"redline:ae35", "redline:kill_switch", "organ:hold"}
+
+        def ref(r, meaning):
+            return wl.validate_connections({"connections": [{"lesson": 1, "ref": r, "fit": 3, "meaning": meaning}]},
+                                           1, keys)[0]["ref"]
+        # the 2026-10-16 leaks: verbs outside the old list, and bare "this confirms it"
+        self.assertIsNone(ref("redline:ae35", "I already adhere to the AE-35 rule by never silencing a watcher alone."))
+        self.assertIsNone(ref("redline:kill_switch", "so my kill_switch is only released with a person present — this confirms it"))
+        self.assertIsNone(ref("redline:ae35", "I already run every watcher past a second check."))
+        # arguing for keeping a red line still links
+        self.assertEqual(ref("redline:kill_switch", "so my kill switch must stay a two-person decision, never a timer."),
+                         "redline:kill_switch")
+        # ordinary organs may still confirm
+        self.assertEqual(ref("organ:hold", "I already require approval in hold for irreversible actions — this confirms it."),
+                         "organ:hold")
+
     def test_quote_must_live_in_a_cited_source(self):
         srcs = [{"text": "alpha bravo charlie delta echo"}, {"text": "foxtrot golf hotel india juliet"}]
         self.assertEqual(wl.quote_home("foxtrot golf hotel india", 1, [2], srcs), 2)

@@ -185,6 +185,17 @@ class TestUnit(_Base):
         self.assertEqual(json.loads(stats[3]), {"quote not found in the source text": 1, "no supporting quote": 1})
         self.assertIn("refusal rate 67%", self.out.getvalue())
 
+    def test_beliefs_read_only_her_opinion_sections(self):
+        mc = MagicMock()
+        mc.fetchall.return_value = []
+        sc.phase_beliefs(mc, MagicMock())
+        sql, params = mc.execute.call_args[0]
+        self.assertIn("metadata->>'section' = ANY(%s)", sql)
+        self.assertIn("metadata->>'type' = 'article'", sql)
+        self.assertEqual(params, (list(sc.OPINION_SECTIONS),))
+        for stream in ("local", "operations", "digests"):     # radio digests, alert write-ups, news roundups
+            self.assertNotIn(stream, sc.OPINION_SECTIONS)
+
     def test_stats_failure_never_breaks_the_phase(self):
         oc = MagicMock()
         oc.execute.side_effect = RuntimeError("pg down")
