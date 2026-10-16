@@ -14,8 +14,10 @@ screensaver draws: what this Mac is reading now, what it has learned for Nova to
 
   POST /heartbeat           X-Minion-Token; {"node","state","ollama_url","models":[...],"info":{...}}
   GET  /status?node=N       X-Minion-Token; the screensaver's JSON (apps/NovaMinionSaver/README.md)
+  GET  /fleet?node=N        X-Minion-Token; every minion's state + what it is reading, for displays (the iPad app)
   GET  /health
-CLI  --serve [--port 37590] | --enroll NODE [--url http://host:11434] [--dedicated] | --list | --selftest
+CLI  --serve [--port 37590] | --enroll NODE [--url http://host:11434] [--dedicated | --viewer] | --list | --selftest
+A VIEWER (--viewer) is a display, not a minion: it never heartbeats and is never sent work; its token reads /fleet.
 
 Tokens: --enroll prints a token once; only its sha256 is stored (minion_nodes.token_hash). The minion keeps it in
 its login Keychain (service 'nova-minion'). Reads are LAN-only and token-gated: lesson text is Nova's own.
@@ -44,6 +46,8 @@ STATES = ("idle", "away", "dedicated", "offline")
 WINDOW_H = 12                 # "tonight" = the last 12 hours
 ACTIVITY_MAX_MIN = 20         # a minion_activity row older than this is a crashed reader, not a read
 FRESH_S = 90
+# only works the reader really has in hand (a --dry-run or a crashed stream leaves rows behind)
+LIVE = "EXISTS (SELECT 1 FROM work_lessons w WHERE w.work_key = a.work_key AND w.status = 'running')"
 _CITE = re.compile(r"\s*(\[\d+\])+")
 _NODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
 _LOCAL = threading.local()
@@ -90,8 +94,10 @@ def clean_hb(d: dict) -> dict:
 
 
 def heartbeat(cur, node: str, hb: dict):
-    cur.execute("SELECT state, dedicated FROM minion_nodes WHERE node=%s", (node,))
+    cur.execute("SELECT state, dedicated, coalesce(role,'minion') FROM minion_nodes WHERE node=%s", (node,))
     prev = cur.fetchone()
+    if prev and prev[2] == "viewer":
+        raise ValueError("a viewer does not heartbeat")
     state = hb["state"]
     if prev and prev[1] and state == "idle":
         state = "dedicated"            # a dedicated node is always available; its agent may still say idle
@@ -125,8 +131,8 @@ def status(cur, node: str) -> dict:
             out["tok_s"] = float(info["tok_s"])
         if info.get("model_last"):
             out["model"] = info["model_last"]
-    cur.execute("SELECT title, kind, phase, started_at FROM minion_activity WHERE node=%s AND started_at > now() - "
-                "%s * interval '1 minute' ORDER BY started_at", (node, ACTIVITY_MAX_MIN))
+    cur.execute("SELECT title, kind, phase, started_at FROM minion_activity a WHERE node=%s AND started_at > now() - "
+                "%s * interval '1 minute' AND " + LIVE + " ORDER BY started_at", (node, ACTIVITY_MAX_MIN))
     out["now_reading"] = [{"title": t, "kind": k, "phase": p or "reading", "started": iso(s)} for t, k, p, s in cur.fetchall()]
     win = f"{WINDOW_H} hours"
     cur.execute("""SELECT count(*), coalesce(sum(lessons_kept),0), coalesce(sum(cardinality(belief_ids)),0)
@@ -154,6 +160,31 @@ def status(cur, node: str) -> dict:
     return out
 
 
+def fleet(cur) -> dict:
+    """Every minion (not viewers): state, what it is reading now, its last-12-hours works/lessons, tok/s; plus the
+    fleet totals, recent lessons and queue from status()."""
+    base = status(cur, "")
+    out = {k: base[k] for k in ("updated", "fleet_tonight", "recent_lessons", "queue", "eta_days") if k in base}
+    cur.execute("""SELECT m.node, CASE WHEN m.last_seen > now() - %s * interval '1 second' THEN m.state ELSE 'offline' END,
+                          m.since, m.info, m.dedicated,
+                          (SELECT count(*) FROM work_lessons w WHERE w.status='done' AND w.host=m.node AND w.processed_at > now() - %s::interval),
+                          (SELECT coalesce(sum(lessons_kept),0) FROM work_lessons w WHERE w.status='done' AND w.host=m.node AND w.processed_at > now() - %s::interval)
+                   FROM minion_nodes m WHERE coalesce(m.role,'minion') = 'minion' ORDER BY m.node""",
+                (FRESH_S, f"{WINDOW_H} hours", f"{WINDOW_H} hours"))
+    rows = cur.fetchall()
+    cur.execute("SELECT node, title, kind, phase, started_at FROM minion_activity a WHERE started_at > now() - %s * interval '1 minute' "
+                "AND " + LIVE + " ORDER BY started_at", (ACTIVITY_MAX_MIN,))
+    act: dict = {}
+    for n, t, k, p, st in cur.fetchall():
+        act.setdefault(n, []).append({"title": t, "kind": k, "phase": p or "reading", "started": iso(st)})
+    out["minions"] = [{"node": n, "state": stt, "since": iso(si), "dedicated": bool(d),
+                       "tok_s": (info or {}).get("tok_s"), "now_reading": act.get(n, []),
+                       "tonight": {"works": int(w), "lessons": int(l)}} for n, stt, si, info, d, w, l in rows]
+    for r in out["recent_lessons"]:
+        r.pop("mine", None)
+    return out
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "NovaMinionHub/1"
 
@@ -172,6 +203,17 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path == "/health":
             return self._send(200, {"ok": True})
+        if u.path == "/fleet":
+            node = (parse_qs(u.query).get("node") or [""])[0]
+            try:
+                cur = db()
+                if not authed(cur, node, self.headers.get("X-Minion-Token")):
+                    return self._send(403, {"error": "unknown node or bad token"})
+                return self._send(200, fleet(cur))
+            except Exception as e:  # noqa: BLE001
+                _LOCAL.conn = None
+                log(f"fleet failed: {e}")
+                return self._send(503, {"error": "fleet unavailable"})
         if u.path == "/status":
             node = (parse_qs(u.query).get("node") or [""])[0]
             try:
@@ -205,15 +247,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(503, {"error": "heartbeat unavailable"})
 
 
-def enroll(node: str, url: str | None, dedicated: bool) -> str:
+def enroll(node: str, url: str | None, dedicated: bool, viewer: bool = False) -> str:
     if not _NODE.match(node):
         raise SystemExit("node: letters, digits, . _ - only")
     tok = secrets.token_urlsafe(32)
     cur = db()
-    cur.execute("""INSERT INTO minion_nodes (node, ollama_url, dedicated, token_hash, state) VALUES (%s,%s,%s,%s,'offline')
+    cur.execute("ALTER TABLE minion_nodes ADD COLUMN IF NOT EXISTS role text NOT NULL DEFAULT 'minion'")
+    cur.execute("""INSERT INTO minion_nodes (node, ollama_url, dedicated, token_hash, state, role) VALUES (%s,%s,%s,%s,'offline',%s)
                    ON CONFLICT (node) DO UPDATE SET token_hash=EXCLUDED.token_hash, dedicated=EXCLUDED.dedicated,
-                   ollama_url=coalesce(EXCLUDED.ollama_url, minion_nodes.ollama_url)""",
-                (node, (url or "").rstrip("/") or None, dedicated, token_hash(tok)))
+                   role=EXCLUDED.role, ollama_url=coalesce(EXCLUDED.ollama_url, minion_nodes.ollama_url)""",
+                (node, (url or "").rstrip("/") or None, dedicated and not viewer, token_hash(tok),
+                 "viewer" if viewer else "minion"))
     return tok
 
 
@@ -242,13 +286,14 @@ def main(argv=None) -> int:
     ap.add_argument("--enroll")
     ap.add_argument("--url")
     ap.add_argument("--dedicated", action="store_true")
+    ap.add_argument("--viewer", action="store_true")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
     if a.enroll:
-        print(enroll(a.enroll, a.url, a.dedicated))
+        print(enroll(a.enroll, a.url, a.dedicated, a.viewer))
         return 0
     if a.list:
         cur = db()
