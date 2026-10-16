@@ -40,7 +40,7 @@ CONF = os.path.expanduser("~/.nova-minion/config.json")
 LOCAL_PORT = 37591
 BEAT_S = 30
 STATUS_TTL_S = 4
-VERSION = "1.2"
+VERSION = "1.3"
 _cache = {"t": 0.0, "body": None, "lock": threading.Lock()}
 _state = {"state": "offline", "since": None}
 
@@ -87,6 +87,20 @@ def throttled(therm_out: str | None = None) -> bool:
 
 
 LINUX = platform.system() == "Linux"
+
+
+def os_label(os_release: str | None = None, mac_ver: str | None = None) -> str:
+    """'macOS 26.6' / 'Ubuntu 26.04' / 'Arch Linux' — what the minion displays (Linux: os-release PRETTY_NAME)."""
+    if os_release is not None or (LINUX and mac_ver is None):
+        try:
+            txt = os_release if os_release is not None else open("/etc/os-release").read()
+        except OSError:
+            txt = ""
+        m = re.search(r'^PRETTY_NAME="?([^"\n]+)"?', txt, re.M)
+        name = m.group(1) if m else "Linux"
+        return re.sub(r"\s+(LTS|\(.*\))$", "", name).strip()[:40]
+    v = mac_ver if mac_ver is not None else (platform.mac_ver()[0] or "")
+    return f"macOS {v}".strip()
 
 
 def free_gb(vm_stat_out: str | None = None, meminfo: str | None = None) -> float:
@@ -197,7 +211,7 @@ def tick(conf: dict, tok: str) -> str:
     try:
         http(conf["hub"].rstrip("/") + "/heartbeat",
              {"node": conf["node"], "state": state, "ollama_url": ollama, "models": have,
-              "info": {"agent": VERSION, "os": platform.system(), "free_gb": round(free_gb(), 1),
+              "info": {"agent": VERSION, "os": platform.system(), "os_name": os_label(), "free_gb": round(free_gb(), 1),
                        "whisper": bool(conf.get("whisper")),
                        **({} if LINUX else {"ac": on_ac(), "throttled": throttled(), "idle_s": int(idle_seconds())})}},
              token=tok)
@@ -258,6 +272,10 @@ def selftest() -> int:
     assert abs(free_gb(meminfo="MemTotal: 32704500 kB\nMemAvailable:   31643520 kB\n") - 30.18) < 0.01
     assert abs(free_gb(vm_stat_out="Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free: 65536.\n"
                                    "Pages inactive: 65536.\nPages speculative: 0.\n") - 2.0) < 1e-6
+    assert os_label(os_release='NAME="Ubuntu"\nPRETTY_NAME="Ubuntu 26.04 LTS"\n') == "Ubuntu 26.04"
+    assert os_label(os_release='PRETTY_NAME="Arch Linux"\n') == "Arch Linux"
+    assert os_label(os_release='PRETTY_NAME="Linux Mint 20.3"\n') == "Linux Mint 20.3"
+    assert os_label(mac_ver="26.6") == "macOS 26.6"
     assert linux_busy({}, "0.10 3.50 1.0 1/1 1", "", 6) is True                         # load 3.5/6 > 0.5
     assert linux_busy({}, "0.10 0.50 1.0 1/1 1", "kochj pts/0 2026-10-16 (10.0.0.9)", 6) is False   # ssh is fine
     assert linux_busy({}, "0.10 0.50 1.0 1/1 1", "kochj tty2 2026-10-16", 6) is True     # someone at the console

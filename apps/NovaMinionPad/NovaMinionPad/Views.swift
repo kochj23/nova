@@ -248,6 +248,12 @@ struct MinionCard: View {
                 .tracking(1.6 * u)
                 .foregroundStyle(stateColor.opacity(0.8))
                 .lineLimit(1)
+            if let os = minion.os, !os.isEmpty {
+                Text(os)
+                    .font(.system(size: 12 * u, weight: .regular, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.45))
+                    .lineLimit(1)
+            }
             Text("tonight: \(Fmt.plural(minion.tonight?.works ?? 0, "work", "works")) · \(Fmt.plural(minion.tonight?.lessons ?? 0, "lesson", "lessons"))")
                 .font(mono).foregroundStyle(Palette.text.opacity(0.78))
                 .lineLimit(1)
@@ -296,9 +302,11 @@ struct MinionCard: View {
     }
 
     private func readingText(_ r: FleetSnapshot.Reading) -> String {
+        let p = (r.phase ?? "").lowercased()
+        if p == "transcribing" { return "transcribing: \(r.title)" }     // a minion's Whisper job (TV)
         var s = "reading: \(r.title)"
         if let k = r.kind, !k.isEmpty { s += " (\(k))" }
-        if let p = r.phase, !p.isEmpty { s += " · \(p)…" }
+        if !p.isEmpty { s += " · \(p)…" }
         return s
     }
 }

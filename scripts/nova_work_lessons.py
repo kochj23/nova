@@ -1213,6 +1213,7 @@ def _call(base: str, model: str, prompt: str, max_tokens: int, temperature: floa
     with StudioSlot() as slot:
         if not slot.acquired:
             raise RuntimeError("another reader call holds the studio slot")
+        note_activity(base, True, node=STUDIO_NODE)
         out = ollama_chat(base, model, prompt, max_tokens, temperature, num_ctx)
         note_local()
         return out
@@ -1310,10 +1311,10 @@ def node_of(base: str) -> str:
     return ps._host(base)
 
 
-def note_activity(base: str, start: bool):
+def note_activity(base: str, start: bool, node: str | None = None):
     """minion_activity row for the work this thread is reading (start) / its tok/s after the call."""
     w = getattr(_TL, "work", None)
-    node = node_of(base)
+    node = node or node_of(base)
     if getattr(_TL, "host", None) is None and not start:
         _TL.host = node
     try:
@@ -1393,6 +1394,7 @@ def bulk_call(base: str, model: str, prompt: str, max_tokens: int, temperature: 
     if not _BULK["sem"].acquire(timeout=wait_s):
         raise RuntimeError("no free bulk slot")
     try:
+        note_activity(base, True, node=STUDIO_NODE)
         out = ollama_chat(base, model, prompt, max_tokens, temperature, NUM_CTX)
         note_local()
         return out

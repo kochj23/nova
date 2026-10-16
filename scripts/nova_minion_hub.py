@@ -133,6 +133,8 @@ def status(cur, node: str) -> dict:
             out["tok_s"] = float(info["tok_s"])
         if info.get("model_last"):
             out["model"] = info["model_last"]
+        if info.get("os_name") or info.get("os"):
+            out["os"] = info.get("os_name") or info.get("os")
     cur.execute("SELECT title, kind, phase, started_at FROM minion_activity a WHERE node=%s AND started_at > now() - "
                 "%s * interval '1 minute' AND " + LIVE + " ORDER BY started_at", (node, ACTIVITY_MAX_MIN))
     out["now_reading"] = [{"title": t, "kind": k, "phase": p or "reading", "started": iso(s)} for t, k, p, s in cur.fetchall()]
@@ -180,6 +182,7 @@ def fleet(cur) -> dict:
     for n, t, k, p, st in cur.fetchall():
         act.setdefault(n, []).append({"title": t, "kind": k, "phase": p or "reading", "started": iso(st)})
     out["minions"] = [{"node": n, "state": stt, "since": iso(si), "dedicated": bool(d),
+                       "os": (info or {}).get("os_name") or (info or {}).get("os"),
                        "tok_s": (info or {}).get("tok_s"), "now_reading": act.get(n, []),
                        "tonight": {"works": int(w), "lessons": int(l)}} for n, stt, si, info, d, w, l in rows]
     for r in out["recent_lessons"]:

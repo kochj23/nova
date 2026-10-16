@@ -299,6 +299,7 @@ final class NovaMinionView: ScreenSaverView {
         let resting = !poller.reachable || (status?.isOffline ?? true)
         var head = "nova minion"
         if let node = status?.node { head += " \u{00B7} " + node }
+        if let os = status?.os, !os.isEmpty { head += " \u{00B7} " + os }
         if let st = status?.state, !st.isEmpty { head += " \u{00B7} " + (resting && !poller.reachable ? "resting" : st) }
         else if resting { head += " \u{00B7} resting" }
         lines.append(head)
@@ -306,9 +307,10 @@ final class NovaMinionView: ScreenSaverView {
             lines.append("\u{203A} resting \u{2014} waiting for Nova to call")
         } else if let reading = status?.nowReading, !reading.isEmpty {
             for r in reading.prefix(4) {
-                var s = "\u{203A} reading: \(r.title)"
-                if let k = r.kind, !k.isEmpty { s += " (\(k))" }
-                if let p = r.phase, !p.isEmpty, p.lowercased() != "reading" { s += " \u{00B7} \(p)\u{2026}" }
+                let ph = (r.phase ?? "").lowercased()
+                var s = ph == "transcribing" ? "\u{203A} transcribing: \(r.title)" : "\u{203A} reading: \(r.title)"
+                if ph != "transcribing", let k = r.kind, !k.isEmpty { s += " (\(k))" }
+                if !ph.isEmpty, ph != "reading", ph != "transcribing" { s += " \u{00B7} \(r.phase ?? "")\u{2026}" }
                 lines.append(s)
             }
         } else if status?.isOffline == true {

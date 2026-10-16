@@ -30,6 +30,7 @@ struct FleetSnapshot: Codable, Equatable {
         var state: String?
         var since: String?
         var dedicated: Bool?
+        var os: String?
         var tok_s: Double?
         var now_reading: [Reading]?
         var tonight: Tonight?

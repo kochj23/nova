@@ -53,6 +53,7 @@ struct MinionStatus {
     var recentLessons: [MinionLesson] = []
     var tokS: Double?
     var model: String?
+    var os: String?
     var queue: [String: Int] = [:]
     var etaDays: Double?
     var updated: String?
@@ -68,6 +69,7 @@ struct MinionStatus {
         since = d["since"] as? String
         updated = d["updated"] as? String
         model = d["model"] as? String
+        os = d["os"] as? String
         tokS = MinionStatus.num(d["tok_s"])
         etaDays = MinionStatus.num(d["eta_days"])
         if let t = d["tonight"] as? [String: Any] {
