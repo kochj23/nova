@@ -41,7 +41,7 @@ SLUGS = ["pursue-fascination-the-watch-fishbowl", "pursue-local-news-interest", 
          "pursue-interest-calendar", "pursue-interest-intelligence", "pursue-interest-n-in-science",
          "pursue-interest-education",
          "pursue-interest-local-public-safety", "pursue-interest-cooking", "pursue-television-interest",
-         "pursue-interest-fire", "pursue-question-nature-of-own-memory"]
+         "pursue-interest-fire", "pursue-question-nature-of-own-memory", "pursue-work-lessons"]
 
 
 class _Resp:
@@ -202,7 +202,7 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(sorted(ps.SKILLS), sorted(SLUGS))
         for slug, cfg in ps.SKILLS.items():
             self.assertEqual(ps.slug_for_topic(cfg["topic"]), slug)
-            if not cfg.get("meta"):
+            if not cfg.get("meta") and not cfg.get("work"):
                 self.assertTrue(cfg["sources"])
         self.assertIsNone(ps.slug_for_topic(""))
         self.assertEqual(ps.slug_for_source("local_news"), "pursue-local-news-interest")
@@ -282,6 +282,17 @@ class TestIntegration(unittest.TestCase):
             self.assertFalse(ut.try_skill(_Cur(), _Cur(), {"mode": "preoccupation", "topic": "sports"}))
             self.assertFalse(ut.try_skill(_Cur(), _Cur(), {"mode": "preoccupation", "topic": "nightly"}))
             self.assertFalse(ut.try_skill(_Cur(), _Cur(), {"mode": "preoccupation", "topic": "horology"}))
+
+
+class TestWorkMode(unittest.TestCase):
+    def test_work_flags_delegate_to_the_work_reader(self):
+        fake = mock.Mock(main=mock.Mock(return_value=0))
+        with mock.patch.dict(sys.modules, {"nova_work_lessons": fake}):
+            self.assertEqual(ps.main(["--film", "Argo", "--dry-run"]), 0)
+        fake.main.assert_called_once_with(["--film", "Argo", "--dry-run"])
+
+    def test_run_skill_does_not_run_the_work_mode_as_a_pursuit(self):
+        self.assertFalse(ps.run_skill("pursue-work-lessons", oc=_Cur(), mc=_Cur())["handled"])
 
 
 class TestFunctional(unittest.TestCase):

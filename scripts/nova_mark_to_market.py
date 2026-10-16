@@ -86,7 +86,8 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 REPO_DIR = SCRIPTS_DIR.parent
 CONFIG_DIR = REPO_DIR / "config"
 SCHEDULER_FILES = ("scheduler-core.yaml", "scheduler.yaml")
-CLASSES = ("beliefs", "feature_wishes", "organs", "attention", "preoccupations", "skills", "unread_tables")
+CLASSES = ("beliefs", "feature_wishes", "organs", "attention", "preoccupations", "skills", "unread_tables",
+           "work_lessons")
 WINDOW_DAYS = 30
 WRITEDOWN_CAP = 60              # write-downs stored per class (the full count is in detail)
 STATEMENT_TIMEOUT_MS = 60000
@@ -704,6 +705,47 @@ def measure_skills(oc) -> dict:
     return _class(len(rows), len(rows) - len(wd), wd)
 
 
+def work_realised(rows, recalled: set, executed: set, cited_by: dict) -> tuple[int, list[dict]]:
+    """rows: (work_key, title, memory_id, belief_ids, proposal_id). A read work is realised when its lesson memory
+    was recalled, a belief it did not write itself cites it, or its proposal was executed. Pure."""
+    real, wd = 0, []
+    for key, title, mid, bids, pid in rows:
+        own = set(bids or [])
+        if (mid and mid in recalled) or (pid and pid in executed) or (cited_by.get(mid, set()) - own):
+            real += 1
+        else:
+            wd.append({"item": f"work {(title or key)[:80]}", "why": "lessons booked; not recalled, cited or acted on"})
+    return real, wd
+
+
+def measure_work_lessons(oc, mc) -> dict:
+    """Class 8 (2026-10-15): booked = works read for lessons; realised = lesson memory recalled, cited by a
+    belief other than the ones the read itself wrote, or its proposal executed."""
+    oc.execute("SELECT to_regclass('public.work_lessons') IS NOT NULL")
+    r = oc.fetchone()
+    if not r or not r[0]:
+        return _class(0, 0, [])
+    oc.execute("SELECT work_key, title, memory_id, belief_ids, proposal_id FROM work_lessons WHERE status='done' "
+               "AND memory_id IS NOT NULL ORDER BY processed_at")
+    rows = oc.fetchall()
+    mids = sorted({x[2] for x in rows if x[2]})
+    pids = sorted({x[4] for x in rows if x[4]})
+    recalled, executed, cited_by = set(), set(), {}
+    if mids:
+        mc.execute("SELECT id FROM memories WHERE id = ANY(%s) AND coalesce(access_count, 0) > 0", (mids,))
+        recalled = {x[0] for x in mc.fetchall()}
+        oc.execute("SELECT id, evidence FROM beliefs WHERE evidence && %s::text[]", ([f"memory:{m}" for m in mids],))
+        for bid, ev in oc.fetchall():
+            for e in ev or []:
+                if e.startswith("memory:"):
+                    cited_by.setdefault(e[7:], set()).add(bid)
+    if pids:
+        oc.execute("SELECT id FROM coagency_proposals WHERE id = ANY(%s) AND executed_at IS NOT NULL", (pids,))
+        executed = {x[0] for x in oc.fetchall()}
+    real, wd = work_realised(rows, recalled, executed, cited_by)
+    return _class(len(rows), real, wd, recalled=len(recalled), proposals_executed=len(executed))
+
+
 def previous_unread(oc, month: date) -> dict:
     """{table: first month flagged} from the latest earlier unread_tables row ({} if none)."""
     oc.execute("SELECT to_regclass('public.mark_to_market') IS NOT NULL")
@@ -779,6 +821,10 @@ def measure(oc, mc, now: datetime | None = None) -> dict:
         res["unread_tables"] = measure_unread(oc, texts, since, now)
     except Exception as e:  # noqa: BLE001 — the newest class never sinks the other six
         log(f"unread_tables not measured: {e}")
+    try:
+        res["work_lessons"] = measure_work_lessons(oc, mc)
+    except Exception as e:  # noqa: BLE001
+        log(f"work_lessons not measured: {e}")
     return res
 
 
@@ -808,8 +854,10 @@ def have_month(oc, month: date) -> bool:
         return False
     # the six original books decide "already marked"; a missing unread_tables row (budget/failure, or a
     # month marked before class 7 existed) must not re-mark the month every day
-    oc.execute("SELECT count(*) FROM mark_to_market WHERE month = %s AND class <> 'unread_tables'", (month,))
-    return oc.fetchone()[0] >= len(CLASSES) - 1
+    # (same for work_lessons, class 8, 2026-10-15)
+    oc.execute("SELECT count(*) FROM mark_to_market WHERE month = %s AND class <> 'unread_tables' "
+               "AND class <> 'work_lessons'", (month,))
+    return oc.fetchone()[0] >= len(CLASSES) - 2
 
 
 def report(oc, n: int) -> None:
@@ -854,6 +902,9 @@ def selftest() -> int:
     assert rd["w_t"]["readers"] == ["nova_r.py"] and rd["q_t"]["readers"] == []
     first, still = unread_verdicts(["a", "b"], {"a": "2026-09"}, date(2026, 10, 1))
     assert first == {"a": "2026-09", "b": "2026-10"} and still == ["a"]
+    real, wd = work_realised([("k1", "A", "m1", [5], None), ("k2", "B", "m2", [6], None), ("k3", "C", "m3", None, 9)],
+                             {"m1"}, {9}, {"m2": {6}})
+    assert real == 2 and len(wd) == 1 and "B" in wd[0]["item"]
     print("selftest ok")
     return 0
 

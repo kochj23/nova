@@ -62,7 +62,7 @@ def _results():
         return mtm._class(b, r, [{"item": f"x{i}", "why": "y"} for i in wd])
     return {"beliefs": c(819, 0, range(5)), "feature_wishes": c(28, 26, [42, 43]), "organs": c(90, 66, range(3)),
             "attention": c(720, 33.3, [1]), "preoccupations": c(43, 21, range(4)), "skills": c(31, 23, range(2)),
-            "unread_tables": c(213, 164, range(2))}
+            "unread_tables": c(213, 164, range(2)), "work_lessons": c(5, 1, range(4))}
 
 
 class TestSecurity(unittest.TestCase):

@@ -37,6 +37,7 @@ Entry points:
 
 CLI: --skill SLUG | --topic TOPIC   [--dry-run] [--force] [--scheduled|--trigger X]
      --list | --selftest
+     --film TITLE | --work KEY | --backfill [N] ...  -> the work mode (nova_work_lessons.py: lessons, not dialogue)
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -205,7 +206,14 @@ SKILLS = {
         focus="Name the lectures or videos the sources come from and the specific ideas each one actually teaches."),
     "pursue-interest-nightly": dict(
         topic="nightly", meta=True, success="nightly"),
+    # 2026-10-15 (Jordan: "how can we make it that she learns actual lessons from the movies?" ... "everything
+    # that is ingested"): the WORK mode of this engine — one film/book/document/video/article read for lessons,
+    # grounded with these same helpers. Its write-backs (beliefs, taste, gated proposals) live in
+    # nova_work_lessons.py so this loop keeps its read + note only line; --work/--film/--backfill delegate there.
+    "pursue-work-lessons": dict(
+        topic="work lessons", work=True, sources=[], web=True),
 }
+WORK_FLAGS = ("--work", "--film", "--backfill", "--since", "--transcript", "--enqueue-backfill", "--consolidate")
 GENERIC = dict(sources=[], recent_days=3, web=True, hint="")      # nightly on an unmapped thread
 TODAY = date.today().isoformat()
 _CITE = re.compile(r"\[(\d{1,2})\]")
@@ -759,6 +767,8 @@ def run_skill(slug, oc=None, mc=None, trigger="manual", dry_run=False, force=Fal
     cfg = SKILLS.get(slug)
     if not cfg:
         return {"handled": False, "why": "unknown skill"}
+    if cfg.get("work"):
+        return {"handled": False, "why": "work mode runs from nova_work_lessons (--work/--film/--backfill)"}
     own = oc is None
     if own:
         ops = _pg_connect(OPS_DSN); ops.autocommit = True; oc = ops.cursor()
@@ -842,12 +852,16 @@ def selftest() -> int:
     assert split_next("tail words. NEXT: read z")[1] == "read z"
     assert len(_SENT.split("Rabies in L.A. County [1]. A vote on Nov. 3 [2]. Done.")) == 3
     assert attach_cites("A rose. [1] B fell.[2][3]") == "A rose [1]. B fell [2][3]."
-    assert len(SKILLS) == 27
+    assert len(SKILLS) == 28 and SKILLS["pursue-work-lessons"]["work"]
     print("selftest OK")
     return 0
 
 
 def main(argv=None) -> int:
+    args = sys.argv[1:] if argv is None else list(argv)
+    if any(a.split("=")[0] in WORK_FLAGS for a in args):
+        import nova_work_lessons             # the work mode: lessons from films, books, documents, articles
+        return nova_work_lessons.main(args)
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--skill"); ap.add_argument("--topic")
     ap.add_argument("--dry-run", action="store_true", help="read + think, write nothing")

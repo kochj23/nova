@@ -4253,3 +4253,11 @@ flowchart LR
   three tiers (individual / batched / clustered) with a self-gating pilot, daily caps and weekly consolidation.
   Tier A (34k long works) runs now; Tiers B and C start when their path passes the gate.
 - **Scheduler:** a never-run cron task now waits for its first real slot instead of firing at registration.
+
+### Work reader status (2026-10-15, 23:00)
+`scripts/nova_work_lessons.py` is live for Tier A (films, episodes, documentaries, books, long documents) on
+qwen3:30b-a3b: quote-verified lessons, at most two concluding links to Nova's own world (or honest nulls),
+beliefs through the sleep-cycle evidence rule, daily caps 50 beliefs / 3 proposals / 20 taste, weekly
+consolidation. One Studio Ollama call at a time with embedding-latency backoff — after the reader's pilot
+starved the memory server's embeddings for ~10 minutes. Tiers B and C stay off until their gates pass
+(B: 8 of 45 works yielded a lesson; C: not enough grounded lessons yet). Queue: A 34k, B 131k, C 297k.
