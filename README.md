@@ -4306,7 +4306,7 @@ flowchart LR
 ### Work reader: own Ollama + source credibility (2026-10-16)
 The reader was queuing behind chat and embeddings on the Studio's main Ollama (~14 Tier A works/hour, a
 ~100-day backlog). It now has its own Ollama: launchd daemon `net.digitalnoise.ollama-bulk`
-(`scripts/net.digitalnoise.ollama-bulk.plist`, `__HOME__` = the user home), `127.0.0.1:11436`, the same model files, its own resident
+(`scripts/net.digitalnoise.ollama-bulk.plist`, `__HOME__` = the user home), `0.0.0.0:11436` (all interfaces; never 127.0.0.1), the same model files, its own resident
 qwen3:30b-a3b, 3 parallel slots; the scheduler runs 3 streams. It is tried first, needs no one-call Studio slot
 and ignores the whisper lock, but still backs off while the main Ollama's embeddings are slow (shared GPU).
 Switch: `service_config work_lessons/bulk_url` (`""` = off), `bulk_slots`.
