@@ -32,6 +32,7 @@ raises into a caller that doesn't want it to — the public API swallows and log
     execute_action(name, dry_run=False)                    -> dict
     ensure_schema(conn)
 """
+import os
 import json
 import subprocess
 import sys
@@ -85,8 +86,12 @@ ACTIONS = {
         "tier": SAFE,
         # Tunnel now runs HA on .2 + .10 (systemd, Restart=always). Restart the
         # primary connector (.2); .10 keeps serving during the bounce.
-        "argv": ["ssh", "-o", "BatchMode=yes", "kochj@192.168.1.2",
-                 "sudo", "systemctl", "restart", "cloudflared"],
+        # 2026-10-16: the notifier (launchd) has no SSH agent and id_ed25519 is passphrase-protected, so this
+        # failed "Permission denied (publickey)" every time. Dedicated no-passphrase key, authorized on .2 ONLY
+        # as command="sudo -n systemctl restart cloudflared" (no pty/forwarding) — it can do nothing else.
+        "argv": ["ssh", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none",
+                 "-i", os.path.expanduser("~/.ssh/id_nova_remediate"), "kochj@192.168.1.2",
+                 "restart-cloudflared"],
         "desc": "restart the .2 Cloudflare connector (.10 stays up — HA)",
     },
     "reboot_host": {
