@@ -47,7 +47,9 @@ WINDOW_H = 12                 # "tonight" = the last 12 hours
 ACTIVITY_MAX_MIN = 20         # a minion_activity row older than this is a crashed reader, not a read
 FRESH_S = 90
 # only works the reader really has in hand (a --dry-run or a crashed stream leaves rows behind)
-LIVE = "EXISTS (SELECT 1 FROM work_lessons w WHERE w.work_key = a.work_key AND w.status = 'running')"
+LIVE = ("(EXISTS (SELECT 1 FROM work_lessons w WHERE w.work_key = a.work_key AND w.status = 'running') OR "
+        "(a.work_key LIKE 'media:%%' AND EXISTS (SELECT 1 FROM media_reingest_queue q "
+        "WHERE 'media:' || left(q.file_path, 290) = a.work_key AND q.status = 'running')))")
 _CITE = re.compile(r"\s*(\[\d+\])+")
 _NODE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
 _LOCAL = threading.local()

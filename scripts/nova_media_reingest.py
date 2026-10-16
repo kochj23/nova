@@ -50,7 +50,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -475,6 +477,21 @@ def transcribe_local(wav: Path, tmp: Path, timeout: float, _run=subprocess.run) 
     return txt.read_text(encoding="utf-8", errors="ignore").strip() if txt.exists() else ""
 
 
+def transcribe_remote(host: str, wav: Path, timeout: float, _run=subprocess.run) -> str:
+    """The same MLX Whisper on a minion Mac (2026-10-16): copy the WAV over, run nova_minion_whisper.py in its
+    ~/.nova-minion/whisper-venv, read the text from stdout, delete the WAV. host = the minion's ssh name."""
+    name = f"reingest-{uuid.uuid4().hex[:12]}.wav"
+    ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host]
+    _run(["scp", "-q", "-o", "BatchMode=yes", str(wav), f"{host}:.nova-minion/{name}"], check=True, timeout=600)
+    try:
+        r = _run(ssh + [f"cd .nova-minion && whisper-venv/bin/python nova_minion_whisper.py {name}"],
+                 check=True, timeout=timeout, capture_output=True)
+        out = r.stdout
+        return (out.decode("utf-8", "ignore") if isinstance(out, bytes) else str(out or "")).strip()
+    finally:
+        _run(ssh + [f"cd .nova-minion && /bin/rm -f -- {name}"], timeout=60, capture_output=True)
+
+
 def old_memories(mcur, show: str, path: str) -> list[tuple]:
     """Live transcript memories of this file from earlier ingests: (id, original source, type, words, current).
     The source is the one the ingest wrote (metadata.reclass_from when a later re-router moved the row).
@@ -518,7 +535,7 @@ def supersede(mcur, target: str, old_ids: list[str]) -> int:
     return mcur.rowcount or 0
 
 
-def process(oc, mc, item: tuple, timeout: float, dry_out: Path | None = None, post=None) -> dict:
+def process(oc, mc, item: tuple, timeout: float, dry_out: Path | None = None, post=None, transcribe=None) -> dict:
     """Transcribe one file and (unless dry_out) store + supersede. Returns the measured result."""
     import nova_tv_ingest as tv
     path, show, title, prior = item
@@ -528,7 +545,7 @@ def process(oc, mc, item: tuple, timeout: float, dry_out: Path | None = None, po
         wav = extract_audio(path, tmp)
         audio_s = wav_seconds(wav.stat().st_size)
         g0 = time.monotonic()
-        text = transcribe_local(wav, tmp, timeout)
+        text = transcribe(wav, timeout) if transcribe else transcribe_local(wav, tmp, timeout)
         gpu_s = time.monotonic() - g0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -563,7 +580,8 @@ def process(oc, mc, item: tuple, timeout: float, dry_out: Path | None = None, po
     res["stored"] = len(ids)
     oc.execute("UPDATE media_ingest_state SET status = 'ingested', chunks = %s, words = %s, source_vector = %s, "
                "processed_at = now(), error_message = %s WHERE file_path = %s",
-               (len(ids), raw_words, source, f"{PIPELINE}: local MLX whisper; {res['superseded']} old superseded",
+               (len(ids), raw_words, source, f"{PIPELINE}: {'minion' if transcribe else 'local'} MLX whisper; "
+                                             f"{res['superseded']} old superseded",
                 path))
     try:
         import nova_media_registry
@@ -589,6 +607,35 @@ def guards(oc, check_movie: bool = True) -> str | None:
     return None
 
 
+def do_item(oc, mc, item: tuple, left: float, stats: dict, post=None, transcribe=None, tag: str = "") -> bool:
+    """Process one claimed file and book the result. False = the window closed mid-file (stop the loop)."""
+    log(f"▶{tag} {item[1]} — {item[2][:70]}")
+    try:
+        r = process(oc, mc, item, timeout=left, post=post, transcribe=transcribe)
+    except subprocess.TimeoutExpired:
+        finish(oc, item[0], "pending", error="batch window closed mid-file")
+        log(f" {tag} window closed mid-file; back to pending")
+        return False
+    except Exception as e:  # noqa: BLE001 — one bad file never stops the night
+        oc.execute("SELECT attempts FROM media_reingest_queue WHERE file_path = %s", (item[0],))
+        att = (oc.fetchone() or [0])[0] + 1
+        finish(oc, item[0], "error" if att >= MAX_ATTEMPTS else "pending", attempts=att, error=str(e)[:300])
+        stats["error"] += 1
+        log(f" {tag} ✗ {e}")
+        return True
+    finish(oc, item[0], r["status"], old_chunks=r["old_chunks"], old_words=r["old_words"],
+           legacy_chunks=r["legacy_chunks"],
+           new_chunks=r.get("stored", 0), words=r["new_words"] if r["status"] == "done" else 0,
+           superseded=r["superseded"], audio_s=r["audio_s"], gpu_s=r["gpu_s"], wall_s=r["wall_s"], error=None)
+    stats[r["status"]] += 1
+    stats["audio_s"] += r["audio_s"]
+    stats["gpu_s"] += r["gpu_s"]
+    log(f" {tag} ✓ {r['status']}: {r['old_chunks']} (+{r['legacy_chunks']} legacy) -> {r.get('stored', 0)} chunks, "
+        f"{r['old_words']:,} -> {r['new_words']:,} words, "
+        f"{r['audio_s'] / 60:.0f} min audio in {r['gpu_s']:.0f}s GPU")
+    return True
+
+
 def run_batch(oc, mc, deadline: datetime, limit: int | None, post=None) -> dict:
     stats = {"done": 0, "empty": 0, "error": 0, "audio_s": 0.0, "gpu_s": 0.0}
     n = 0
@@ -600,30 +647,73 @@ def run_batch(oc, mc, deadline: datetime, limit: int | None, post=None) -> dict:
         if not item:
             break
         n += 1
-        log(f"▶ {item[1]} — {item[2][:70]}")
-        try:
-            r = process(oc, mc, item, timeout=left, post=post)
-        except subprocess.TimeoutExpired:
-            finish(oc, item[0], "pending", error="batch window closed mid-file")
-            log("  window closed mid-file; back to pending")
+        if not do_item(oc, mc, item, left, stats, post=post):
             break
-        except Exception as e:  # noqa: BLE001 — one bad file never stops the night
-            oc.execute("SELECT attempts FROM media_reingest_queue WHERE file_path = %s", (item[0],))
-            att = (oc.fetchone() or [0])[0] + 1
-            finish(oc, item[0], "error" if att >= MAX_ATTEMPTS else "pending", attempts=att, error=str(e)[:300])
-            stats["error"] += 1
-            log(f"  ✗ {e}")
-            continue
-        finish(oc, item[0], r["status"], old_chunks=r["old_chunks"], old_words=r["old_words"],
-               legacy_chunks=r["legacy_chunks"],
-               new_chunks=r.get("stored", 0), words=r["new_words"] if r["status"] == "done" else 0,
-               superseded=r["superseded"], audio_s=r["audio_s"], gpu_s=r["gpu_s"], wall_s=r["wall_s"], error=None)
-        stats[r["status"]] += 1
-        stats["audio_s"] += r["audio_s"]
-        stats["gpu_s"] += r["gpu_s"]
-        log(f"  ✓ {r['status']}: {r['old_chunks']} (+{r['legacy_chunks']} legacy) -> {r.get('stored', 0)} chunks, "
-            f"{r['old_words']:,} -> {r['new_words']:,} words, "
-            f"{r['audio_s'] / 60:.0f} min audio in {r['gpu_s']:.0f}s GPU")
+    return stats
+
+
+# ---------------------------------------------------------------- minions (2026-10-16)
+# Idle minion Macs with MLX Whisper (agent config "whisper": true -> minion_nodes.info.whisper) transcribe while
+# idle, any hour: the Studio claims + extracts audio (CPU), the minion runs Whisper on its GPU, the Studio stores.
+# No GPU lock: the Studio's GPU is not used. Each minion shows "transcribing: <episode>" on its screensaver.
+MINION_FRESH_S = 90
+
+
+def whisper_minions(oc) -> list[str]:
+    oc.execute("SELECT node FROM minion_nodes WHERE state IN ('idle','dedicated') AND (info->>'whisper')::boolean "
+               "AND last_seen > now() - %s * interval '1 second' ORDER BY node", (MINION_FRESH_S,))
+    return [r[0] for r in oc.fetchall()]
+
+
+def minion_free(oc, node: str) -> bool:
+    return node in whisper_minions(oc)
+
+
+def minion_worker(node: str, deadline: datetime, stats: dict, lock: threading.Lock):
+    oc, mc = connect("nova_ops").cursor(), connect("nova_memories").cursor()
+    mine = {"done": 0, "empty": 0, "error": 0, "audio_s": 0.0, "gpu_s": 0.0}
+    while (deadline - datetime.now()).total_seconds() > 300 and minion_free(oc, node) and not guards(oc, check_movie=False):
+        item = claim_next(oc)
+        if not item:
+            break
+        key = "media:" + item[0][:290]
+        oc.execute("INSERT INTO minion_activity (node, work_key, title, kind, phase) VALUES (%s,%s,%s,'tv','transcribing') "
+                   "ON CONFLICT (node, work_key) DO UPDATE SET started_at=now()", (node, key, f"{item[1]} — {item[2]}"[:300]))
+        try:
+            ok = do_item(oc, mc, item, (deadline - datetime.now()).total_seconds(), mine,
+                         transcribe=lambda wav, t: transcribe_remote(node, wav, t), tag=f" [{node}]")
+        finally:
+            oc.execute("DELETE FROM minion_activity WHERE node=%s AND work_key=%s", (node, key))
+        if not ok:
+            break
+    with lock:
+        for k, v in mine.items():
+            stats[k] += v
+    log(f"[{node}] stopped: {mine['done']} done, {mine['error']} error, {mine['audio_s'] / 60:.0f} min audio")
+
+
+def run_minions(minutes: float) -> dict:
+    oc = connect("nova_ops").cursor()
+    why = guards(oc, check_movie=False)
+    if why:
+        log(f"minions: standing down — {why}")
+        return {}
+    nodes = whisper_minions(oc)
+    if not nodes:
+        log("minions: no idle whisper minion")
+        return {}
+    revert_stale(oc)
+    deadline = datetime.now() + timedelta(minutes=minutes)
+    stats = {"done": 0, "empty": 0, "error": 0, "audio_s": 0.0, "gpu_s": 0.0}
+    lock = threading.Lock()
+    threads = [threading.Thread(target=minion_worker, args=(n, deadline, stats, lock), daemon=True) for n in nodes]
+    log(f"minions: {', '.join(nodes)} for {minutes:.0f} min")
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    log(f"minions: {stats['done']} done, {stats['empty']} empty, {stats['error']} error, "
+        f"{stats['audio_s'] / 3600:.1f} h of audio")
     return stats
 
 
@@ -768,9 +858,14 @@ def main(argv=None) -> int:
                     help="dry-run output directory")
     ap.add_argument("--report", action="store_true", help="queue counts, words recovered, throughput, ETA")
     ap.add_argument("--selftest", action="store_true", help="offline check of the pure functions")
+    ap.add_argument("--minions", action="store_true", help="transcribe on idle whisper minions (any hour)")
+    ap.add_argument("--minutes", type=float, default=25, help="--minions run length (default 25)")
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
+    if a.minions:
+        run_minions(a.minutes)
+        return 0
     if a.limit is not None and a.limit < 1:
         ap.error("--limit must be >= 1")
     if not 0 < a.hours <= 12:

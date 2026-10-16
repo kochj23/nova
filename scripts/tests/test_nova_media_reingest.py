@@ -340,3 +340,33 @@ class TestWaitsForMovieJob(unittest.TestCase):
         with mock.patch.object(mr, "guards", return_value="stop here"), mock.patch.object(mr, "ensure_schema"):
             mr.scheduled(mock.Mock(), mock.Mock(), 7, None, _sleep=slept.append, _movie_running=running)
         self.assertEqual(slept, [300, 300])
+
+
+class TestTranscribeRemote(unittest.TestCase):
+    """2026-10-16: minion whisper — copy the WAV, run the minion script, read stdout, always clean up."""
+
+    def _run(self, fail_at=None, out=b"  hello world  "):
+        calls = []
+
+        def run(cmd, **kw):
+            calls.append(cmd)
+            if fail_at and fail_at in " ".join(cmd):
+                raise subprocess.CalledProcessError(1, cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr=b"")
+        return calls, run
+
+    def test_copies_runs_reads_and_cleans(self):
+        calls, run = self._run()
+        txt = mr.transcribe_remote("nova-core9", Path("/tmp/a.wav"), 600, _run=run)
+        self.assertEqual(txt, "hello world")
+        self.assertEqual(calls[0][0], "scp")
+        self.assertTrue(calls[0][-1].startswith("nova-core9:.nova-minion/reingest-"))
+        name = calls[0][-1].rsplit("/", 1)[1]
+        self.assertIn(f"nova_minion_whisper.py {name}", calls[1][-1])
+        self.assertIn(f"-- {name}", calls[2][-1])                 # the WAV is removed on the minion
+
+    def test_cleans_up_when_whisper_fails(self):
+        calls, run = self._run(fail_at="nova_minion_whisper.py")
+        with self.assertRaises(subprocess.CalledProcessError):
+            mr.transcribe_remote("nova-core6", Path("/tmp/a.wav"), 600, _run=run)
+        self.assertEqual(len(calls), 3)                           # scp, whisper (failed), cleanup still ran

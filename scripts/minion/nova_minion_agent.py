@@ -16,7 +16,8 @@ load below max_load_per_core and nobody logged in on a TTY/desktop. Both: free m
 Python 3.9 stdlib only (runs on the system python3 of a fresh Mac). Config: ~/.nova-minion/config.json
   {"node": "studio-2", "hub": "http://<studio>:37590", "ollama_url": "http://<this mac>:11434",
    "idle_after_min": 10, "hours": "22-07" (optional), "dedicated": false, "models": ["qwen3:30b-a3b"],
-   "min_free_gb": 4 (optional), "max_load_per_core": 0.5 (Linux)}
+   "min_free_gb": 4 (optional), "max_load_per_core": 0.5 (Linux),
+   "whisper": true (optional: ~/.nova-minion/whisper-venv + nova_minion_whisper.py -> TV re-transcription)}
 Token: login Keychain, service 'nova-minion', account <node>; else ~/.nova-minion/token (0600, SSH installs)
   python3 nova_minion_agent.py [--once] [--selftest]
 Written by Jordan Koch (via Claude).
@@ -39,7 +40,7 @@ CONF = os.path.expanduser("~/.nova-minion/config.json")
 LOCAL_PORT = 37591
 BEAT_S = 30
 STATUS_TTL_S = 4
-VERSION = "1.1"
+VERSION = "1.2"
 _cache = {"t": 0.0, "body": None, "lock": threading.Lock()}
 _state = {"state": "offline", "since": None}
 
@@ -90,7 +91,7 @@ LINUX = platform.system() == "Linux"
 
 def free_gb(vm_stat_out: str | None = None, meminfo: str | None = None) -> float:
     """Memory the machine could hand over: Linux MemAvailable; macOS free + inactive + purgeable + speculative."""
-    if LINUX or meminfo is not None:
+    if meminfo is not None or (LINUX and vm_stat_out is None):
         txt = meminfo if meminfo is not None else open("/proc/meminfo").read()
         m = re.search(r"MemAvailable:\s+(\d+)", txt)
         return int(m.group(1)) / 2**20 if m else 0.0
@@ -197,6 +198,7 @@ def tick(conf: dict, tok: str) -> str:
         http(conf["hub"].rstrip("/") + "/heartbeat",
              {"node": conf["node"], "state": state, "ollama_url": ollama, "models": have,
               "info": {"agent": VERSION, "os": platform.system(), "free_gb": round(free_gb(), 1),
+                       "whisper": bool(conf.get("whisper")),
                        **({} if LINUX else {"ac": on_ac(), "throttled": throttled(), "idle_s": int(idle_seconds())})}},
              token=tok)
     except Exception as e:  # noqa: BLE001

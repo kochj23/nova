@@ -614,7 +614,7 @@ tasks:
   op_sync:
     script: nova_op_sync.py
     schedule: every 1h
-    timeout: 180
+    timeout: 270
     overlap: skip
 
   claude_cred_sync:
@@ -1265,6 +1265,12 @@ tasks:
     timeout: 25500
     overlap: skip
     gpu_heavy: true
+  media_reingest_minions:          # every 30 min: idle minion Macs with MLX Whisper (TV-Movies, nova-core6) re-transcribe TV, any hour; the Studio only extracts audio + stores (2026-10-16)
+    script: nova_media_reingest.py
+    args: ["--minions", "--minutes", "25"]
+    schedule: every 30m
+    timeout: 2400
+    overlap: skip
   media_reingest_queue:            # Sun 21:30 — refresh the re-transcription queue (new files, Plex plays, recall)
     script: nova_media_reingest.py
     args: ["--build-queue"]

@@ -4279,6 +4279,16 @@ minion from loading a model into memory its own job needs (a model already resid
 minions are supported (`install_minion_linux.sh`, systemd `nova-minion`; idle = low 5-min load and nobody at the
 console) but none of today's servers is enrolled: nova-core4 is the gateway standby on a 6-core i5 (~3-5 tok/s
 for the 8B), nova-core7 has under 2 GB free, the rest are the PG primary/standbys and radio ingest.
+Update the same day: **nova-core4 enrolled** after all, with guards — its Ollama runs at Nice 19 / CPUWeight 10 /
+MemoryMax 14G (a gateway failover always wins the CPU), port 11434 open to the Studio only, `min_free_gb` 8.
+
+**Whisper minions (2026-10-16).** The 8B cannot pre-screen batch items (tested on 30 known items: 2/15 good items
+passed without thinking, 12/12 bad passed with it), and Tier C runs on the 30B, so the 8B Macs had no work. They now
+re-transcribe TV instead: `nova_media_reingest.py --minions` (scheduler `media_reingest_minions`, every 30 min, any
+hour while the minion is idle) claims an episode, extracts the audio on the Studio, copies the WAV to the minion,
+runs `scripts/minion/nova_minion_whisper.py` (MLX Whisper turbo in `~/.nova-minion/whisper-venv`, no ffmpeg needed)
+and stores the transcript exactly like the nightly batch. Measured: TV-Movies (M2 Pro) ~35x real time, nova-core6
+(M1) ~12x. Minions opt in with `"whisper": true` in their config; their screensavers show "transcribing: <episode>".
 
 ```mermaid
 flowchart LR
