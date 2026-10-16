@@ -4262,6 +4262,26 @@ consolidation. One Studio Ollama call at a time with embedding-latency backoff �
 starved the memory server's embeddings for ~10 minutes. Tiers B and C stay off until their gates pass
 (B: 8 of 45 works yielded a lesson; C: not enough grounded lessons yet). Queue: A 34k, B 131k, C 297k.
 
+### Nova Cluster — live LLM activity across every machine (2026-10-16)
+`scripts/cluster/nova_llm_probe.py` runs on every machine with an LLM (launchd `net.digitalnoise.nova-llm-probe` on
+Macs, systemd `nova-llm-probe` on Linux; deploy with `scripts/cluster/deploy_probe.sh <host> <node> [--enroll]`).
+Every 3 s it reads each `llama-server`'s `/slots` (Ollama's runners and the standalone llama.cpp server: busy,
+prompt/prefill progress, tokens decoded, task counter) and each Ollama's `/api/ps`, names models through Ollama's
+API, and **pushes** the snapshot to the hub (`POST /llm`) — no inbound port on any machine, no prompts or outputs.
+The hub turns slot changes into decode/prefill tok/s and finished-request events and serves `GET /cluster` to
+viewers; the **Nova Cluster** app (`apps/NovaCluster`, macOS + iPad) draws it. Probes: mac-studio, nova-core10, 9, 6,
+4 (minion tokens) and nova-core2, 3, 7, 5 (probe-only tokens, `--enroll NODE --probe`).
+
+```mermaid
+flowchart LR
+    subgraph each[every LLM machine]
+      L[llama-server /slots] --> P[nova_llm_probe]
+      O[Ollama /api/ps] --> P
+    end
+    P -->|POST /llm every 3 s| H[minion hub :37590]
+    H -->|GET /cluster| A[Nova Cluster app<br/>Mac + iPad]
+```
+
 ### Nova minions — idle Macs read for Nova (2026-10-16)
 Any Mac can lend its GPU to Nova while nobody is using it, SETI@home-style, and show what it is doing on the
 **Nova Minion screensaver** (`apps/NovaMinionSaver`). `scripts/minion/nova_minion_agent.py` (stdlib, the Mac's
