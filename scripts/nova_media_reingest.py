@@ -675,8 +675,15 @@ def report(oc) -> None:
     print(report_line(c))
 
 
-def scheduled(oc, mc, hours: float, limit: int | None) -> int:
+def scheduled(oc, mc, hours: float, limit: int | None, _sleep=time.sleep, _now=datetime.now,
+              _movie_running=None) -> int:
     ensure_schema(oc)
+    # Wait (inside the window) for the one-off movie job instead of giving up the whole night (2026-10-15).
+    window_end = batch_deadline(_now(), hours)
+    _movie_running = _movie_running or movie_job_running
+    while _movie_running() and _now() < window_end - timedelta(minutes=30):
+        log(f"waiting: {MOVIE_JOB} is running; re-checking in 5 min (window ends {window_end:%H:%M})")
+        _sleep(300)
     why = guards(oc)
     if why:
         log(f"standing down: {why}")

@@ -283,13 +283,13 @@ class TestFunctional(unittest.TestCase):
         with mock.patch.object(mr, "ensure_schema"), mock.patch.object(mr, "kill_switch", return_value=False), \
                 mock.patch.object(mr, "movie_job_running", return_value=True), \
                 mock.patch.object(mr, "run_batch") as rb, redirect_stdout(io.StringIO()):
-            self.assertEqual(mr.scheduled(oc, _Cur(), 7, None), 0)
+            self.assertEqual(mr.scheduled(oc, _Cur(), 7, None, _movie_running=lambda: False), 0)
         rb.assert_not_called()
         oc = _Cur([("pg_try_advisory_lock", (False,))])
         with mock.patch.object(mr, "ensure_schema"), mock.patch.object(mr, "kill_switch", return_value=False), \
                 mock.patch.object(mr, "movie_job_running", return_value=False), \
                 mock.patch.object(mr, "run_batch") as rb, redirect_stdout(io.StringIO()):
-            mr.scheduled(oc, _Cur(), 7, None)
+            mr.scheduled(oc, _Cur(), 7, None, _movie_running=lambda: False)
         rb.assert_not_called()
 
     def test_error_requeues_then_gives_up(self):
@@ -327,3 +327,16 @@ class TestFrame(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class TestWaitsForMovieJob(unittest.TestCase):
+    def test_waits_inside_window_then_proceeds(self):
+        calls = {"n": 0}
+        def running():
+            calls["n"] += 1
+            return calls["n"] < 3          # running twice, then gone
+        slept = []
+        with mock.patch.object(mr, "guards", return_value="stop here"), mock.patch.object(mr, "ensure_schema"):
+            mr.scheduled(mock.Mock(), mock.Mock(), 7, None, _sleep=slept.append, _movie_running=running)
+        self.assertEqual(slept, [300, 300])
