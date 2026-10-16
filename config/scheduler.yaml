@@ -1283,3 +1283,9 @@ tasks:
     schedule: cron 30 4 * * 0
     timeout: 900
     overlap: skip
+  lessons_daily:                   # daily 17:45 — "Lessons learned — <date>" in /operations from the work_lessons ledger (Jordan 2026-10-16); window starts where the last one ended; out before the 18:00 summary
+    script: nova_lessons_daily.py
+    args: ["--scheduled"]
+    schedule: cron 45 17 * * *
+    timeout: 900
+    overlap: skip

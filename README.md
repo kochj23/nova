@@ -4294,3 +4294,29 @@ flowchart LR
     E --> N[(beliefs / taste / proposals)]
     O --> N
 ```
+
+### Daily "Lessons learned" article (2026-10-16)
+Every evening at 17:45 (`lessons_daily`, before the 18:00 summary) `scripts/nova_lessons_daily.py --scheduled`
+publishes **Lessons learned — YYYY-MM-DD** to `/operations/lessons-learned-YYYY-MM-DD/`: what the work reader
+kept since the last article (`service_config lessons_daily/last_end`, capped at 72 h). No model writes it — the
+lessons, the "what it means for me" lines and the counts come straight from `work_lessons`, `beliefs` and `taste`,
+and the deletion editor is off (`NOVA_IDEAL_READER=0`). Sections: counts; lessons that changed something
+(connected to an organ / red line / value / rule, changes before confirmations); best lessons by work, grouped by
+kind with long lists collapsed; fringe titles as claims only (lessons not printed); pipeline health (works/hour,
+queue by tier, ETA). A day already published is skipped unless `--force`. Kickoff (48 h):
+https://nova.digitalnoise.net/operations/lessons-learned-2026-10-16/
+
+```mermaid
+flowchart LR
+    W[(work_lessons<br/>status=done in window)] --> P[nova_lessons_daily.py]
+    B[(beliefs: new vs strengthened)] --> P
+    T[(taste verdicts)] --> P
+    L[(service_config<br/>lessons_daily/last_end)] --> P
+    P -->|fringe| F[titles only]
+    P --> R[rank: connected, named, quoted, specific]
+    R --> H[nova_journal.publish_hugo<br/>stable slug, operations]
+    F --> H
+    H --> G[git_push -> GitHub Pages]
+    G --> S[nova.digitalnoise.net/operations/lessons-learned-date]
+    H --> L
+```
