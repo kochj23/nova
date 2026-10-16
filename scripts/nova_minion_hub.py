@@ -284,7 +284,22 @@ def cluster(cur) -> dict:
                 tot["prefill_tok_s"] = round(tot["prefill_tok_s"] + d["prefill_tok_s"], 1)
         tot["req_min"] = len(recent)
         events = [{k: v for k, v in e.items() if k != "t"} for e in reversed(_EVENTS[-100:])]
-    return {"updated": iso(datetime.now(timezone.utc)), "totals": tot, "nodes": nodes, "events": events}
+    # the whole cluster (Jordan 2026-10-16): fold in what each machine is doing FOR Nova as a minion — reading
+    # for lessons, transcribing — plus the fleet's lessons, so one view shows traffic and the work it serves
+    fl = fleet(cur)
+    by_node = {m["node"]: m for m in fl.get("minions", [])}
+    for n in nodes:
+        m = by_node.pop(n["node"], None)
+        n["minion"] = ({"state": m["state"], "dedicated": m["dedicated"], "now_reading": m["now_reading"],
+                        "tonight": m["tonight"], "tok_s": m.get("tok_s")} if m else None)
+    for m in by_node.values():          # a minion with no probe still belongs on the map
+        nodes.append({"node": m["node"], "live": False, "os": m.get("os"), "loaded": [], "runners": [], "busy": 0,
+                      "tok_s": 0, "prefill_tok_s": 0, "req_min": 0, "vram_gb": 0, "role": "minion",
+                      "minion_state": m["state"], "minion": {"state": m["state"], "dedicated": m["dedicated"],
+                      "now_reading": m["now_reading"], "tonight": m["tonight"], "tok_s": m.get("tok_s")}})
+    return {"updated": iso(datetime.now(timezone.utc)), "totals": tot, "nodes": nodes, "events": events,
+            "fleet_tonight": fl.get("fleet_tonight"), "queue": fl.get("queue"), "eta_days": fl.get("eta_days"),
+            "recent_lessons": fl.get("recent_lessons", [])[:40]}
 
 
 class Handler(BaseHTTPRequestHandler):
