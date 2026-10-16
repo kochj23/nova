@@ -48,7 +48,7 @@ Coexist: 24/7 at low priority. Two strong streams + one fleet stream. Before eac
   gateway has chat in flight; while nova_media_reingest holds the GPU lock 'nova_gpu_whisper' the Studio's
   own GPU is whisper's — strong calls go to the other strong node instead (or wait). The lock is only
   OBSERVED (pg_locks), never taken, so whisper always gets it at 23:00.
-Bulk reader (2026-10-16): a dedicated Ollama on this host (launchd net.digitalnoise.ollama-bulk, 127.0.0.1:11435,
+Bulk reader (2026-10-16): a dedicated Ollama on this host (launchd net.digitalnoise.ollama-bulk, 127.0.0.1:11436,
   same model files, its own qwen3:30b-a3b copy, 3 parallel slots) is tried FIRST. It is not the memory server's
   Ollama, so it needs no one-call Studio slot and ignores the whisper lock; it still backs off while the main
   Ollama's embeddings are slow (shared GPU). service_config work_lessons/bulk_url ('' = off), bulk_slots.
@@ -105,7 +105,7 @@ PLOT_CHARS = 4200
 WEB_PER_DAY = int(os.environ.get("NOVA_WORK_WEB_PER_DAY", "120"))
 CAPS = {"beliefs": 50, "proposals": 3, "taste": 20}
 MAX_BELIEFS_PER_WORK = 2
-BULK_URL_DEFAULT = "http://127.0.0.1:11435"   # the reader's own Ollama (net.digitalnoise.ollama-bulk)
+BULK_URL_DEFAULT = "http://127.0.0.1:11436"   # the reader's own Ollama (net.digitalnoise.ollama-bulk)
 BULK_SLOTS_DEFAULT = 3
 # Title/series markers of conspiracy, pseudo-science, occult and "secret list" clickbait. A match is fringe
 # without asking the model; everything else non-film is judged in the mapping pass.
