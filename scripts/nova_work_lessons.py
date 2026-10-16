@@ -1214,8 +1214,7 @@ def _call(base: str, model: str, prompt: str, max_tokens: int, temperature: floa
         if not slot.acquired:
             raise RuntimeError("another reader call holds the studio slot")
         out = ollama_chat(base, model, prompt, max_tokens, temperature, num_ctx)
-        if getattr(_TL, "host", None) is None:
-            _TL.host = STUDIO_NODE
+        note_local()
         return out
 
 
@@ -1335,6 +1334,22 @@ def note_activity(base: str, start: bool):
         pass
 
 
+def note_local(node: str = None):
+    """The Studio's own calls (bulk or main Ollama): record the read's host and the node's tok/s like a minion."""
+    node = node or STUDIO_NODE
+    if getattr(_TL, "host", None) is None:
+        _TL.host = node
+    n, d = getattr(_TL, "last_eval", (None, None)) or (None, None)
+    if n and d:
+        tps = n / (d / 1e9)
+        try:
+            _minion_conn().cursor().execute(
+                "UPDATE minion_nodes SET info = info || jsonb_build_object('tok_s', round((coalesce((info->>'tok_s')::numeric, %s)"
+                " * 0.7 + %s * 0.3)::numeric, 1)) WHERE node = %s", (tps, tps, node))
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def begin_work(work: dict, phase: str = "reading"):
     _TL.work, _TL.phase, _TL.host = work, phase, None
 
@@ -1379,8 +1394,7 @@ def bulk_call(base: str, model: str, prompt: str, max_tokens: int, temperature: 
         raise RuntimeError("no free bulk slot")
     try:
         out = ollama_chat(base, model, prompt, max_tokens, temperature, NUM_CTX)
-        if getattr(_TL, "host", None) is None:
-            _TL.host = STUDIO_NODE
+        note_local()
         return out
     finally:
         _BULK["sem"].release()
