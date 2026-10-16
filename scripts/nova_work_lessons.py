@@ -135,7 +135,7 @@ def no_links(conns: list[dict]) -> list[dict]:
 GROUP_B, GROUP_C = 15, 50
 ITEM_WORDS_B, ITEM_WORDS_C = 160, 45
 PILOT_WORKS = 200
-PILOT_QUOTA = {"A": 40, "B": 100, "C": 60}
+PILOT_QUOTA = {"A": 40, "B": 100, "C": 200}   # C: 4 clusters of 50 — 2 were too few to judge (2026-10-16)
 PILOT_SAMPLE = 20
 ROLLUP_MIN = 5
 SIM_MERGE = 0.5
@@ -1406,13 +1406,17 @@ def llm_work(prompt: str, oc=None, max_tokens: int = 1400, temperature: float = 
         if remotes or bmodel:
             give_up = time.monotonic() + 900
             while time.monotonic() < give_up:
+                errored = 0
                 for base, model in remotes:
                     try:
                         txt = remote_try(base, model, prompt, max_tokens, temperature)
                         if txt:
                             return txt, model
                     except Exception as e:  # noqa: BLE001
+                        errored += 1
                         log(f"{model} at {ps._host(base)} not used ({e}); next endpoint")
+                if remotes and errored == len(remotes) and not bmodel:
+                    break                             # every remote failed (not merely busy): stop polling
                 if bmodel:
                     try:
                         txt = bulk_call(bulk, bmodel, prompt, max_tokens, temperature, wait_s=5)
@@ -1941,7 +1945,11 @@ def read_set(oc, mc, rows: list[dict], tier: str, dry_run: bool = False, run_tag
            "beliefs": [], "proposal": {}, "memory_id": None}
     if len(srcs) >= 2:
         reading = reading_for(owner[0]["kind"], owner[0]["source"], owner[0]["work_key"])
-        begin_work({"work_key": rows[0]["work_key"], "title": f"set — {label}"[:300], "kind": owner[0]["kind"]})
+        src = (owner[0].get("source") or "").replace("_", " ")
+        what = {"tv_episode": "episodes", "video": "videos", "article": "articles", "reference": "pages",
+                "document": "documents"}.get(owner[0]["kind"], f"{owner[0]['kind']}s")
+        begin_work({"work_key": rows[0]["work_key"], "kind": owner[0]["kind"],
+                    "title": f"a batch of {len(srcs)} {what}" + (f" from {src}" if src else "")})
         fleet = tier == "C" and C_ROUTE["val"] == "fleet"
         raw, model = llm_work(set_prompt(label, reading, srcs, per_item=(tier == "B")), oc,
                               max_tokens=2200 if tier == "B" else 1300, fleet_only=fleet, allow_fleet=fleet,
