@@ -15,8 +15,10 @@ screensaver draws: what this Mac is reading now, what it has learned for Nova to
   POST /heartbeat           X-Minion-Token; {"node","state","ollama_url","models":[...],"info":{...}}
   GET  /status?node=N       X-Minion-Token; the screensaver's JSON (apps/NovaMinionSaver/README.md)
   GET  /fleet?node=N        X-Minion-Token; every minion's state + what it is reading, for displays (the iPad app)
+  POST /llm                 X-Minion-Token; a node's LLM snapshot (scripts/cluster/nova_llm_probe.py, every 3 s)
+  GET  /cluster?node=N      X-Minion-Token (viewer); the whole cluster's LLM activity, for the Nova Cluster app
   GET  /health
-CLI  --serve [--port 37590] | --enroll NODE [--url http://host:11434] [--dedicated | --viewer] | --list | --selftest
+CLI  --serve [--port 37590] | --enroll NODE [--url http://host:11434] [--dedicated | --viewer | --probe] | --list | --selftest
 A VIEWER (--viewer) is a display, not a minion: it never heartbeats and is never sent work; its token reads /fleet.
 
 Tokens: --enroll prints a token once; only its sha256 is stored (minion_nodes.token_hash). The minion keeps it in
@@ -33,6 +35,7 @@ import re
 import secrets
 import sys
 import threading
+import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -205,6 +208,85 @@ def fleet(cur) -> dict:
     return out
 
 
+# ── cluster LLM view (2026-10-16): probes push snapshots; the hub keeps the latest per node in memory, turns slot
+# changes into tok/s and "request finished" events. Nothing here touches prompts or outputs.
+LLM_FRESH_S = 15
+_LLM: dict = {}
+_EVENTS: list = []
+_LLM_LOCK = threading.Lock()
+
+
+def slot_events(node: str, prev: dict | None, cur: dict, dt: float) -> tuple[list, float, float]:
+    """Pure: (finished-request events, decode tok/s, prefill tok/s) between two snapshots of one node."""
+    events, dec, pre = [], 0.0, 0.0
+    pmap = {r["port"]: r for r in (prev or {}).get("runners", [])}
+    for r in cur.get("runners", []):
+        pr = pmap.get(r["port"])
+        if not pr or pr.get("model") != r.get("model"):
+            continue
+        for i, s in enumerate(r.get("slots", [])):
+            if i >= len(pr.get("slots", [])):
+                continue
+            p = pr["slots"][i]
+            if p.get("task") is not None and s.get("task") != p.get("task") and p.get("busy") is not None:
+                if p.get("decoded") or p.get("prompt"):
+                    events.append({"node": node, "model": r.get("model"), "prompt": p.get("prompt") or 0,
+                                   "decoded": p.get("decoded") or 0})
+            elif p.get("busy") and not s.get("busy") and s.get("task") == p.get("task"):
+                events.append({"node": node, "model": r.get("model"), "prompt": s.get("prompt") or 0,
+                               "decoded": s.get("decoded") or 0})
+            elif s.get("busy") and s.get("task") == p.get("task") and dt > 0:
+                dec += max(0, (s.get("decoded") or 0) - (p.get("decoded") or 0)) / dt
+                pre += max(0, (s.get("prompt_done") or 0) - (p.get("prompt_done") or 0)) / dt
+    return events, round(dec, 1), round(pre, 1)
+
+
+def llm_push(node: str, snap: dict):
+    now = time.time()
+    with _LLM_LOCK:
+        old = _LLM.get(node)
+        dt = now - old["t"] if old else 0.0
+        ev, dec, pre = slot_events(node, old["snap"] if old and dt < 30 else None, snap, dt)
+        stamp = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+        for e in ev:
+            e["at"] = stamp
+            _EVENTS.append({**e, "t": now})
+        del _EVENTS[:-400]
+        _LLM[node] = {"snap": snap, "t": now, "tok_s": dec, "prefill_tok_s": pre}
+
+
+def cluster(cur) -> dict:
+    now = time.time()
+    cur.execute("SELECT node, role, state, last_seen > now() - %s * interval '1 second' FROM minion_nodes", (FRESH_S,))
+    roles = {n: {"role": r, "minion_state": s if f else "offline"} for n, r, s, f in cur.fetchall()}
+    nodes, tot = [], {"nodes": 0, "models_loaded": 0, "vram_gb": 0.0, "busy_slots": 0, "tok_s": 0.0,
+                      "prefill_tok_s": 0.0, "req_min": 0}
+    with _LLM_LOCK:
+        recent = [e for e in _EVENTS if now - e["t"] < 60]
+        for node, d in sorted(_LLM.items()):
+            sn, live = d["snap"], now - d["t"] < LLM_FRESH_S
+            runners = sn.get("runners", [])
+            busy = sum(1 for r in runners for s in r.get("slots", []) if s.get("busy"))
+            vram = round(sum(m.get("vram_gb") or 0 for m in sn.get("loaded", [])), 1)
+            req = sum(1 for e in recent if e["node"] == node)
+            nodes.append({"node": node, "live": live, "age_s": round(now - d["t"], 1), "os": sn.get("os"),
+                          "chip": sn.get("chip"), "cores": sn.get("cores"), "mem_gb": sn.get("mem_gb"),
+                          "free_gb": sn.get("free_gb"), "load": sn.get("load"), "loaded": sn.get("loaded", []),
+                          "runners": runners, "busy": busy if live else 0, "tok_s": d["tok_s"] if live else 0,
+                          "prefill_tok_s": d["prefill_tok_s"] if live else 0, "req_min": req, "vram_gb": vram,
+                          **roles.get(node, {"role": None, "minion_state": None})})
+            if live:
+                tot["nodes"] += 1
+                tot["models_loaded"] += len(sn.get("loaded", []))
+                tot["vram_gb"] = round(tot["vram_gb"] + vram, 1)
+                tot["busy_slots"] += busy
+                tot["tok_s"] = round(tot["tok_s"] + d["tok_s"], 1)
+                tot["prefill_tok_s"] = round(tot["prefill_tok_s"] + d["prefill_tok_s"], 1)
+        tot["req_min"] = len(recent)
+        events = [{k: v for k, v in e.items() if k != "t"} for e in reversed(_EVENTS[-100:])]
+    return {"updated": iso(datetime.now(timezone.utc)), "totals": tot, "nodes": nodes, "events": events}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "NovaMinionHub/1"
 
@@ -223,6 +305,17 @@ class Handler(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path == "/health":
             return self._send(200, {"ok": True})
+        if u.path == "/cluster":
+            node = (parse_qs(u.query).get("node") or [""])[0]
+            try:
+                cur = db()
+                if not authed(cur, node, self.headers.get("X-Minion-Token")):
+                    return self._send(403, {"error": "unknown node or bad token"})
+                return self._send(200, cluster(cur))
+            except Exception as e:  # noqa: BLE001
+                _LOCAL.conn = None
+                log(f"cluster failed: {e}")
+                return self._send(503, {"error": "cluster unavailable"})
         if u.path == "/fleet":
             node = (parse_qs(u.query).get("node") or [""])[0]
             try:
@@ -248,6 +341,19 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, {"error": "not found"})
 
     def do_POST(self):
+        if urlparse(self.path).path == "/llm":
+            try:
+                n = min(int(self.headers.get("Content-Length") or 0), 262144)
+                d = json.loads(self.rfile.read(n) or b"{}")
+                node = str(d.get("node") or "")
+                if not authed(db(), node, self.headers.get("X-Minion-Token")):
+                    return self._send(403, {"error": "unknown node or bad token"})
+                llm_push(node, d)
+                return self._send(200, {"ok": True})
+            except Exception as e:  # noqa: BLE001
+                _LOCAL.conn = None
+                log(f"llm push failed: {e}")
+                return self._send(400, {"error": "bad snapshot"})
         if urlparse(self.path).path != "/heartbeat":
             return self._send(404, {"error": "not found"})
         try:
@@ -267,7 +373,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(503, {"error": "heartbeat unavailable"})
 
 
-def enroll(node: str, url: str | None, dedicated: bool, viewer: bool = False) -> str:
+def enroll(node: str, url: str | None, dedicated: bool, viewer: bool = False, probe: bool = False) -> str:
     if not _NODE.match(node):
         raise SystemExit("node: letters, digits, . _ - only")
     tok = secrets.token_urlsafe(32)
@@ -277,7 +383,7 @@ def enroll(node: str, url: str | None, dedicated: bool, viewer: bool = False) ->
                    ON CONFLICT (node) DO UPDATE SET token_hash=EXCLUDED.token_hash, dedicated=EXCLUDED.dedicated,
                    role=EXCLUDED.role, ollama_url=coalesce(EXCLUDED.ollama_url, minion_nodes.ollama_url)""",
                 (node, (url or "").rstrip("/") or None, dedicated and not viewer, token_hash(tok),
-                 "viewer" if viewer else "minion"))
+                 "viewer" if viewer else "probe" if probe else "minion"))
     return tok
 
 
@@ -293,6 +399,13 @@ def selftest() -> int:
         except ValueError:
             pass
     assert lesson_text("When X did Y, Z [3][12].") == "When X did Y, Z."
+    a = {"runners": [{"port": 1, "model": "m", "slots": [{"busy": True, "task": 5, "prompt": 100, "prompt_done": 40, "decoded": 0},
+                                                         {"busy": True, "task": 9, "prompt": 10, "prompt_done": 10, "decoded": 30}]}]}
+    b = {"runners": [{"port": 1, "model": "m", "slots": [{"busy": True, "task": 5, "prompt": 100, "prompt_done": 100, "decoded": 20},
+                                                         {"busy": True, "task": 10, "prompt": 7, "prompt_done": 0, "decoded": 0}]}]}
+    ev, dec, pre = slot_events("n", a, b, 2.0)
+    assert ev == [{"node": "n", "model": "m", "prompt": 10, "decoded": 30}] and dec == 10.0 and pre == 30.0
+    assert slot_events("n", None, b, 0)[0] == []
     assert token_hash("a") == hashlib.sha256(b"a").hexdigest()
     assert _NODE.match("nova-core10") and not _NODE.match("../etc") and not _NODE.match("")
     print("selftest OK")
@@ -307,13 +420,14 @@ def main(argv=None) -> int:
     ap.add_argument("--url")
     ap.add_argument("--dedicated", action="store_true")
     ap.add_argument("--viewer", action="store_true")
+    ap.add_argument("--probe", action="store_true", help="an LLM probe only: pushes /llm, never sent work")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
     if a.enroll:
-        print(enroll(a.enroll, a.url, a.dedicated, a.viewer))
+        print(enroll(a.enroll, a.url, a.dedicated, a.viewer, a.probe))
         return 0
     if a.list:
         cur = db()
