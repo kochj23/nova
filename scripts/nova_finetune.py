@@ -305,15 +305,30 @@ def base_path() -> str:
 
 def train(tag: str, data: Path, n_train: int) -> Path:
     out = ROOT / tag / "adapters"
-    iters = max(200, min(1200, n_train * 3))          # ~3 epochs at batch 4... capped
+    # 2026-10-16 first run: val loss bottomed at step 200 (~2 epochs of 412 examples) and climbed from step 400 —
+    # train ~3 epochs, evaluate every 50 steps, keep the checkpoint with the lowest val loss (best_checkpoint)
+    iters = max(150, min(800, (n_train * 3) // 4))
     cmd = [PY, "-m", "mlx_lm", "lora", "--model", base_path(), "--train", "--data", str(data),
            "--adapter-path", str(out), "--fine-tune-type", "lora", "--mask-prompt", "--num-layers", "16",
            "--batch-size", "4", "--iters", str(iters), "--learning-rate", "1e-5", "--max-seq-length", "3072",
-           "--steps-per-eval", "100", "--save-every", "200", "--grad-checkpoint", "--seed", "7"]
+           "--steps-per-eval", "50", "--save-every", "50", "--grad-checkpoint", "--seed", "7"]
     log("train: " + " ".join(cmd[3:]))
     with open(ROOT / tag / "train.log", "w") as lf:
         subprocess.run(cmd, check=True, stdout=lf, stderr=subprocess.STDOUT, env={**os.environ, "HF_HOME": HF_HOME})
+    best = best_checkpoint((ROOT / tag / "train.log").read_text(), {p.name for p in out.glob("0*_adapters.safetensors")})
+    if best:
+        import shutil
+        shutil.copy(out / "adapters.safetensors", out / "final.safetensors")
+        shutil.copy(out / f"{best:07d}_adapters.safetensors", out / "adapters.safetensors")
+        log(f"train: kept step {best} (lowest val loss)")
     return out
+
+
+def best_checkpoint(train_log: str, saved: set[str]) -> int | None:
+    """Step with the lowest 'Val loss' that also has a saved checkpoint file. Pure."""
+    vals = [(float(v), int(i)) for i, v in re.findall(r"Iter (\d+): Val loss ([\d.]+)", train_log)]
+    ok = sorted((v, i) for v, i in vals if f"{i:07d}_adapters.safetensors" in saved)
+    return ok[0][1] if ok else None
 
 
 def _generate_all(prompts: list[str], adapter: Path | None) -> list[str]:
@@ -451,6 +466,9 @@ def selftest():
     assert not critique_ok('{"invented": ["mom texted twice"], "lives": 5, "coherent": 5}')
     assert not critique_ok('{"lives": 5, "coherent": 5}')
     assert not critique_ok("garbage")
+    logtxt = "Iter 1: Val loss 3.6\nIter 200: Val loss 1.547\nIter 300: Val loss 1.568\nIter 400: Val loss 1.686"
+    assert best_checkpoint(logtxt, {"0000200_adapters.safetensors", "0000400_adapters.safetensors"}) == 200
+    assert best_checkpoint(logtxt, {"0000400_adapters.safetensors"}) == 400 and best_checkpoint("", set()) is None
     assert passes_gate(0.6, 0.45) and not passes_gate(0.7, 0.4) and not passes_gate(0.59, 0.9)
     print("selftest OK")
 
