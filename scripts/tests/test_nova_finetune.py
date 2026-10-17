@@ -49,11 +49,64 @@ class TestUnit(unittest.TestCase):
             self.assertEqual(got, want)
 
 
+class TestVoiceCuration(unittest.TestCase):
+    """2026-10-17: voice_wr 0.44 was judged against junk 'real replies'; these keep junk out of train and eval."""
+
+    def test_persona_breaks_are_named(self):
+        self.assertEqual(ft.voice_issues("Fine, Little Mister. It ran; I'd still eyeball the disk first."), [])
+        self.assertIn("help-desk", ft.voice_issues("I'm ready to assist under the RESTRAINT rule. You can ask about lights."))
+        self.assertIn("bullet list", ft.voice_issues("Snapshot:\n- Mac one\n- Mac two"))
+        self.assertIn("bold header", ft.voice_issues("**Active Clients:** two"))
+        self.assertIn("permission-seeking", ft.voice_issues("Done. Want me to add an automation for it?"))
+        self.assertIn("tool failure leak", ft.voice_issues("web search failed, all connection attempts timed out."))
+        self.assertIn("claimed check", ft.voice_issues("Checked shared_observations. Claude says it is done."))
+        self.assertNotIn("claimed check", ft.voice_issues("I'll check if the logs show a pattern first."))
+
+    def test_replay_ok(self):
+        self.assertEqual(ft.replay_ok("lol", "Toaster fleet is jealous of your sensor plans, Little Mister."), "context-free prompt")
+        self.assertTrue(ft.replay_ok("Can you list the plugs per strip?", "Kitchen 7.1W, office 3.2W.").startswith("invented"))
+        self.assertIsNone(ft.replay_ok("Do you know where I am right now?",
+                                       "No, Little Mister. I don't have your location, and I'm not going to guess."))
+
+    def test_clean_user_and_internal_parts(self):
+        self.assertIsNone(ft.clean_user("[chatroom message from Baalsong]: @nova mad?"))
+        self.assertIsNone(ft.clean_user("test_ping_from_tests"))
+        self.assertEqual(ft.clean_user("[chatroom message from Jordan]: Nova, describe the network."), "Nova, describe the network.")
+        self.assertTrue(ft.names_internal_part("organ:card_rack", "Alert: Card_rack efficiency dropped", "ok"))
+
+    def test_consensus_removes_position_bias(self):
+        self.assertEqual(ft.consensus("B", "A"), "new")    # new won in both orders
+        self.assertEqual(ft.consensus("A", "B"), "base")
+        self.assertEqual(ft.consensus("A", "A"), "tie")    # always picks slot A -> bias, not preference
+        self.assertEqual(ft.consensus("tie", "tie"), "tie")
+        self.assertIsNone(ft.consensus(None, None))
+
+    def test_balance_keeps_replay_share(self):
+        rows = [(f"r{i}", "replay") for i in range(45)] + [(f"p{i}", "practice") for i in range(200)]
+        out = ft.balance(rows)
+        rep = sum(1 for r in out if r[1] == "replay")
+        self.assertEqual(rep, 45)
+        self.assertGreaterEqual(rep / len(out), 0.45 - 0.01)
+        self.assertEqual(ft.balance(rows), out)            # stable
+
+    def test_audit_score(self):
+        self.assertEqual(ft.audit_score('{"score": 4, "why": "x"}'), 4)
+        self.assertIsNone(ft.audit_score("nope"))
+
+    def test_judge_prompt_carries_persona_for_voice(self):
+        p = ft.judge_prompt("replay", "real reply", "msg", "a", "b", persona="PERSONA-XYZ")
+        self.assertIn("PERSONA-XYZ", p)
+        self.assertIn("real reply", p)
+
+    def test_gates_unchanged(self):
+        self.assertEqual((ft.PRACTICE_GATE, ft.VOICE_GATE), (0.60, 0.45))
+
+
 class TestIntegration(unittest.TestCase):
     def test_build_keeps_only_honest_critiqued_examples(self):
         good = json.dumps({"user": "Alert: login twice from a new IP at night.", "reply": "Two logins at night from a new IP — I'll look it up before calling it hostile."})
         fab = json.dumps({"user": "Is the NAS fine?", "reply": "The logs show it's fine, I checked it this morning for you."})
-        crit_ok = json.dumps({"invented": [], "lives": 5, "coherent": 5})
+        crit_ok = json.dumps({"invented": [], "lives": 5, "coherent": 5, "voice": 5})
         answers = iter([good, crit_ok, fab])
         oc = Cur([("SELECT key FROM finetune_examples", [])])
         with patch.object(ft, "principles", return_value=[("p:1", "organ:x", "check first"), ("p:2", "organ:x", "check")]), \
@@ -66,7 +119,7 @@ class TestIntegration(unittest.TestCase):
 
     def test_export_writes_chat_jsonl(self):
         import tempfile
-        oc = Cur([("FROM finetune_examples", [("hi Nova", "Hello, Little Mister.")])])
+        oc = Cur([("FROM finetune_examples", [("k1", "replay", "hi Nova", "Hello, Little Mister.")])])
         with tempfile.TemporaryDirectory() as d:
             n = ft.export(oc, Path(d))
             row = json.loads((Path(d) / "train.jsonl").read_text().splitlines()[0])

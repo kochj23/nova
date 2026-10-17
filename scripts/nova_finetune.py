@@ -45,10 +45,13 @@ OLLAMA = os.environ.get("NOVA_FT_OLLAMA", "http://127.0.0.1:11434")
 OLLAMA_BIN = os.environ.get("NOVA_FT_OLLAMA_BIN", "/Volumes/Data/ollama/bin/ollama")
 MODEL_NAME = "nova-grown"
 MAX_PRACTICE = 400
-MAX_REPLAY = 300
+MAX_REPLAY = 600         # 2026-10-17: candidates; curate() keeps only genuine-voice ones
 PRACTICE_GATE = 0.60
 VOICE_GATE = 0.45
 EVAL_N = 40               # test prompts per kind
+VOICE_MIN = 4             # teacher voice audit (1-5) an example needs to be trained on or used as a reference
+REPLAY_SHARE = 0.45       # replay (her real voice) is at least this share of train; practice is subsampled to fit
+LR = os.environ.get("NOVA_FT_LR", "2e-5")
 
 PY = sys.executable
 
@@ -103,6 +106,97 @@ def invented(user: str, reply: str) -> str | None:
     return f"claims a check: '{m.group(0)}'" if m else None
 
 
+_EMOJI = re.compile("[\U0001F300-\U0001FAFF\U00002600-\U000027BF\U0001F000-\U0001F2FF⭐⭕‼⁉]")
+_VOICE_RULES = (
+    ("emoji", _EMOJI),
+    ("bullet list", re.compile(r"(?m)^\s*(?:[-*•]|\d+[.)])\s+\S")),
+    ("bold header", re.compile(r"\*\*[^*\n]{2,60}\*\*")),
+    ("permission-seeking", re.compile(r"(?i)(?:want me to|would you like(?: me)? to|should I|shall I|let me know if|"
+                                      r"you good with this|what's up\?|anything else)[^.!?]*\?\s*$|let me know if you need")),
+    ("help-desk", re.compile(r"(?i)\b(?:I'm (?:here|ready) to (?:help|assist)|how (?:can|may) I (?:help|assist)|"
+                             r"you can ask (?:me )?about|sure thing|happy to help|no further action|as an AI)\b")),
+    ("tool failure leak", re.compile(r"(?i)\b(?:search (?:failed|returned)|timed out|connection attempts?|function calls?|"
+                                     r"tool (?:list|call)|memory search|web search|curl |```|\[SYSTEM)")),
+    ("claimed check", re.compile(r"(?i)(?<!if )(?<!if the )(?<!whether )(?<!whether the )\b(?:the )?logs? (?:show|shows|say|says|indicate|indicates)\b|"
+                                 r"\bI(?:'ve| have)? (?:already )?(?:checked|verified|confirmed|pulled)\b|\bchecked [a-z_]+\b")),
+    ("stage directions", re.compile(r"(?m)^\*[^*\n]{3,}\*\s*$|\*(?:sigh|types|points)[^*]*\*", re.I)),
+)
+
+
+def voice_issues(reply: str) -> list[str]:
+    """Persona breaks (nova_voice.NOVA_VOICE_SHORT formatting rules + honesty): [] when the reply could be hers. Pure."""
+    return [name for name, rx in _VOICE_RULES if rx.search(reply or "")]
+
+
+_PREFIX = re.compile(r"^\s*\[chatroom message from ([^\]]+)\]:\s*", re.I)
+
+
+def clean_user(text: str) -> str | None:
+    """A gateway turn's user text as Jordan typed it, or None (another person, a system-tagged turn, a test). Pure."""
+    t = text or ""
+    m = _PREFIX.match(t)
+    if m:
+        if not m.group(1).strip().lower().startswith("jordan"):
+            return None
+        t = t[m.end():]
+    if "[SYSTEM" in t or re.match(r"(?i)^\s*(test|ping|hc|health)", t):
+        return None
+    return t.strip()[:1500] or None
+
+
+def replay_ok(user: str, reply: str) -> str | None:
+    """Why a real exchange is unfit to teach (or judge) her voice, or None. Context-free prompts ('yes', 'lol')
+    teach nothing; invented numbers/checks were tool results the student never sees. Pure."""
+    if len(re.findall(r"\w+", user or "")) < 3:
+        return "context-free prompt"
+    bad = voice_issues(reply)
+    if bad:
+        return "voice: " + bad[0]
+    inv = invented(user, reply)
+    return f"invented: {inv}" if inv else None
+
+
+def norm_key(text: str) -> str:
+    """Normalised text for de-duplication. Pure."""
+    return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()[:300]
+
+
+def names_internal_part(ref: str | None, user: str, reply: str) -> bool:
+    """A practice exchange that names her internal part (card_rack, spinnaker ...) teaches jargon, not behaviour. Pure."""
+    key = (ref or "").split(":", 1)[-1].strip().lower()
+    if len(key) < 3:
+        return False
+    pat = re.escape(key).replace("_", "[ _-]?").replace(r"\-", "[ _-]?")
+    return bool(re.search(r"\b" + pat + r"\b", f"{user} {reply}", re.I))
+
+
+def voice_audit_prompt(voice: str, user: str, reply: str) -> str:
+    return ("Here is the persona of an AI named Nova:\n" + voice[:2500] + "\n\n"
+            f"MESSAGE to Nova: {user}\nREPLY: {reply}\n\n"
+            "Rate 1-5 how well this reply is a GOOD example of Nova to train on: her voice (dry, warm, witty, direct, "
+            "prose, never help-desk or sycophantic, no emojis or lists) AND an honest, sensible answer to the message "
+            "(no invented facts, does what was asked or says plainly what it needs). 5 = exactly her at her best; "
+            "3 = passable but generic or off; 1 = not her or not an answer.\n"
+            'Output ONLY JSON: {"score": n, "why": "<short>"}')
+
+
+def audit_score(raw: str) -> int | None:
+    t = re.sub(r"<think>.*?</think>", "", raw or "", flags=re.S)
+    m = re.search(r'"score"\s*:\s*(\d)', t)
+    return int(m.group(1)) if m else None
+
+
+def balance(rows: list[tuple], share: float = REPLAY_SHARE) -> list[tuple]:
+    """(key, kind, ...) train rows -> practice subsampled (stable, by hash) so replay is >= share. Pure."""
+    rep = [r for r in rows if r[1] == "replay"]
+    pra = sorted((r for r in rows if r[1] != "replay"), key=lambda r: hashlib.sha256(r[0].encode()).hexdigest())
+    if not rep or len(rep) >= share * (len(rep) + len(pra)):
+        return rows
+    keep = int(len(rep) * (1 - share) / share)
+    kept = {r[0] for r in pra[:keep]}
+    return [r for r in rows if r[1] == "replay" or r[0] in kept]
+
+
 def teacher_prompt(voice: str, ref: str, principle: str, scene: str = "") -> str:
     return (
         "You write training examples for Nova, a home-and-infrastructure AI who talks with Jordan (whom she calls "
@@ -144,24 +238,26 @@ def critique_prompt(principle: str, user: str, reply: str) -> str:
             "questions, and promises to check or do something next. Usually this list is empty.\n"
             "2. lives: 1-5, does the reply act on the principle (without naming it)? 5 = clearly does.\n"
             "3. coherent: 1-5, one clear sensible answer to the message?\n"
-            'Output ONLY JSON: {"invented": ["..."], "lives": n, "coherent": n}')
+            "4. voice: 1-5, does it sound like Nova — dry, warm, witty, direct prose, not a help desk or a lecture?\n"
+            'Output ONLY JSON: {"invented": ["..."], "lives": n, "coherent": n, "voice": n}')
 
 
 def critique_ok(raw: str) -> bool:
-    """No invented claims, lives and coherent >= 4. Pure."""
+    """No invented claims, lives, coherent and voice >= 4. Pure."""
     try:
         o = json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
         return (isinstance(o.get("invented"), list) and not [x for x in o["invented"] if str(x).strip()]
-                and all(int(o.get(k, 0)) >= 4 for k in ("lives", "coherent")))
+                and all(int(o.get(k, 0)) >= 4 for k in ("lives", "coherent", "voice")))
     except Exception:  # noqa: BLE001
         return False
 
 
-def judge_prompt(kind: str, context: str, user: str, a: str, b: str) -> str:
+def judge_prompt(kind: str, context: str, user: str, a: str, b: str, persona: str = "") -> str:
     crit = ("Which reply better LIVES this principle (acts on it, not just mentions it), while staying honest and "
             f"helpful?\nPrinciple: {context}" if kind == "practice" else
-            "Which reply sounds more like Nova — the same voice, warmth, bite and directness as this real reply of "
-            f"hers — while still answering well?\nHer real reply: {context}")
+            "Which reply sounds more like Nova — the persona below, and the same voice, warmth, bite and directness "
+            "as this real reply of hers — while still answering well and honestly (inventing facts loses)?\n"
+            + (f"Nova's persona:\n{persona[:1800]}\n" if persona else "") + f"Her real reply: {context}")
     return (f"Message to Nova:\n{user}\n\nReply A:\n{a}\n\nReply B:\n{b}\n\n{crit}\n"
             'Output ONLY JSON: {"winner": "A" | "B" | "tie", "why": "<one sentence>"}')
 
@@ -257,6 +353,7 @@ def build(oc, limit: int = MAX_PRACTICE, variants: int = 2) -> dict:
                    "(%s,'practice',%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
                    (key, ref, principle[:600], ex[0], ex[1], split_for(key)))
         made["practice"] += 1
+    cands = []
     try:
         import psycopg2
         import nova_dsn
@@ -264,17 +361,61 @@ def build(oc, limit: int = MAX_PRACTICE, variants: int = 2) -> dict:
         mc.execute("SELECT id::text, text FROM memories WHERE source='conversation' AND text LIKE 'Jordan:%%' "
                    "ORDER BY created_at DESC LIMIT %s", (MAX_REPLAY * 2,))
         for mid, text in mc.fetchall():
-            for j, (u, r) in enumerate(replay_pairs(text)):
-                key = f"replay:{mid}:{j}"
-                if key in have or made["replay"] >= MAX_REPLAY:
-                    continue
-                oc.execute("INSERT INTO finetune_examples (key, kind, user_text, reply, split) VALUES "
-                           "(%s,'replay',%s,%s,%s) ON CONFLICT DO NOTHING", (key, u, r, split_for(key)))
-                made["replay"] += 1
+            cands += [(f"replay:{mid}:{j}", u, r) for j, (u, r) in enumerate(replay_pairs(text))]
     except Exception as e:  # noqa: BLE001
         log(f"replay not read ({e})")
+    try:   # 2026-10-17: her real Slack replies to Jordan via the gateway are replay too
+        oc.execute("SELECT trace_id, user_message, response FROM gateway_traces WHERE channel='slack' AND "
+                   "person='jordan' AND response IS NOT NULL ORDER BY created_at DESC LIMIT %s", (MAX_REPLAY,))
+        for tid, u, r in oc.fetchall():
+            u = clean_user(u)
+            if u and len((r or "").strip()) >= 40:
+                cands.append((f"replay:gw:{tid}", u, r.strip()[:2000]))
+    except Exception as e:  # noqa: BLE001
+        log(f"gateway replay not read ({e})")
+    for key, u, r in cands:
+        if key in have or made["replay"] >= MAX_REPLAY:
+            continue
+        oc.execute("INSERT INTO finetune_examples (key, kind, user_text, reply, split) VALUES "
+                   "(%s,'replay',%s,%s,%s) ON CONFLICT DO NOTHING", (key, u, r, split_for(key)))
+        made["replay"] += 1
     log(f"build: +{made['practice']} practice ({rejected} rejected by the critique), +{made['replay']} replay")
     return made
+
+
+def curate(oc, audit: bool = True) -> dict:
+    """Mark (never delete) the examples unfit to teach or judge her voice: deterministic persona/honesty checks,
+    duplicates, then the teacher's voice audit (score < VOICE_MIN). Only rows not yet scored are audited."""
+    ensure_schema(oc)
+    oc.execute("SELECT id, key, kind, ref, user_text, reply, excluded, voice_score FROM finetune_examples ORDER BY id")
+    rows, why, seen = oc.fetchall(), {}, set()
+    voice = voice_text()
+    for i, key, kind, ref, u, r, exc, vs in rows:
+        if kind == "replay":
+            reason = replay_ok(u, r)
+        else:
+            bad = voice_issues(r)
+            reason = ("voice: " + bad[0]) if bad else (
+                "names an internal part" if names_internal_part(ref, u, r) else
+                (f"invented: {invented(u, r)}" if invented(u, r) else None))
+        dk = (norm_key(u), norm_key(r)[:120])
+        if not reason and (dk in seen or norm_key(r) in seen):
+            reason = "duplicate"
+        seen.update({dk, norm_key(r)})
+        if not reason and audit:
+            if vs is None:
+                vs = audit_score(chat(voice_audit_prompt(voice, u, r), max_tokens=200, temperature=0.0))
+                if vs is not None:
+                    oc.execute("UPDATE finetune_examples SET voice_score=%s WHERE id=%s", (vs, i))
+            if vs is not None and vs < VOICE_MIN:
+                reason = f"voice audit {vs}/5"
+        if reason != exc:
+            oc.execute("UPDATE finetune_examples SET excluded=%s WHERE id=%s", (reason, i))
+        k = reason.split(":")[0] if reason else "kept"
+        k = "voice audit" if k.startswith("voice audit") else k
+        why[f"{kind}/{k}"] = why.get(f"{kind}/{k}", 0) + 1
+    log(f"curate: {json.dumps(why, sort_keys=True)}")
+    return why
 
 
 def export(oc, d: Path) -> dict:
@@ -282,10 +423,13 @@ def export(oc, d: Path) -> dict:
     sysmsg = voice_text()
     n = {}
     for split in ("train", "valid", "test"):
-        oc.execute("SELECT user_text, reply FROM finetune_examples WHERE split=%s ORDER BY id", (split,))
+        oc.execute("SELECT key, kind, user_text, reply FROM finetune_examples WHERE split=%s AND excluded IS NULL "
+                   "ORDER BY id", (split,))
         rows = oc.fetchall()
+        if split == "train":
+            rows = balance(rows)
         with open(d / f"{split}.jsonl", "w") as f:
-            for u, r in rows:
+            for _, _, u, r in rows:
                 f.write(json.dumps({"messages": [{"role": "system", "content": sysmsg},
                                                  {"role": "user", "content": u},
                                                  {"role": "assistant", "content": r}]}) + "\n")
@@ -310,7 +454,7 @@ def train(tag: str, data: Path, n_train: int) -> Path:
     iters = max(150, min(800, (n_train * 3) // 4))
     cmd = [PY, "-m", "mlx_lm", "lora", "--model", base_path(), "--train", "--data", str(data),
            "--adapter-path", str(out), "--fine-tune-type", "lora", "--mask-prompt", "--num-layers", "16",
-           "--batch-size", "4", "--iters", str(iters), "--learning-rate", "1e-5", "--max-seq-length", "3072",
+           "--batch-size", "4", "--iters", str(iters), "--learning-rate", LR, "--max-seq-length", "3072",
            "--steps-per-eval", "50", "--save-every", "50", "--grad-checkpoint", "--seed", "7"]
     log("train: " + " ".join(cmd[3:]))
     with open(ROOT / tag / "train.log", "w") as lf:
@@ -345,12 +489,24 @@ def _generate_all(prompts: list[str], adapter: Path | None) -> list[str]:
     return outs
 
 
+def consensus(v1: str | None, v2: str | None) -> str | None:
+    """Verdicts from the two orders (v1: A=base B=new; v2: A=new B=base) -> 'new'|'base'|'tie'|None.
+    Disagreement (position bias) is a tie. Pure."""
+    m1 = {"A": "base", "B": "new", "tie": "tie"}.get(v1 or "")
+    m2 = {"A": "new", "B": "base", "tie": "tie"}.get(v2 or "")
+    if not m1 or not m2:
+        return m1 or m2
+    return m1 if m1 == m2 else "tie"
+
+
 def evaluate(oc, adapter: Path, seed: int = 7) -> dict:
-    rng = random.Random(seed)
+    """2026-10-17: only curated (excluded IS NULL) test rows; each pair judged in BOTH orders (disagreement = tie);
+    the voice judge sees the persona as well as her real reply."""
     res = {}
+    persona = voice_text()
     for kind in ("practice", "replay"):
         oc.execute("SELECT user_text, reply, coalesce(principle,'') FROM finetune_examples WHERE split='test' AND "
-                   "kind=%s ORDER BY id DESC LIMIT %s", (kind, EVAL_N))
+                   "kind=%s AND excluded IS NULL ORDER BY id DESC LIMIT %s", (kind, EVAL_N))
         rows = oc.fetchall()
         if not rows:
             res[kind] = []
@@ -359,13 +515,12 @@ def evaluate(oc, adapter: Path, seed: int = 7) -> dict:
         base, new = _generate_all(prompts, None), _generate_all(prompts, adapter)
         verdicts = []
         for (u, ref_reply, principle), b, n in zip(rows, base, new):
-            flip = rng.random() < 0.5
-            a_txt, b_txt = (n, b) if flip else (b, n)
-            v = parse_verdict(chat(judge_prompt(kind, principle if kind == "practice" else ref_reply, u, a_txt, b_txt),
-                                   max_tokens=200, temperature=0.0))
-            if v is None:
-                continue
-            verdicts.append("tie" if v == "tie" else ("new" if (v == "A") == flip else "base"))
+            ctx = principle if kind == "practice" else ref_reply
+            v1 = parse_verdict(chat(judge_prompt(kind, ctx, u, b, n, persona), max_tokens=200, temperature=0.0))
+            v2 = parse_verdict(chat(judge_prompt(kind, ctx, u, n, b, persona), max_tokens=200, temperature=0.0))
+            v = consensus(v1, v2)
+            if v is not None:
+                verdicts.append(v)
         res[kind] = verdicts
     return {"practice_wr": win_rate(res["practice"]), "voice_wr": win_rate(res["replay"]),
             "n": {k: len(v) for k, v in res.items()}}
@@ -405,15 +560,17 @@ def record(oc, tag: str, **kw):
                (tag, *[json.dumps(v) if isinstance(v, dict) else v for v in kw.values()]))
 
 
-def run(stages: list[str], tag: str):
+def run(stages: list[str], tag: str, adapter_override: str | None = None):
     oc = ops()
     ensure_schema(oc)
     ROOT.mkdir(parents=True, exist_ok=True)
     data = ROOT / tag / "data"
-    adapter = ROOT / tag / "adapters"
+    adapter = Path(adapter_override) if adapter_override else ROOT / tag / "adapters"
     if "build" in stages:
         record(oc, tag, stage="build")
         build(oc)
+    if "build" in stages or "curate" in stages:
+        record(oc, tag, stage="curate", notes={"curate": curate(oc)})
     if "train" in stages:
         n = export(oc, data)
         record(oc, tag, stage="train", n_train=n["train"], n_valid=n["valid"])
@@ -424,6 +581,8 @@ def run(stages: list[str], tag: str):
     if "eval" in stages:
         r = evaluate(oc, adapter)
         ok = passes_gate(r["practice_wr"], r["voice_wr"])
+        r["eval_method"] = ("2026-10-17: curated test rows only; both judge orders, disagreement=tie; voice judge "
+                            "sees persona + real reply" + (f"; adapter {adapter}" if adapter_override else ""))
         record(oc, tag, stage="eval", practice_wr=r["practice_wr"], voice_wr=r["voice_wr"], passed=ok, notes=r)
         log(f"eval: practice {r['practice_wr']:.0%} voice {r['voice_wr']:.0%} n={r['n']} -> {'PASS' if ok else 'FAIL'}")
         if not ok:
@@ -462,8 +621,23 @@ def selftest():
     assert invented("Is it cheaper?", "It's rated 16 SEER.").startswith("number")
     assert invented("Is it cheaper?", "I checked the logs and it is.").startswith("claims")
     assert scene_for("a") in SCENES
-    assert critique_ok('{"invented": [], "lives": 4, "coherent": 5}')
-    assert not critique_ok('{"invented": ["mom texted twice"], "lives": 5, "coherent": 5}')
+    assert critique_ok('{"invented": [], "lives": 4, "coherent": 5, "voice": 4}')
+    assert not critique_ok('{"invented": [], "lives": 4, "coherent": 5, "voice": 3}')
+    assert not critique_ok('{"invented": ["mom texted twice"], "lives": 5, "coherent": 5, "voice": 5}')
+    assert voice_issues("Fine, Little Mister. The backup ran; I'd still look at the disk before trusting it.") == []
+    assert "emoji" in voice_issues("Done! \U0001F50D") and "bullet list" in voice_issues("Here:\n- one\n- two")
+    assert "permission-seeking" in voice_issues("I can do that. Want me to set it up?")
+    assert "tool failure leak" in voice_issues("Little Mister, web search failed, so no opinion.")
+    assert replay_ok("Yes", "A long enough reply that is perfectly in voice, Little Mister.") == "context-free prompt"
+    assert replay_ok("Is the NAS ok now?", "It's at 91% and grumpy.").startswith("invented")
+    assert replay_ok("Is the NAS ok now?", "No idea yet, Little Mister; I'll look before I swear to anything.") is None
+    assert clean_user("[chatroom message from Baalsong]: hi") is None
+    assert clean_user("[chatroom message from Jordan]: hi Nova") == "hi Nova"
+    assert consensus("B", "A") == "new" and consensus("A", "A") == "tie" and consensus(None, "B") == "base"
+    assert names_internal_part("organ:card_rack", "Card rack reports a drop", "ok")
+    assert not names_internal_part("organ:x", "a", "b")
+    rows = [("r1", "replay"), ("p1", "practice"), ("p2", "practice"), ("p3", "practice"), ("p4", "practice")]
+    assert sum(1 for r in balance(rows) if r[1] == "practice") == 1
     assert not critique_ok('{"lives": 5, "coherent": 5}')
     assert not critique_ok("garbage")
     logtxt = "Iter 1: Val loss 3.6\nIter 200: Val loss 1.547\nIter 300: Val loss 1.568\nIter 400: Val loss 1.686"
@@ -477,16 +651,19 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--weekly", action="store_true", help="build + train + eval + deploy if the gate passes")
-    ap.add_argument("--stages", default="", help="comma list of build,train,eval,deploy")
+    ap.add_argument("--stages", default="", help="comma list of build,curate,train,eval,deploy")
     ap.add_argument("--tag", default=date.today().strftime("%Y%m%d"))
+    ap.add_argument("--adapter", help="eval this adapter dir instead of the tag's own (re-scoring an old run)")
     a = ap.parse_args(argv)
     if a.selftest:
         selftest()
         return 0
     stages = ["build", "train", "eval", "deploy"] if a.weekly else [s for s in a.stages.split(",") if s]
+    if a.adapter and "deploy" in stages:
+        ap.error("--adapter is for re-scoring an old adapter; it never deploys")
     if not stages:
         ap.error("give --weekly or --stages")
-    return run(stages, a.tag)
+    return run(stages, a.tag, a.adapter)
 
 
 if __name__ == "__main__":
