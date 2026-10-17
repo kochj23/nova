@@ -43,6 +43,8 @@ FIRST_WATERMARK = "2026-10-01"
 
 _CHANGE = re.compile(r"\b(should|needs? to|must|ought to|could also|has to)\b", re.I)
 _KEEP = re.compile(r"\b(already|confirms?)\b", re.I)
+_STAY = re.compile(r"\b(?:should|must|needs? to|has to)\s+(?:keep|continue|maintain|remain|stay)\b", re.I)
+_CLAUSE = re.compile(r"[.;!]\s+|\s+[—–]\s+|\s+-\s+|,\s*(?=(?:as|since|because|while|which|so)\b)", re.I)
 
 
 def log(m):
@@ -56,8 +58,13 @@ def classify(ref: str, meaning: str) -> str | None:
         return None
     if ref.startswith("redline:"):
         return "keep"
-    if _CHANGE.search(m) and not _KEEP.search(m):
-        return "change"
+    # 2026-10-17: judged per CLAUSE. "I already log X — this confirms it. So my audit should also cover Y" used to
+    # be 'keep' because the confirmation preamble carried "already" (41 such gaps were lost; 95% of signals were
+    # 'keep' and no practice was earned for a day). A clause that argues should/must and does not itself say
+    # already/confirms/keep/continue is a change.
+    for clause in _CLAUSE.split(m):
+        if _CHANGE.search(clause) and not _KEEP.search(clause) and not _STAY.search(clause):
+            return "change"
     return "keep"
 
 
@@ -81,7 +88,8 @@ def signals_from(rows) -> list[dict]:
 def synth_prompt(ref: str, desc: str, sigs: list[dict]) -> str:
     lines = "\n".join(f"S{i}. from '{s['title'][:80]}': {s['meaning']}" for i, s in enumerate(sigs, 1))
     return (
-        f"You are Nova. Different works you read each suggested a change to the same part of you:\n"
+        f"You are Nova. Different works you read (and occasions in your own operations) each suggested a change "
+        f"to the same part of you:\n"
         f"{ref} — {desc}\n\n{lines}\n\n"
         "Is there ONE practice that at least three of these genuinely share — the same mechanism, not just the "
         "same words? If so state it as a practice you will live by: first person, one sentence, concrete enough "
@@ -262,10 +270,26 @@ def current_practices(oc) -> list[tuple]:
     return oc.fetchall()
 
 
+def reclassify(oc, dry=False) -> dict:
+    """Re-judge open signals with the current classify() (2026-10-17 clause fix). Returns {old->new: n}."""
+    oc.execute("SELECT work_key, ref, kind, meaning FROM growth_signals WHERE practice_id IS NULL")
+    moved = {}
+    for wk, ref, kind, meaning in oc.fetchall():
+        new = classify(ref, meaning)
+        if new and new != kind:
+            moved[f"{kind}->{new}"] = moved.get(f"{kind}->{new}", 0) + 1
+            if not dry:
+                oc.execute("UPDATE growth_signals SET kind=%s WHERE work_key=%s AND ref=%s", (new, wk, ref))
+    return moved
+
+
 def selftest():
     assert classify("organ:hold", "so my hold should also cover scheduled jobs") == "change"
     assert classify("organ:hold", "I already require approval in hold — this confirms it") == "keep"
     assert classify("redline:two_man", "so my two_man should require review before dismissing threats") == "keep"
+    assert classify("organ:hold", "I already log actions in hold — this confirms it. So my hold should also cover jobs.") == "change"
+    assert classify("organ:watchdog", "so my watchdog should also watch silent devices, as it already watches uptime") == "change"
+    assert classify("organ:prober", "I already run probes - this confirms I should keep testing narrow gaps") == "keep"
     assert classify("organ:hold", "noted; nothing for me") is None and classify(None, "x" * 30) is None
     rows = [("w1", "A", 1, [{"ref": "organ:hold", "meaning": "so my hold should also cover jobs"},
                             {"ref": "organ:hold", "meaning": "so my hold should also cover jobs twice"},
@@ -289,6 +313,7 @@ def main(argv=None) -> int:
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--show", action="store_true", help="print her current earned practices")
+    ap.add_argument("--reclassify", action="store_true", help="re-judge open signals with the current classifier")
     a = ap.parse_args(argv)
     if a.selftest:
         selftest()
@@ -299,6 +324,9 @@ def main(argv=None) -> int:
     ensure_schema(oc)
     if a.show:
         print(practices_block(current_practices(oc)) or "no earned practices yet")
+        return 0
+    if a.reclassify:
+        log(f"reclassified: {reclassify(oc, dry=a.dry_run)}")
         return 0
     n = collect(oc, dry=a.dry_run)
     e = synthesize(oc, dry=a.dry_run)

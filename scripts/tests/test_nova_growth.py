@@ -98,6 +98,11 @@ def _urlopen(fn):
     return patch.object(urllib.request, "urlopen", fn)
 
 
+# the five ops detectors (2026-10-17) find nothing: failing task, telemetry recurrence, coagency rejection,
+# hotwash finding, gateway failures — in DETECTORS order
+OPS_QUIET = [None, None, (0, 0), None, (0, 0)]
+
+
 def _overconfident_rows(n=12):
     # confidence 0.9 everywhere, right only a third of the time -> calibration error ~0.57
     return [(0.9, "correct" if i % 3 == 0 else "incorrect") for i in range(n)]
@@ -165,7 +170,7 @@ class TestRetry(unittest.TestCase):
 
         def boom(*a, **k):
             attempts.append(1); raise OSError("memory server down")
-        cur = _Cur([_overconfident_rows(), None, None, [], (None,), (0,), (7, NOW)])
+        cur = _Cur([_overconfident_rows(), None, None, [], (None,)] + OPS_QUIET + [(0,), (7, NOW)])
         buf = io.StringIO()
         with _urlopen(boom), redirect_stdout(buf):
             cid = gr.do_assess(cur)
@@ -250,6 +255,65 @@ class TestUnit(unittest.TestCase):
         self.assertEqual((cur_v, lb), (None, False))
         r, cur_v, lb = gr.remeasure(_Cur([(9, 0.25, NOW)]), {"kind": "scoreboard_metric", "metric": "m"}, {}, NOW)
         self.assertEqual((r["scoreboard_id"], cur_v), (9, 0.25))
+
+
+class TestOpsDetectors(unittest.TestCase):
+    """2026-10-17: her own operations become commitments (failing jobs, recurring incidents, proposals, hotwash,
+    chat failures), each with a re-measure that reads the same table."""
+
+    def test_failing_task(self):
+        self.assertIsNone(gr.detect_failing_task(_Cur([None])))
+        c = gr.detect_failing_task(_Cur([("daily_threat_assessment", 7, 8)]))
+        self.assertEqual(c["metric_spec"], {"kind": "task_failure_rate", "task": "daily_threat_assessment",
+                                            "measure": "rate", "since": "created_at"})
+        self.assertEqual(c["baseline"]["rate"], 0.875)
+        self.assertLessEqual(c["target_num"], 0.05)
+        self.assertTrue(0 < c["priority"] <= 1)
+
+    def test_telemetry_recurrence_skips_escalation_echoes_and_needs_recent_opens(self):
+        cur = _Cur([("192.168.1.2:probe", 10)])
+        c = gr.detect_telemetry_recurrence(cur)
+        self.assertIn("incident_escalation", cur.sql[0])
+        self.assertIn("interval '2 days'", cur.sql[0])
+        self.assertEqual(c["baseline"]["per_day"], round(10 / gr.OPS_WINDOW_DAYS, 3))
+
+    def test_coagency_rejection_needs_volume_and_a_real_miss_rate(self):
+        self.assertIsNone(gr.detect_coagency_rejection(_Cur([(5, 8)])))       # too few decided
+        self.assertIsNone(gr.detect_coagency_rejection(_Cur([(2, 20)])))      # 10% is fine
+        c = gr.detect_coagency_rejection(_Cur([(10, 20)]))
+        self.assertEqual(c["baseline"]["rate"], 0.5)
+
+    def test_hotwash_and_gateway(self):
+        h = gr.detect_hotwash_recurring(_Cur([("missed_event", "source:x", 7, 465)]))
+        self.assertEqual(h["metric_spec"]["hw_kind"], "missed_event")
+        self.assertEqual(h["priority"], 1.0)
+        self.assertIsNone(gr.detect_gateway_failures(_Cur([(1, 10)])))        # too few turns
+        g = gr.detect_gateway_failures(_Cur([(6, 40)]))
+        self.assertEqual(g["baseline"]["rate"], 0.15)
+
+    def test_ops_remeasure(self):
+        since = datetime.now(timezone.utc).replace(microsecond=0)
+        from datetime import timedelta
+        two_days_ago = since - timedelta(days=2)
+        r, v, lb = gr.remeasure(_Cur([(1, 10)]), {"kind": "task_failure_rate", "task": "t"}, {}, two_days_ago)
+        self.assertEqual((v, lb), (0.1, True))
+        r, v, _ = gr.remeasure(_Cur([(1, 2)]), {"kind": "task_failure_rate", "task": "t"}, {}, two_days_ago)
+        self.assertIsNone(v)                                                   # too few runs: inconclusive
+        r, v, _ = gr.remeasure(_Cur([(4,)]), {"kind": "telemetry_recurrence", "recurrence_key": "k"}, {}, two_days_ago)
+        self.assertAlmostEqual(v, 2.0, places=2)
+        r, v, _ = gr.remeasure(_Cur([(1, 5)]), {"kind": "coagency_rejection"}, {}, two_days_ago)
+        self.assertEqual(v, 0.2)
+        r, v, _ = gr.remeasure(_Cur([(20,)]), {"kind": "hotwash_weight", "hw_kind": "k", "subject": "s"}, {}, two_days_ago)
+        self.assertAlmostEqual(v, 10.0, places=2)
+        r, v, _ = gr.remeasure(_Cur([(0, 3)]), {"kind": "gateway_failure_rate"}, {}, two_days_ago)
+        self.assertIsNone(v)
+
+    def test_review_baseline_value_found_for_rate_kinds(self):
+        for det, row in ((gr.detect_failing_task, ("t", 5, 10)), (gr.detect_coagency_rejection, (10, 20)),
+                         (gr.detect_gateway_failures, (6, 40)), (gr.detect_hotwash_recurring, ("k", "s", 3, 70)),
+                         (gr.detect_telemetry_recurrence, ("k", 14))):
+            c = det(_Cur([row]))
+            self.assertIsNotNone(c["baseline"].get(c["metric_spec"]["measure"]), det.__name__)
 
 
 class TestIntegration(unittest.TestCase):
@@ -348,7 +412,7 @@ class TestFunctional(unittest.TestCase):
         return rc, posted, buf.getvalue()
 
     def test_assess_golden_path_commits_and_remembers(self):
-        cur = _Cur([_overconfident_rows(), None, None, [], (None,), (0,), (7, NOW)])
+        cur = _Cur([_overconfident_rows(), None, None, [], (None,)] + OPS_QUIET + [(0,), (7, NOW)])
         rc, posted, out = self._main(["--mode", "assess"], cur)
         self.assertEqual(rc, 0)
         ins = cur.executed("INSERT INTO growth_commitments")

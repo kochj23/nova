@@ -352,10 +352,10 @@ tasks:
     overlap: skip
     group: llm
 
-  nova_growth_assess:              # #1 Growth Loop — find a weakness, form a measurable commitment, Mon 05:15
+  nova_growth_assess:              # #1 Growth Loop — find a weakness, form a measurable commitment, DAILY 05:15 (was Mon-only; 2026-10-17: + ops detectors — failing jobs, recurring telemetry incidents, hotwash findings, proposal rejections, chat failures; still <= 1 new per run, 1 active per kind)
     script: nova_growth.py
     args: ["--mode", "assess"]
-    schedule: cron 15 5 * * 1
+    schedule: cron 15 5 * * *
     timeout: 300
     overlap: skip
     group: llm

@@ -59,6 +59,34 @@ class TestUnit(unittest.TestCase):
         self.assertIsNone(g.parse_synthesis(ok.replace("I give every job I start a recall path.", "Why?" * 8), 3))
 
 
+class TestClauseClassifier(unittest.TestCase):
+    """2026-10-17: a should/must clause after an 'I already ... confirms it' preamble is a change."""
+
+    def test_gap_after_confirmation_is_a_change(self):
+        self.assertEqual(g.classify("organ:action_audit", "I already log all actions in the action audit organ — "
+                                    "this confirms it. So my action audit should also record the rationale."), "change")
+        self.assertEqual(g.classify("value:cost-conscious", "I already weigh costs, so my cost-conscious organ "
+                                    "should explicitly reject resource-heavy proposals."), "change")
+
+    def test_confirmations_and_keep_going_stay_keep(self):
+        self.assertEqual(g.classify("organ:prober", "I already run probes - this confirms I should keep testing."), "keep")
+        self.assertEqual(g.classify("organ:ae35_rule", "so my ae35_rule should maintain mutual engagement."), "keep")
+        self.assertEqual(g.classify("organ:spinnaker", "I already require corroboration — this confirms that I must "
+                                    "never act on a single source."), "keep")
+        self.assertEqual(g.classify("redline:two_man", "I already do it. So my two_man should also cover X."), "keep")
+
+    def test_reclassify_updates_only_changed_rows(self):
+        cur = Cur([("SELECT work_key", [("w1", "organ:hold", "keep", "I already hold. So my hold should also cover jobs."),
+                                         ("w2", "organ:hold", "keep", "I already hold — this confirms it.")])])
+        moved = g.reclassify(cur)
+        self.assertEqual(moved, {"keep->change": 1})
+        ups = [p for s, p in cur.calls if s.startswith("UPDATE growth_signals")]
+        self.assertEqual(ups, [("change", "w1", "organ:hold")])
+        cur2 = Cur([("SELECT work_key", [("w1", "organ:hold", "keep", "I already hold. So my hold should also cover jobs.")])])
+        self.assertEqual(g.reclassify(cur2, dry=True), {"keep->change": 1})
+        self.assertFalse([s for s, _ in cur2.calls if s.startswith("UPDATE")])
+
+
 class TestIntegration(unittest.TestCase):
     def test_collect_writes_signals_reinforces_and_moves_watermark(self):
         oc = Cur([("FROM service_config", ("2026-10-01",)), ("FROM work_lessons", [sig(1), sig(2)])])

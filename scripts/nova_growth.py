@@ -45,7 +45,7 @@ import json
 import re
 import sys
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import psycopg2
 
@@ -328,8 +328,183 @@ def detect_autonomy_progress(oc):
     }
 
 
+# ── Ops detectors (2026-10-17) ───────────────────────────────────────────────────
+# The four detectors above watch forecasts, the legacy public.incidents table and the scoreboard. Her day-to-day
+# operations (failing jobs, recurring telemetry incidents, rejected proposals, hotwash fix items, failed chat turns)
+# never became a commitment, and assess ran weekly, so the loop sat on two commitments for weeks. Each detector
+# below has a machine-checkable re-measure in remeasure(); priorities are on the same ~0..1 scale as the others.
+
+OPS_WINDOW_DAYS = 7
+MIN_TASK_RUNS = 5
+FAIL_STATUSES = ("failure", "timeout", "orphaned")
+
+
+def _epoch_ms_ago(days: float) -> int:
+    """scheduler_runs.started_at is epoch milliseconds. Pure (but for the clock)."""
+    return int((datetime.now(timezone.utc).timestamp() - days * 86400) * 1000)
+
+
+def task_failure_rate(oc, task, since_ms):
+    oc.execute("SELECT count(*) FILTER (WHERE status = ANY(%s)), count(*) FROM scheduler_runs "
+               "WHERE task_id=%s AND started_at > %s AND status <> 'running'", (list(FAIL_STATUSES), task, since_ms))
+    f, n = oc.fetchone()
+    return int(f or 0), int(n or 0)
+
+
+def detect_failing_task(oc):
+    """A scheduled job that keeps failing is her own broken promise to run it. Worst = most failures among jobs
+    with >= MIN_TASK_RUNS runs and >= 20% failing over the last week."""
+    try:
+        since = _epoch_ms_ago(OPS_WINDOW_DAYS)
+        oc.execute("SELECT task_id, count(*) FILTER (WHERE status = ANY(%s)) f, count(*) n FROM scheduler_runs "
+                   "WHERE started_at > %s AND status <> 'running' GROUP BY 1 "
+                   "HAVING count(*) >= %s AND count(*) FILTER (WHERE status = ANY(%s)) >= 0.2 * count(*) "
+                   "AND max(started_at) FILTER (WHERE status = ANY(%s)) > %s "   # still failing, not last week's
+                   "ORDER BY 2 DESC, 3 DESC LIMIT 1",
+                   (list(FAIL_STATUSES), since, MIN_TASK_RUNS, list(FAIL_STATUSES), list(FAIL_STATUSES),
+                    _epoch_ms_ago(2)))
+        r = oc.fetchone()
+    except Exception:
+        return None
+    if not r:
+        return None
+    task, f, n = r[0], int(r[1]), int(r[2])
+    rate = round(f / n, 3)
+    return {
+        "weakness": (f"a job I run keeps failing: '{task}' failed {f} of its last {n} runs "
+                     f"({rate:.0%}) over {OPS_WINDOW_DAYS} days."),
+        "evidence": {"signal": "scheduler_runs", "task": task, "failed": f, "runs": n, "rate": rate},
+        "metric": f"failure rate of scheduled task '{task}' over its runs SINCE this commitment; lower is better",
+        "metric_spec": {"kind": "task_failure_rate", "task": task, "measure": "rate", "since": "created_at"},
+        "baseline": {"failed": f, "runs": n, "rate": rate},
+        "target": f"< {round(min(0.05, rate * 0.25), 3)}",
+        "target_num": round(min(0.05, rate * 0.25), 3),
+        "priority": round(min(1.0, rate * min(1.0, f / 10)), 3),
+    }
+
+
+def detect_telemetry_recurrence(oc):
+    """The live incident table (telemetry.incidents) — a recurrence key that keeps reopening is a fix that never
+    happened. Same metric shape as incident_rate, on the table the incident pipeline actually writes today."""
+    try:
+        oc.execute("SELECT recurrence_key, count(*) FROM telemetry.incidents "
+                   "WHERE opened_at > now() - make_interval(days => %s) AND recurrence_key IS NOT NULL "
+                   "AND recurrence_key NOT LIKE '%%:incident_escalation' "
+                   "GROUP BY 1 HAVING count(*) >= 5 AND count(*) FILTER (WHERE opened_at > now() - interval '2 days') >= 2 "
+                   "ORDER BY 2 DESC LIMIT 1", (OPS_WINDOW_DAYS,))
+        r = oc.fetchone()
+    except Exception:
+        try:
+            oc.connection.rollback()
+        except Exception:
+            pass
+        return None
+    if not r:
+        return None
+    key, n = r[0], int(r[1])
+    per_day = round(n / OPS_WINDOW_DAYS, 3)
+    return {
+        "weakness": (f"an incident keeps coming back: '{key}' opened {n} times in {OPS_WINDOW_DAYS} days "
+                     f"({per_day}/day) and keeps reopening."),
+        "evidence": {"signal": "telemetry.incidents", "recurrence_key": key, "count": n, "per_day": per_day},
+        "metric": f"incidents/day opened under recurrence key '{key}' SINCE this commitment; lower is better",
+        "metric_spec": {"kind": "telemetry_recurrence", "recurrence_key": key, "measure": "per_day", "since": "created_at"},
+        "baseline": {"count": n, "per_day": per_day},
+        "target": f"< {round(per_day * 0.3, 3)}",
+        "target_num": round(per_day * 0.3, 3),
+        "priority": round(min(1.0, per_day / 5), 3),
+    }
+
+
+def coagency_rejection(oc, since=None):
+    """(rejected/dropped/refused/blocked, decided) for proposals decided after `since` (default 30 days ago)."""
+    since = since or datetime.now(timezone.utc) - timedelta(days=30)
+    oc.execute("SELECT count(*) FILTER (WHERE status IN ('rejected','dropped','refused','blocked')), count(*) "
+               "FROM coagency_proposals WHERE decided_at > %s "
+               "AND status IN ('rejected','dropped','refused','blocked','approved','executed','acknowledged')",
+               (since,))
+    bad, n = oc.fetchone()
+    return int(bad or 0), int(n or 0)
+
+
+def detect_coagency_rejection(oc):
+    """Proposals she files that get rejected/dropped are noise she asks someone else to clear."""
+    try:
+        bad, n = coagency_rejection(oc)
+    except Exception:
+        return None
+    if n < 10 or bad / n < 0.3:
+        return None
+    rate = round(bad / n, 3)
+    return {
+        "weakness": (f"my proposals miss: {bad} of {n} decided in 30 days were rejected, dropped or refused "
+                     f"({rate:.0%})."),
+        "evidence": {"signal": "coagency_proposals", "rejected": bad, "decided": n, "rate": rate},
+        "metric": "share of my co-agency proposals decided SINCE this commitment that were rejected/dropped/refused; "
+                  "lower is better",
+        "metric_spec": {"kind": "coagency_rejection", "measure": "rate", "since": "created_at"},
+        "baseline": {"rejected": bad, "decided": n, "rate": rate},
+        "target": f"< {round(rate * 0.6, 3)}",
+        "target_num": round(rate * 0.6, 3),
+        "priority": round(rate * 0.8, 3),
+    }
+
+
+def detect_hotwash_recurring(oc):
+    """The same after-action finding filed again and again (hotwash kind+subject) is a lesson not yet applied."""
+    try:
+        oc.execute("SELECT kind, subject, count(*), sum(weight) FROM hotwash "
+                   "WHERE ts > now() - make_interval(days => %s) AND fix_kind <> 'none' AND status <> 'declined' "
+                   "GROUP BY 1, 2 HAVING count(*) >= 3 ORDER BY 4 DESC LIMIT 1", (OPS_WINDOW_DAYS,))
+        r = oc.fetchone()
+    except Exception:
+        return None
+    if not r:
+        return None
+    kind, subj, n, w = r[0], r[1], int(r[2]), int(r[3] or 0)
+    per_day = round(w / OPS_WINDOW_DAYS, 3)
+    return {
+        "weakness": (f"a hotwash finding I keep re-filing: {kind} on {subj} — {n} reviews, weight {w} in "
+                     f"{OPS_WINDOW_DAYS} days ({per_day}/day) and still open."),
+        "evidence": {"signal": "hotwash", "kind": kind, "subject": subj, "reviews": n, "weight": w},
+        "metric": f"hotwash weight/day for {kind} on {subj} SINCE this commitment; lower is better",
+        "metric_spec": {"kind": "hotwash_weight", "hw_kind": kind, "subject": subj, "measure": "per_day",
+                        "since": "created_at"},
+        "baseline": {"reviews": n, "weight": w, "per_day": per_day},
+        "target": f"< {round(per_day * 0.3, 3)}",
+        "target_num": round(per_day * 0.3, 3),
+        "priority": round(min(1.0, per_day / 10), 3),
+    }
+
+
+def detect_gateway_failures(oc):
+    """Chat turns with people that fell to the rescue path or the canned failure reply."""
+    try:
+        oc.execute("SELECT count(*) FILTER (WHERE backend_used ILIKE '%%rescue%%' OR response IS NULL "
+                   "OR response ILIKE 'Something went wrong%%'), count(*) FROM gateway_traces "
+                   "WHERE created_at > now() - make_interval(days => %s) AND coalesce(person,'service') NOT IN ('service','claude')",
+                   (OPS_WINDOW_DAYS,))
+        bad, n = oc.fetchone()
+    except Exception:
+        return None
+    if n < 20 or bad / n < 0.05:
+        return None
+    rate = round(bad / n, 3)
+    return {
+        "weakness": f"my chat fails people: {bad} of {n} turns in {OPS_WINDOW_DAYS} days fell to rescue/failure.",
+        "evidence": {"signal": "gateway_traces", "failed": bad, "turns": n, "rate": rate},
+        "metric": "share of chat turns with people SINCE this commitment that fell to rescue/failure; lower is better",
+        "metric_spec": {"kind": "gateway_failure_rate", "measure": "rate", "since": "created_at"},
+        "baseline": {"failed": bad, "turns": n, "rate": rate},
+        "target": f"< {round(rate * 0.5, 3)}",
+        "target_num": round(rate * 0.5, 3),
+        "priority": round(min(1.0, rate * 3), 3),
+    }
+
+
 DETECTORS = [detect_calibration, detect_incident_recurrence, detect_scoreboard_regression,
-             detect_autonomy_progress]
+             detect_autonomy_progress, detect_failing_task, detect_telemetry_recurrence,
+             detect_coagency_rejection, detect_hotwash_recurring, detect_gateway_failures]
 
 
 # ── Re-measurement (the proof-of-change engine) ─────────────────────────────────
@@ -372,6 +547,44 @@ def remeasure(oc, spec, baseline, created_at):
                     None, bool(spec.get("lower_better", True)))
         return ({"scoreboard_id": r[0], "value": round(r[1], 3), "ts": r[2].isoformat()},
                 float(r[1]), bool(spec.get("lower_better", True)))
+
+    days = max((datetime.now(timezone.utc) - created_at).total_seconds() / 86400.0, 1e-6) if created_at else 1.0
+
+    if kind == "task_failure_rate":
+        since_ms = int(created_at.timestamp() * 1000)
+        f, n = task_failure_rate(oc, spec.get("task"), since_ms)
+        if n < MIN_SAMPLE:
+            return ({"note": "too few runs since the commitment", "runs": n}, None, True)
+        return ({"failed": f, "runs": n, "rate": round(f / n, 3)}, round(f / n, 3), True)
+
+    if kind == "telemetry_recurrence":
+        oc.execute("SELECT count(*) FROM telemetry.incidents WHERE recurrence_key=%s AND opened_at > %s",
+                   (spec.get("recurrence_key"), created_at))
+        cnt = int(oc.fetchone()[0])
+        per_day = round(cnt / days, 3)
+        return ({"count_since": cnt, "days": round(days, 2), "per_day": per_day}, per_day, True)
+
+    if kind == "coagency_rejection":
+        bad, n = coagency_rejection(oc, created_at)
+        if n < MIN_SAMPLE:
+            return ({"note": "too few proposals decided since the commitment", "decided": n}, None, True)
+        return ({"rejected": bad, "decided": n, "rate": round(bad / n, 3)}, round(bad / n, 3), True)
+
+    if kind == "hotwash_weight":
+        oc.execute("SELECT coalesce(sum(weight), 0) FROM hotwash WHERE kind=%s AND subject=%s AND ts > %s",
+                   (spec.get("hw_kind"), spec.get("subject"), created_at))
+        w = int(oc.fetchone()[0])
+        per_day = round(w / days, 3)
+        return ({"weight_since": w, "days": round(days, 2), "per_day": per_day}, per_day, True)
+
+    if kind == "gateway_failure_rate":
+        oc.execute("SELECT count(*) FILTER (WHERE backend_used ILIKE '%%rescue%%' OR response IS NULL "
+                   "OR response ILIKE 'Something went wrong%%'), count(*) FROM gateway_traces "
+                   "WHERE created_at > %s AND coalesce(person,'service') NOT IN ('service','claude')", (created_at,))
+        bad, n = oc.fetchone()
+        if n < 10:
+            return ({"note": "too few chat turns since the commitment", "turns": n}, None, True)
+        return ({"failed": bad, "turns": n, "rate": round(bad / n, 3)}, round(bad / n, 3), True)
 
     return ({"note": f"unknown metric_spec kind '{kind}'"}, None, True)
 
