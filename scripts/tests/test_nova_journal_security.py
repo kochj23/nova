@@ -191,3 +191,23 @@ class TestFrame(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_breaking_key_ignores_timestamps_ips_and_counters():
+    import nova_journal_security as j
+    a = j.breaking_key("IPS: attack_response: Oct 16 00:30:44 Rack14-UDMPro src=142.251.45.1")
+    b = j.breaking_key("IPS: attack_response: Oct 15 18:30:44 Rack14-UDMPro src=142.250.1.9")
+    assert a == b and a.startswith("bk-")
+    assert j.breaking_key("IPS: trojan beacon") != a
+
+
+def test_breaking_alert_skips_a_repeat_within_a_week(tmp_path, monkeypatch):
+    import nova_journal_security as j
+    monkeypatch.setattr(j, "CONTENT_DIR", tmp_path)
+    key = j.breaking_key("IPS: exploit: rule X")
+    (tmp_path / "old.md").write_text(f'---\ntags: ["breaking-alert", "{key}"]\n---\nbody')
+    called = []
+    monkeypatch.setattr(j, "call_llm", lambda *a, **k: called.append(1) or "")
+    j.generate_breaking_alert("IPS: exploit: rule X", "details")
+    assert called == []                       # never reached the model, nothing published
+    assert j.recently_published(j.breaking_key("IPS: something new")) is None

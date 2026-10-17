@@ -148,6 +148,8 @@ def scan_new(cur, origin_ref=None):
         if p.name.startswith("_"): continue
         fm = frontmatter(remote[1] if remote else p.read_text(errors="ignore"))
         if re.search(r"^draft:\s*true", fm, re.M): continue
+        # machine-fired security alerts are not episodes: 37 UDM false positives went to YouTube by 2026-10-16
+        if re.search(r'^tags:.*"breaking-alert"', fm, re.M): continue
         d = re.search(r"^date:\s*(\S+)", fm, re.M)
         if not d: continue
         cur.execute("SELECT %s::timestamptz >= %s::timestamptz", (d.group(1), RULE_SINCE))

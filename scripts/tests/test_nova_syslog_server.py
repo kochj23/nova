@@ -32,7 +32,7 @@ import nova_syslog_server as m  # noqa: E402
 # so ordering never leaks state (e.g. a brute-force counter bleeding across tests).
 
 _MUTABLE_DICTS = [
-    "_recent_alerts", "_auth_failures", "_scan_events",
+    "_recent_alerts", "_journaled", "_auth_failures", "_scan_events",
     "_device_event_counts", "_device_hour_count", "_crash_events",
     "_crash_storm_last_alert", "_crash_storm_confirm",
     "_lateral_scans", "_sensitive_access",
@@ -716,6 +716,36 @@ class TestFunctional(_HouseCase):
         _run(m.db_writer(dbq, pool))
         row = pool.conn.calls[0][1][0]
         self.assertEqual((row[1], row[9], row[13], row[17]), ("udm", "firewall", "192.168.1.50", True))
+
+    def test_unifi_cef_feed_false_positive_is_silent(self):
+        # 2026-10-16: Nova's own az4n6 feed fetch tripped ET ATTACK_RESPONSE every 6 h -> 32 breaking articles
+        raw = (b"<14>Oct 16 16:04:00 Rack14-UDMPro CEF:0|Ubiquiti|UniFi Network|10.6.106|201|Threat Detected and "
+               b"Blocked|7|UNIFIcategory=Security spt=80 dpt=43218 act=blocked UNIFIrisk=medium UNIFIdirection=incoming "
+               b"src=142.251.45.1 dst=192.168.1.2 UNIFIdstDomain=az4n6.blogspot.com UNIFIipsSignature=ET ATTACK_RESPONSE "
+               b"PowerShell NoProfile Command Received In Powershell Stagers UNIFIipsSignatureId=2026988 msg=blocked.")
+        events, notify, popen = self._detect(raw)
+        t = events[0]["_threat"]
+        self.assertEqual((t["src_addr"], t["dst_addr"], t["action"], t["severity_level"]),
+                         ("142.251.45.1", "192.168.1.2", "blocked", "warning"))
+        self.assertTrue(t["signature"].startswith("2026988 ET ATTACK_RESPONSE"))
+        notify.assert_not_called(); popen.assert_not_called()
+
+    def test_udm_rule_load_error_is_not_a_threat(self):
+        raw = (b'<11>Oct  5 00:17:47 Rack14-UDMPro ubios-udapi-server[3596124]: E: detect: error parsing signature '
+               b'"drop sip any any -> $HOME_NET 5060 (msg:\"ET EXPLOIT HP Poly VVX 450\"; sid:2071511;)"')
+        events, notify, popen = self._detect(raw)
+        self.assertNotIn("_threat", events[0])
+        notify.assert_not_called(); popen.assert_not_called()
+
+    def test_repeat_critical_hours_apart_journals_once_per_day(self):
+        a = b"<34>Oct 11 00:30:44 udm kernel: ET TROJAN beacon SRC=192.168.1.50 DST=8.8.8.8 SPT=1 DPT=2"
+        b = b"<34>Oct 11 06:30:44 udm kernel: ET TROJAN beacon SRC=192.168.1.50 DST=8.8.8.8 SPT=1 DPT=2"
+        _, _, popen = self._detect(a)
+        m._recent_alerts.clear()                       # the 5-minute page dedup has long expired by 06:30
+        _, notify, popen2 = self._detect(b)
+        popen.assert_called_once()
+        notify.assert_called_once()                    # still paged
+        popen2.assert_not_called()                     # but no second breaking article
 
     def test_external_inbound_block_is_stored_silently(self):
         raw = b"<34>Oct 11 22:14:15 udm kernel: [FW-BLOCK] SRC=203.0.113.9 DST=192.168.1.6 SPT=9 DPT=22"

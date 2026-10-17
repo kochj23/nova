@@ -92,7 +92,7 @@ FEEDS = [
     ("https://news4hackers.com/feed/", "intelligence", "news4hackers"),
     ("https://www.zscaler.com/blogs/feeds", "intelligence", "zscaler"),
     ("https://threatrecon.nshc.net/feed/", "intelligence", "threatrecon"),
-    ("http://az4n6.blogspot.com/feeds/posts/default", "intelligence", "az4n6"),
+    ("https://az4n6.blogspot.com/feeds/posts/default", "intelligence", "az4n6"),
     # -- Ethical-hacking / offensive-security researcher blogs (added 2026-07-05, liveness-checked) --
     ("https://enigma0x3.net/feed/", "intelligence", "enigma0x3"),
     ("http://feeds.feedburner.com/GynvaelColdwindPL", "intelligence", "GynvaelColdwindPL"),

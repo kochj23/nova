@@ -51,6 +51,7 @@ QUEUE_MAX = 10_000
 BATCH_SIZE = 100
 BATCH_INTERVAL = 1.0
 DEDUP_WINDOW = 300
+JOURNAL_DEDUP_WINDOW = 24 * 3600   # one journal article per distinct threat per day, whatever the syslog repeats
 RETENTION_DAYS = 90
 THREAT_RETENTION_DAYS = 365
 BRUTE_THRESHOLD = 5
@@ -143,8 +144,16 @@ AUTH_PATTERNS = [
     re.compile(r"FAILED LOGIN .+ FROM (\S+)", re.IGNORECASE),
 ]
 
-IP_RE = re.compile(r"SRC=(\d+\.\d+\.\d+\.\d+).*DST=(\d+\.\d+\.\d+\.\d+)")
-PORT_RE = re.compile(r"SPT=(\d+).*DPT=(\d+)")
+# iptables writes SRC=/DST=, UniFi CEF writes src=/dst= (2026-10-16: the uppercase-only pattern made every UDM IPS
+# event "Source Unknown", which skipped the inbound-external filter and fired 44 breaking articles).
+IP_RE = re.compile(r"\bSRC=(\d+\.\d+\.\d+\.\d+).*?\bDST=(\d+\.\d+\.\d+\.\d+)", re.IGNORECASE)
+PORT_RE = re.compile(r"\bSPT=(\d+).*?\bDPT=(\d+)", re.IGNORECASE)
+CEF_KV_RE = re.compile(r"(\w+)=(.*?)(?=\s\w+=|$)")
+UNIFI_RISK = {"critical": "critical", "high": "critical", "medium": "warning", "low": "info"}
+SYSLOG_PREFIX_RE = re.compile(r"^\w{3}\s+\d+\s+[\d:]+\s+\S+\s+")
+# The UDM logs its own Suricata rule-load failures ("E: detect: error parsing signature \"... ET EXPLOIT ...\"").
+# That is a config error on the gateway, not traffic: 12 nightly "exploit" breaking articles until 2026-10-16.
+RULE_LOAD_ERROR_RE = re.compile(r"error parsing signature|detect: error", re.IGNORECASE)
 
 # ── Anomaly Detection Rules ───────────────────────────────────────────────────
 
@@ -324,9 +333,50 @@ def parse_syslog(data: bytes, addr: tuple) -> dict:
 
 # ── Threat Detection ──────────────────────────────────────────────────────────
 
+def parse_unifi_cef(msg: str) -> dict | None:
+    """UniFi 'CEF:0|Ubiquiti|...' threat line -> threat dict from its own fields (signature id, risk, src/dst,
+    direction, action, destination domain). None for any other line. Pure."""
+    if "|Ubiquiti|" not in msg or "UNIFIipsSignature" not in msg:   # parse_syslog may split "CEF:" off as app_name
+        return None
+    kv = dict(CEF_KV_RE.findall(msg.split("|")[-1]))
+    sig, sid = kv.get("UNIFIipsSignature", "").strip(), kv.get("UNIFIipsSignatureId", "").strip()
+    act = kv.get("act", "").strip().lower() or "unknown"
+    risk = kv.get("UNIFIrisk", "").strip().lower()
+
+    def _int(v):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return None
+    return {
+        "threat_type": "ips",
+        "signature": f"{sid} {sig}".strip() + (f" ({kv['UNIFIdstDomain'].strip()})" if kv.get("UNIFIdstDomain") else ""),
+        "action": act,
+        "direction": "inbound" if kv.get("UNIFIdirection", "").strip() == "incoming" else "outbound",
+        "src_addr": kv.get("src", "").strip() or None,
+        "dst_addr": kv.get("dst", "").strip() or None,
+        "src_port": _int(kv.get("spt")),
+        "dst_port": _int(kv.get("dpt")),
+        "severity_level": UNIFI_RISK.get(risk, "warning"),
+    }
+
+
+def threat_key(threat: dict, event: dict) -> tuple:
+    """Dedup identity of a threat: signature with timestamps/counters removed, plus source. Pure."""
+    sig = SYSLOG_PREFIX_RE.sub("", threat.get("signature") or "")
+    sig = re.sub(r"\d{1,2}:\d{2}(:\d{2})?|\b\d+\b", "N", sig)[:120]
+    return (sig, threat.get("src_addr") or event.get("source_ip"))
+
+
 def detect_threat(event: dict) -> dict | None:
     """Check if a syslog event contains a security threat. Returns threat metadata or None."""
     msg = event["message"]
+
+    if RULE_LOAD_ERROR_RE.search(msg):
+        return None
+    cef = parse_unifi_cef(msg)
+    if cef:
+        return cef
 
     # IPS/IDS signature match
     for pattern, threat_name, severity in IPS_RULES:
@@ -335,7 +385,7 @@ def detect_threat(event: dict) -> dict | None:
             port_m = PORT_RE.search(msg)
             return {
                 "threat_type": "ips",
-                "signature": threat_name + ": " + msg[:200],
+                "signature": threat_name + ": " + SYSLOG_PREFIX_RE.sub("", msg)[:200],
                 "action": "blocked",
                 "direction": "inbound",
                 "src_addr": ip_m.group(1) if ip_m else None,
@@ -603,11 +653,9 @@ def detect_anomaly(event: dict) -> dict | None:
 
 def should_alert(threat: dict, event: dict) -> bool:
     """Check dedup window — only alert once per (signature_prefix, src) per DEDUP_WINDOW."""
-    sig = threat["signature"][:60]
-    # Normalize lateral scan sigs so "hit 5 ports" vs "hit 9 ports" dedup together
-    if threat.get("threat_type") == "lateral_movement":
-        sig = re.sub(r"hit \d+ ports", "hit N ports", sig)
-    sig_key = (sig, threat.get("src_addr") or event.get("source_ip"))
+    # threat_key drops timestamps and counters: the raw [:60] prefix began with the syslog timestamp, so no two
+    # repeats ever matched (and "hit 5 ports" / "hit 9 ports" now normalise together too)
+    sig_key = threat_key(threat, event)
     now = time.time()
     last = _recent_alerts.get(sig_key)
     if last and now - last < DEDUP_WINDOW:
@@ -801,7 +849,7 @@ async def threat_detector(queue: asyncio.Queue, db_queue: asyncio.Queue):
                           "threat_type": threat.get("threat_type")},
                 )
 
-                if severity == "critical":
+                if severity == "critical" and should_journal(threat, event):
                     _fire_journal_alert(threat, event)
 
         # Forward to DB writer
@@ -809,6 +857,18 @@ async def threat_detector(queue: asyncio.Queue, db_queue: asyncio.Queue):
             db_queue.put_nowait(event)
         except asyncio.QueueFull:
             pass
+
+
+_journaled: dict = {}
+
+
+def should_journal(threat: dict, event: dict) -> bool:
+    """A breaking journal article at most once per distinct threat per JOURNAL_DEDUP_WINDOW."""
+    key, now = threat_key(threat, event), time.time()
+    if now - _journaled.get(key, 0) < JOURNAL_DEDUP_WINDOW:
+        return False
+    _journaled[key] = now
+    return True
 
 
 def _fire_journal_alert(threat: dict, event: dict):

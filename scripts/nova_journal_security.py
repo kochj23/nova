@@ -429,9 +429,38 @@ Write the PDB. If a section has no significant activity, mark it NOSIG and move 
 
 # ── Breaking Alert ────────────────────────────────────────────────────────────
 
+BREAKING_DEDUP_DAYS = 7
+
+
+def breaking_key(trigger: str) -> str:
+    """Stable identity of a breaking trigger: syslog timestamps, IPs and counters removed, hashed. Pure."""
+    import hashlib
+    t = re.sub(r"\b\d{1,3}(\.\d{1,3}){3}\b|\d{1,2}:\d{2}(:\d{2})?|\d+", "N", (trigger or "").lower())
+    t = re.sub(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b|\s+", " ", t).strip()
+    return "bk-" + hashlib.sha1(t.encode()).hexdigest()[:10]
+
+
+def recently_published(key: str, days: int = BREAKING_DEDUP_DAYS) -> Path | None:
+    """An operations article tagged `key` published in the last `days` days, else None."""
+    cutoff = time.time() - days * 86400
+    for f in CONTENT_DIR.glob("*.md"):
+        try:
+            if f.stat().st_mtime >= cutoff and f'"{key}"' in f.read_text(errors="ignore")[:1500]:
+                return f
+        except OSError:
+            continue
+    return None
+
+
 def generate_breaking_alert(trigger: str, details: str):
-    """Generate an immediate breaking security alert."""
+    """Generate an immediate breaking security alert — once per distinct trigger per BREAKING_DEDUP_DAYS
+    (2026-10-16: two harmless UDM log lines became 44 'BREAKING' articles in 13 days)."""
     log(f"=== BREAKING ALERT: {trigger} ===")
+    key = breaking_key(trigger)
+    prior = recently_published(key)
+    if prior:
+        log(f"breaking alert skipped: same trigger already published as {prior.name} (key {key})")
+        return
 
     # Gather context
     context_memories = recall_memories(trigger, n=15, source="intelligence")
@@ -513,7 +542,7 @@ Only include confirmed information; flag uncertainty explicitly. Never ask for a
 
     import re as _re
     source_slug = _re.sub(r'[^a-z0-9]+', '-', trigger.lower()).strip('-')[:40]
-    tags = ["breaking-alert", source_slug, "security"]
+    tags = ["breaking-alert", source_slug, "security", key]
     description = f"BREAKING: {trigger[:100]}"
     publish_hugo(title, body, tags, description, image_path=img_path, is_breaking=True)
     notify(title, body[:200], is_breaking=True)
