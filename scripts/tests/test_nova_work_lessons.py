@@ -122,7 +122,9 @@ def _ops():
                  ("FROM problems", []), ("FROM preoccupations", [(2, "horology", "interest")]),
                  ("FROM herd_correspondents", []), ("FROM beliefs WHERE active AND article_slug", []),
                  ("FROM beliefs WHERE topic", None), ("INSERT INTO beliefs", (901,)),
-                 ("FROM taste", None), ("INSERT INTO taste", (77,)), ("FROM claude_sessions", None)])
+                 ("FROM taste", None), ("INSERT INTO taste", (77,)), ("FROM claude_sessions", None),
+                 ("INSERT INTO belief_candidates", (555,)), ("FROM belief_candidates", []),
+                 ("FROM beliefs b LEFT JOIN belief_vectors", [])])
 
 
 class TestSecurity(unittest.TestCase):
@@ -324,20 +326,23 @@ class TestIntegration(unittest.TestCase):
         out = wl.fetch_chunks(mc, {"work_key": wl.film_key("Kwai"), "mem_ids": ["m0", "m1", "m2", "m3"]})
         self.assertEqual([c["id"] for c in out], ["m0", "m1", "m2", "m3"])
 
-    def test_belief_uses_sleep_cycle_evidence_and_strengthens_duplicates(self):
+    def test_belief_uses_sleep_cycle_evidence_and_becomes_a_candidate(self):
+        """2026-10-17: a lesson is offered to nova_beliefs as a candidate (ranked + distilled later), with the
+        sleep-cycle evidence (memory id + verbatim quote); an unquoted lesson is never offered."""
         srcs = [{"text": "plot"}, {"text": PASSAGE, "mem": "m1"}]
         lesson = {"lesson": "Nicholson's pride in a job done well blinds him [2].", "cites": [2], "topic": "pride",
                   "quote": "a job done well proves the battalion still has", "quote_source": 2}
         oc = _ops()
-        bid, how = wl.book_belief(oc, lesson, srcs, "Kwai", "film:k", "lesson-mem-1")
-        self.assertEqual((bid, how), (901, "new"))
-        ins = next(p for s, p in zip(oc.sql, oc.params) if "INSERT INTO beliefs" in s)
-        self.assertIn("memory:m1", ins[4])
-        self.assertTrue(any(e.startswith("quote:") for e in ins[4]))
-        oc2 = _ops()
-        bid, how = wl.book_belief(oc2, lesson, srcs, "Kwai", "film:k", None,
-                                  pool=[(5, "pride", "Nicholson's pride in a job done well blinds him")])
-        self.assertEqual((bid, how), (5, "strengthened"))
+        with mock.patch("nova_beliefs.embed", return_value=None):
+            bid, how = wl.book_belief(oc, lesson, srcs, "Kwai", "film:k", "lesson-mem-1", credibility="fiction",
+                                      fit=3, kind="film")
+        self.assertEqual((bid, how), (555, "pending"))
+        ins = next(p for s, p in zip(oc.sql, oc.params) if "INSERT INTO belief_candidates" in s)
+        self.assertEqual(ins[0], "work_lessons")
+        self.assertIn("memory:m1", ins[8])
+        self.assertTrue(any(e.startswith("quote:") for e in ins[8]))
+        self.assertEqual(ins[9], "fiction")
+        self.assertFalse(any("INSERT INTO beliefs" in s for s in oc.sql))     # never booked directly any more
         bad = dict(lesson, quote="words that are not there at all")
         self.assertEqual(wl.book_belief(_ops(), bad, srcs, "Kwai", "film:k", None)[0], None)
 
@@ -356,7 +361,8 @@ class TestFunctional(unittest.TestCase):
             r = wl.read_work(oc, mc, wl.work_from_key(wl.film_key("Kwai"), "tv_transcript"))
         self.assertEqual(r["status"], "done")
         self.assertEqual(r["memory_id"], "lesson-mem-1")
-        self.assertEqual(r["beliefs"][0]["how"], "new")
+        self.assertEqual(r["beliefs"][0]["how"], "pending")
+        self.assertEqual((r["beliefs"][0]["id"], r["beliefs"][0]["candidate"]), (None, 555))
         self.assertEqual(r["proposal"]["proposal_id"], 321)
         self.assertEqual(fake_co.file_proposal.call_args.args[1], "growth")
         self.assertEqual(r["taste"], 77)

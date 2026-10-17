@@ -1283,24 +1283,30 @@ tasks:
     schedule: every 30m
     timeout: 2700
     overlap: skip
+  belief_promote:                  # 2026-10-17: lessons are belief CANDIDATES; every 2h the best of them (generality, novelty, relevance, credibility, independent sources) are restated by the local 30B and booked/revised/reinforced within the hour's share of the 50/day cap; nova_beliefs.py, belief_candidates
+    script: nova_beliefs.py
+    args: ["--promote"]
+    schedule: cron 50 */2 * * *
+    timeout: 1500
+    overlap: skip
   work_lessons_consolidate:        # weekly: merge near-duplicate work beliefs (superseded, never deleted)
     script: nova_work_lessons.py
     args: ["--consolidate"]
     schedule: cron 30 4 * * 0
     timeout: 900
     overlap: skip
-  growth_loop:                     # Nova grows from her reading (Jordan 2026-10-16): 3 different works pointing at one part of her -> an earned practice in her chat context + a gated co-agency proposal; nova_practices / growth_signals
-    script: nova_growth_loop.py
-    schedule: every 30m
-    timeout: 900
-    overlap: skip
-  finetune_weekly:                 # Sunday 01:30: LoRA on qwen3-8B from earned practices + lessons + her real replies; deployed as nova-grown:<date> ONLY if it beats the current model (practice >= 60%, voice >= 45%); nova_finetune.py, finetune_runs
   ops_lessons:                     # Nova learns from her OWN operations (2026-10-17): hotwash AARs, postmortems, recurring incidents, failing jobs, finished claude_queue items, decided proposals, failed chat turns -> local qwen3:30b lessons -> belief candidates (nova_beliefs, origin ops) + growth_signals for the growth loop; ledger ops_lessons, watermark service_config ops_lessons/watermark
     script: nova_ops_lessons.py
     schedule: every 2h
     timeout: 1500
     overlap: skip
     group: llm
+  growth_loop:                     # Nova grows from her reading (Jordan 2026-10-16): 3 different works pointing at one part of her -> an earned practice in her chat context + a gated co-agency proposal; nova_practices / growth_signals
+    script: nova_growth_loop.py
+    schedule: every 30m
+    timeout: 900
+    overlap: skip
+  finetune_weekly:                 # Sunday 01:30: LoRA on qwen3-8B from earned practices + lessons + her real replies; deployed as nova-grown:<date> ONLY if it beats the current model (practice >= 60%, voice >= 45%); nova_finetune.py, finetune_runs
     script: nova_finetune.py
     args: ["--weekly"]
     schedule: cron 30 1 * * 0

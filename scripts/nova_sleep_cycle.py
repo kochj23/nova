@@ -556,6 +556,12 @@ def phase_taste(mc, oc):
         verdict = (p.get("verdict") or "").strip()
         if not subject or not verdict:
             continue
+        try:                                       # 2026-10-17: a number or 'no opinion' is not a verdict
+            import nova_beliefs
+            if not nova_beliefs.verdict_ok(verdict):
+                log(f"taste: dropped '{subject}' — verdict is not an opinion ({verdict[:40]})"); continue
+        except ImportError:
+            pass
         domain = (p.get("domain") or "").strip().lower() or None
         try:
             valence = max(-1.0, min(1.0, float(p.get("valence", 0))))
@@ -581,7 +587,7 @@ def phase_taste(mc, oc):
                   f"\"{quote[:180]}\" → {verdict}")[:400]
         else:  # no fragment match but model supplied a concrete quote
             ev = f"{TODAY} · encounter: \"{enc[:180]}\" → {verdict}"[:400]
-        oc.execute("SELECT id FROM taste WHERE lower(subject)=lower(%s)", (subject,))
+        oc.execute("SELECT id FROM taste WHERE lower(subject)=lower(%s) AND retired_at IS NULL", (subject,))
         row = oc.fetchone()
         if row:
             oc.execute("UPDATE taste SET last_reinforced=now(), "

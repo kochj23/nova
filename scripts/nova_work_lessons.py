@@ -521,8 +521,9 @@ def mapping_prompt(title: str, lessons: list[str], selfmap: list[tuple[str, str]
                    overused: set[str] | None = None, judge_source: bool = False, kind: str = "") -> str:
     les = "\n".join(f"L{i}. {ps._CITE.sub('', x).strip()}" for i, x in enumerate(lessons, 1))
     me = "\n".join(f"{k} — {d}" for k, d in selfmap)
-    taste = ('"taste": {"verdict": "<one dry sentence: your own opinion of the work, grounded in the lessons>", '
-             '"valence": <-1.0..1.0>}, ') if verdict else ""
+    taste = ('"taste": {"verdict": "<one dry sentence: your own opinion of the WORK itself — its craft, honesty, '
+             'what it gets right or wrong — or null if you have no real opinion; never whether it applies to you>", '
+             '"valence": <a number -1.0..1.0>}, ') if verdict else ""
     cred = '"credibility": {"level": "established|opinion|fringe|fiction", "why": "<short reason>"}, ' \
         if judge_source else ""
     what = f"the {kind} " if kind else ""
@@ -530,8 +531,9 @@ def mapping_prompt(title: str, lessons: list[str], selfmap: list[tuple[str, str]
             f"Your own world (key — what it is):\n{me}\n\n"
             "For EACH lesson decide honestly whether its MECHANISM matches how ONE item above actually works. "
             "If it does, give that item's exact key and one sentence 'what this means for me': first person, "
-            "naming the item, that CONCLUDES — a concrete change ('so my <item> should also <do X>') or a "
-            "confirmation ('I already <do Y> in <item> — this confirms it') — never a question. Look for the GAP first: "
+            "naming the item, that CONCLUDES with a concrete change ('so my <item> should also <do X>') — never a question. "
+            "A bare confirmation ('I already do this') teaches you nothing: if the item truly already covers it, prefer "
+            "ref null. Look for the GAP first: "
             "what does the lesson's failure need that the item, as described, does not yet do? Confirm only when "
             "the description plainly already covers it — 'I already do it' is how you stop growing. Do NOT restate the "
             "lesson and do NOT invent duties an item does not have; RED LINE items are things you never do alone, "
@@ -857,7 +859,7 @@ def validate_connections(obj: dict, n_lessons: int, keys: set[str], cap: int = M
         if ref and ref.startswith("redline:") and _CLAIMS_DOING.search(meaning):
             ref = None                     # a red line is what she does NOT do alone; 'I already run it' is false
         if ref and len(meaning) > 15 and "?" not in meaning and ref not in (overused or set()) and fit >= 2:
-            by[i], fits[i] = {"lesson": i, "ref": ref, "meaning": meaning}, fit
+            by[i], fits[i] = {"lesson": i, "ref": ref, "meaning": meaning, "fit": int(fit)}, fit
     keep = sorted(by, key=lambda i: (-fits[i], i))[:cap]
     null = {"ref": None, "meaning": "noted; nothing for me"}
     return [by[i] if i in keep else {"lesson": i, **null} for i in range(1, n_lessons + 1)]
@@ -1670,11 +1672,16 @@ _BELIEF_LOCK = threading.Lock()
 
 
 def book_belief(oc, lesson: dict, srcs: list[dict], title: str, work_key: str, lesson_mid: str | None,
-                pool: list | None = None, confidence: float = 0.6) -> tuple[int | None, str]:
+                pool: list | None = None, credibility: str = "unknown", fit: int = 1,
+                kind: str | None = None) -> tuple[int | None, str]:
     """nova_sleep_cycle's rule: evidence = the source chunk's memory id + a verbatim quote that is in it.
-    A near-duplicate of an existing work belief STRENGTHENS it (evidence appended, confidence up) instead of
-    booking a new one; a new one counts against the daily cap. Returns (belief id, 'new'|'strengthened'|why)."""
+    2026-10-17: the lesson is OFFERED as a belief candidate (nova_beliefs.add_candidate), not booked: the
+    promoter ranks the day's candidates by value (generality, novelty, relevance, credibility, independent
+    sources), restates the best as general beliefs, and revises/reinforces near-duplicates by embedding.
+    A restatement of an active belief reinforces it at once. Returns (id, 'pending'|'merged'|'reinforced:<id>'|
+    'rejected: why'|why unevidenced)."""
     from nova_sleep_cycle import belief_evidence
+    import nova_beliefs
     order = [lesson.get("quote_source")] + list(lesson.get("cites") or [])
     ev, why = [], "no source chunk with a memory id"
     for k in order:
@@ -1686,38 +1693,17 @@ def book_belief(oc, lesson: dict, srcs: list[dict], title: str, work_key: str, l
     if not ev:
         return None, why or "unevidenced"
     ev = ev + ([f"memory:{lesson_mid}"] if lesson_mid else []) + [f"work:{work_key}"[:240]]
-    stance = ps._CITE.sub("", lesson["lesson"]).strip()
-    topic = (lesson.get("topic") or " ".join(sorted(tokens(stance))[:5]) or "work lesson")[:80]
     with _BELIEF_LOCK:
-        oc.execute("SELECT id, topic, stance FROM beliefs WHERE active AND article_slug LIKE %s "
-                   "ORDER BY id DESC LIMIT 5000", ("work_lessons:%",))
-        rows = pool if pool is not None else (oc.fetchall() or [])
-        best = max(rows, key=lambda r: similarity(stance, r[2]), default=None)
-        if best and (similarity(stance, best[2]) >= SIM_MERGE or best[1] == topic):
-            oc.execute("UPDATE beliefs SET evidence = (SELECT array_agg(DISTINCT e) FROM unnest(coalesce(evidence,'{}') "
-                       "|| %s::text[]) e), confidence = least(0.95, confidence + 0.03), last_revised = now() "
-                       "WHERE id = %s", (ev, best[0]))
-            return best[0], "strengthened"
-        if not take_cap(oc, "beliefs"):
-            return None, "daily belief cap reached"
-        oc.execute("SELECT id, stance FROM beliefs WHERE topic=%s AND active", (topic,))
-        row = oc.fetchone()
-        if row and row[1] == stance:
-            return row[0], "exists"
-        oc.execute("INSERT INTO beliefs (topic, stance, confidence, article_slug, evidence) VALUES (%s,%s,%s,%s,%s) "
-                   "RETURNING id", (topic, stance, confidence, f"work_lessons:{title}"[:200], ev))
-        new_id = oc.fetchone()[0]
-        if row:
-            oc.execute("UPDATE beliefs SET active=false, superseded_by=%s, last_revised=now() WHERE id=%s",
-                       (new_id, row[0]))
-        return new_id, "new"
+        return nova_beliefs.add_candidate(oc, "work_lessons", work_key, title, lesson["lesson"], ev,
+                                          topic=lesson.get("topic"), credibility=credibility, fit=fit, kind=kind,
+                                          quote=lesson.get("quote"))
 
 
 def write_taste(oc, title: str, kind: str, verdict: str, valence: float, enc_mem: str | None, quote: str):
     """The sleep-cycle taste upsert; evidence carries the encounter (memory id + quote) per the herd rule."""
     ev = (f"{TODAY} · encountered in {title} [mem {enc_mem}]: \"{quote[:180]}\" → {verdict}" if enc_mem
           else f"{TODAY} · read {title} (work lessons): \"{quote[:180]}\" → {verdict}")[:400]
-    oc.execute("SELECT id FROM taste WHERE lower(subject)=lower(%s)", (title,))
+    oc.execute("SELECT id FROM taste WHERE lower(subject)=lower(%s) AND retired_at IS NULL", (title,))
     row = oc.fetchone()
     if row:
         oc.execute("UPDATE taste SET last_reinforced=now(), confidence=least(1.0, confidence + 0.07), valence=%s, "
@@ -1843,6 +1829,9 @@ def read_work(oc, mc, work: dict, dry_run: bool = False, transcript: str | None 
         conns = no_links(conns)
     taste = mj.get("taste") if isinstance(mj.get("taste"), dict) else {}
     verdict = ps._CITE.sub("", str(taste.get("verdict") or "")).strip()[:240]
+    import nova_beliefs
+    if not nova_beliefs.verdict_ok(verdict):      # 2026-10-17: '-1.0' / 'not applicable to Nova' is no opinion
+        verdict = ""
     cred, cwhy = credibility(kind, title, work.get("series"), mj)
     res.update(connections=conns, verdict=verdict, status="done", credibility=cred, credibility_why=cwhy)
     text = cred_header(cred, cwhy) + render_memory(title, kind, year, rd, conns, verdict, srcs)
@@ -1900,8 +1889,10 @@ def _write_back(oc, res, rd, conns, srcs, title, kind, work, mj, verdict, taste,
     for c in connected[:MAX_BELIEFS_PER_WORK]:
         try:
             bid, how = book_belief(oc, rd["lessons"][c["lesson"] - 1], srcs, title, work["work_key"], res["memory_id"],
-                                   confidence=0.5 if cred == "opinion" else 0.6)
-            res["beliefs"].append({"lesson": c["lesson"], "id": bid, "how": how})
+                                   credibility=cred, fit=int(c.get("fit") or 2), kind=kind)
+            # belief_ids only ever holds real belief ids: a pending candidate is linked when it is promoted
+            real = bid if str(how).startswith("reinforced:") else None
+            res["beliefs"].append({"lesson": c["lesson"], "id": real, "candidate": None if real else bid, "how": how})
         except Exception as e:  # noqa: BLE001
             log(f"belief not booked ({e})")
     prop = mj.get("proposal") if isinstance(mj.get("proposal"), dict) else None
@@ -2233,6 +2224,45 @@ def _row(r) -> dict:
     return dict(zip([c.strip() for c in COLS.split(",")], r))
 
 
+# 2026-10-17 source mix: 33 Yankee Workshop episodes (and 673 TV episodes) in one day crowded out manuals, books
+# and research. A series that already gave SERIES_DAY_CAP works in the last 24h, or a source above
+# SOURCE_DAY_SHARE of them, waits while anything else is queued; within a priority, high-value kinds go first.
+SERIES_DAY_CAP = 6
+SOURCE_DAY_SHARE = 0.15
+SOURCE_DAY_MIN = 40
+KIND_RANK = ["research", "book", "document", "manual", "lecture", "documentary", "film", "article", "video",
+             "reference", "tv_episode", "cluster"]
+_HOT = {"at": 0.0, "series": [], "sources": []}
+
+
+def hot_filter(series_counts: dict, source_counts: dict, cap: int = SERIES_DAY_CAP, share: float = SOURCE_DAY_SHARE,
+               min_n: int = SOURCE_DAY_MIN) -> tuple[list[str], list[str]]:
+    """(series, sources) that have had their share of the last 24h. Pure."""
+    total = sum(source_counts.values()) or 1
+    series = sorted(k for k, n in series_counts.items() if k and n >= cap)
+    sources = sorted(k for k, n in source_counts.items() if k and n >= min_n and n / total > share)
+    return series, sources
+
+
+def hot_keys(oc) -> tuple[list[str], list[str]]:
+    """hot_filter over the last 24h, cached 10 minutes (one GROUP BY per 10 min, not per claim). Fails open."""
+    if time.time() - _HOT["at"] < 600:
+        return _HOT["series"], _HOT["sources"]
+    try:
+        oc.execute("SELECT coalesce(series,''), source, count(*) FROM work_lessons WHERE processed_at > now() - "
+                   "interval '24 hours' GROUP BY 1, 2")
+        ser, src = {}, {}
+        for se, so, n in oc.fetchall() or []:
+            ser[se] = ser.get(se, 0) + n
+            src[so] = src.get(so, 0) + n
+        _HOT["series"], _HOT["sources"] = hot_filter(ser, src)
+    except Exception as e:  # noqa: BLE001
+        log(f"hot series unavailable ({e})")
+        _HOT["series"], _HOT["sources"] = [], []
+    _HOT["at"] = time.time()
+    return _HOT["series"], _HOT["sources"]
+
+
 def claim(oc, tiers: tuple[str, ...], run_tag: str, kind: str | None = None, source: str | None = None,
           only_new: bool = False) -> list[dict]:
     """Claim the top queued unit among `tiers`: one work (A) or its related group (B/C). SKIP LOCKED.
@@ -2243,11 +2273,19 @@ def claim(oc, tiers: tuple[str, ...], run_tag: str, kind: str | None = None, sou
         extra += " AND kind = %s"; params.append(kind)
     if source:
         extra += " AND source = %s"; params.append(source)
-    oc.execute("UPDATE work_lessons SET status='running', started_at=now(), attempts=attempts+1, run_tag=%s "
-               "WHERE work_key = (SELECT work_key FROM work_lessons WHERE status='queued' AND tier = ANY(%s)" + extra +
-               " ORDER BY array_position(%s::text[], tier), priority, recall DESC, last_seen DESC NULLS LAST "
-               "LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING " + COLS, [run_tag] + params + [list(tiers)])
-    r = oc.fetchone()
+    hot_s, hot_src = hot_keys(oc) if not (kind or source) else ([], [])
+    r = None
+    for diverse in ((True, False) if (hot_s or hot_src) else (False,)):
+        mix = (" AND coalesce(series,'') <> ALL(%s) AND source <> ALL(%s)" if diverse else "")
+        oc.execute("UPDATE work_lessons SET status='running', started_at=now(), attempts=attempts+1, run_tag=%s "
+                   "WHERE work_key = (SELECT work_key FROM work_lessons WHERE status='queued' AND tier = ANY(%s)" +
+                   extra + mix + " ORDER BY array_position(%s::text[], tier), priority, "
+                   "coalesce(array_position(%s::text[], kind), 99), recall DESC, last_seen DESC NULLS LAST "
+                   "LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING " + COLS,
+                   [run_tag] + params + ([hot_s, hot_src] if diverse else []) + [list(tiers), KIND_RANK])
+        r = oc.fetchone()
+        if r:
+            break
     if not r:
         return []
     first = _row(r)
