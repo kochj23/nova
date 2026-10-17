@@ -71,6 +71,19 @@ struct ClusterSnapshot: Codable, Equatable {
         var now_reading: [Reading]?
         var tonight: Tonight?
     }
+    /// What the node's LLM is doing, as the hub words it (2026-10-17): always present on a current hub.
+    /// state: running | idle | none (no LLM on the machine) | silent (probe not reporting).
+    struct LLMJob: Codable, Equatable {
+        struct Last: Codable, Equatable {
+            var text: String?
+            var at: String?
+        }
+        var state: String?
+        var text: String?
+        var jobs: [String]?
+        var model: String?
+        var last: Last?
+    }
     struct Node: Codable, Equatable, Identifiable {
         var node: String
         var live: Bool?
@@ -93,6 +106,15 @@ struct ClusterSnapshot: Codable, Equatable {
         var minion: Minion?
         var tok_s_total: Double?
         var today: Usage?
+        /// Core purpose of the machine (minion_nodes.purpose, e.g. "PG standby · Mosquitto · embeddings").
+        var purpose: String?
+        /// The other name the machine goes by (mac-studio = nova-core8).
+        var alias: String?
+        var display_name: String?
+        var ip: String?
+        /// false when the probe found no LLM server on the machine at all.
+        var llm: Bool?
+        var llm_job: LLMJob?
         var id: String { node }
         var isLive: Bool { live ?? false }
     }
@@ -174,10 +196,18 @@ final class ClusterModel {
     private var task: Task<Void, Never>?
     @ObservationIgnored private var seenEvents = Set<String>()
     @ObservationIgnored private var primed = false
-    private static let cacheKey = "cluster.cache.v1"
+    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private let session: URLSession
+    @ObservationIgnored private let config: () -> ClusterConfig
+    static let cacheKey = "cluster.cache.v1"
 
-    init() {
-        if let data = UserDefaults.standard.data(forKey: Self.cacheKey),
+    /// `defaults`, `session` and `config` are injectable so tests use a throwaway suite and a stubbed network.
+    init(defaults: UserDefaults = .standard, session: URLSession = .shared,
+         config: @escaping () -> ClusterConfig = { ClusterConfig.current }) {
+        self.defaults = defaults
+        self.session = session
+        self.config = config
+        if let data = defaults.data(forKey: Self.cacheKey),
            let snap = try? JSONDecoder().decode(ClusterSnapshot.self, from: data) {
             snapshot = snap
         }
@@ -198,25 +228,25 @@ final class ClusterModel {
     func restart() { stop(); failures = 0; start() }
 
     func pollOnce() async {
-        let cfg = ClusterConfig.current
+        let cfg = config()
         guard let url = cfg.clusterURL else {
             failures += 1; lastError = "not configured"; return
         }
         var req = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 3)
         if !cfg.token.isEmpty { req.setValue(cfg.token, forHTTPHeaderField: "X-Minion-Token") }
         do {
-            let (data, resp) = try await URLSession.shared.data(for: req)
+            let (data, resp) = try await session.data(for: req)
             guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
                 throw URLError(.badServerResponse)
             }
             var snap = try JSONDecoder().decode(ClusterSnapshot.self, from: data)
-            if UserDefaults.standard.bool(forKey: "demoBusy") { snap = Self.demoBusy(snap) }
+            if defaults.bool(forKey: "demoBusy") { snap = Self.demoBusy(snap) }
             ingestEvents(snap.allEvents)
             ticker.update(today: snap.totals?.today?.tokens, allTime: snap.totals?.all_time?.tokens,
                           rate: snap.totals?.tok_s_total ?? snap.totals?.tok_s)
             if snap != snapshot { snapshot = snap }
             if Int(Date().timeIntervalSince1970) % 30 < 2 {
-                UserDefaults.standard.set(data, forKey: Self.cacheKey)
+                defaults.set(data, forKey: Self.cacheKey)
             }
             failures = 0; lastError = nil; lastSuccess = Date()
         } catch {

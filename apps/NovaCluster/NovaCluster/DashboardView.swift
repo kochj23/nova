@@ -195,7 +195,7 @@ struct DashboardScreen<Mark: View>: View {
                     #else
                     VStack(alignment: .trailing, spacing: 12 * u) {
                         HStack(alignment: .top) { TokenHero(ticker: cluster.ticker, u: u, compact: true, paused: paused); Spacer(); mark(u) }
-                        cards(u: u, columns: landscape ? 4 : 3, activityLines: 2)
+                        cards(u: u, columns: landscape ? 4 : 3, activityLines: 1)
                     }
                     .padding(.horizontal, 22 * u)
                     .padding(.top, 18 * u)
@@ -261,6 +261,12 @@ struct MachineCard: View {
                 Text(s.name)
                     .font(.system(size: 16 * u, weight: .semibold, design: .monospaced))
                     .foregroundStyle(hue.color()).lineLimit(1)
+                    .layoutPriority(2)
+                if let alias = NodeLines.alias(n) {
+                    Text("(\(alias))")
+                        .font(.system(size: 11.5 * u, design: .monospaced))
+                        .foregroundStyle(hue.color(0.6)).lineLimit(1).truncationMode(.tail)
+                }
                 Spacer(minLength: 6 * u)
                 if s.live {
                     let tok = n.tok_s_total ?? n.tok_s ?? 0
@@ -272,6 +278,7 @@ struct MachineCard: View {
             Text(roleLine)
                 .font(.system(size: 11 * u, weight: .medium)).tracking(1.5 * u)
                 .foregroundStyle(roleColor.opacity(0.85)).lineLimit(1)
+            NodeRoleLines(node: n, u: u, size: 12)
             Text("\(Fmt.chip(n.chip)) · \(Fmt.os(n.os)) · \(Fmt.gb(n.free_gb))/\(Fmt.gb(n.mem_gb)) GB")
                 .font(.system(size: 11 * u, design: .monospaced)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
             Text(s.moons.isEmpty ? "no models loaded" : s.moons.map { ModelHue.short($0.model) }.joined(separator: " · "))
@@ -286,16 +293,17 @@ struct MachineCard: View {
                 if lines.isEmpty {
                     Text(s.live ? "  waiting for work…" : "  —").font(mono).foregroundStyle(.white.opacity(0.3))
                 } else {
-                    let shown = lines.count > self.lines ? self.lines - 1 : self.lines
+                    let shown = lines.count > self.lines ? max(1, self.lines - 1) : self.lines
                     ForEach(Array(lines.prefix(shown).enumerated()), id: \.offset) { i, l in
                         TypedLine(text: l, first: i == 0, u: u)
                     }
-                    if lines.count > shown {
+                    if lines.count > shown && self.lines > 1 {
                         Text("  + \(lines.count - shown) more").font(mono).foregroundStyle(.white.opacity(0.32))
                     }
                 }
             }
-            .frame(minHeight: CGFloat(self.lines) * 18 * u, alignment: .topLeading)
+            .frame(height: CGFloat(self.lines) * 18 * u, alignment: .topLeading)
+            .clipped()
             .padding(.top, 2 * u)
         }
         .padding(.horizontal, 13 * u)
@@ -312,6 +320,11 @@ struct MachineCard: View {
                     .strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
         )
         .opacity(s.live ? 1 : 0.6)
+        .contentShape(RoundedRectangle(cornerRadius: 14 * u, style: .continuous))
+        #if os(iOS)
+        // Long-press a card for the untruncated job + purpose.
+        .contextMenu { Text(NodeLines.detail(n)) }
+        #endif
     }
 
     private var roleLine: String {

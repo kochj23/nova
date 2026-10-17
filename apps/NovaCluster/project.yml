@@ -55,6 +55,7 @@ targets:
         DEVELOPMENT_TEAM: QRRCB8HB3W
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         DEAD_CODE_STRIPPING: YES
+    scheme: {}
 
   # Native macOS window onto the same cluster map — shares every source in NovaCluster/.
   NovaClusterMac:
@@ -96,3 +97,25 @@ targets:
         ENABLE_HARDENED_RUNTIME: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         DEAD_CODE_STRIPPING: YES
+    scheme:
+      testTargets:
+        - NovaClusterTests
+
+  # Logic + layout tests. Not hosted in the app (no window, no live hub, no real UserDefaults/Keychain):
+  # the sources under test are compiled straight into the bundle.
+  NovaClusterTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests
+      - path: NovaCluster/Cluster.swift
+      - path: NovaCluster/ClusterConfig.swift
+      - path: NovaCluster/NodeLines.swift
+      - path: NovaCluster/Palette.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.digitalnoise.NovaClusterTests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: QRRCB8HB3W

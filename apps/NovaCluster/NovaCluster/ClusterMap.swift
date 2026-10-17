@@ -135,9 +135,9 @@ struct MapGeometry {
         let ring = stations.filter { !$0.isHub }
         let n = max(1, ring.count)
         // Labels sit outside the ring (above for the upper half, below for the lower),
-        // so the ring keeps ~150 pt of headroom for them top and bottom.
+        // so the ring keeps ~165 pt of headroom for them top and bottom (7 fixed lines).
         let rx = max(160 * u, size.width / 2 - 118 * u)
-        let ry = max(150 * u, (size.height * 0.5 - 146 * u) / 0.92)
+        let ry = max(150 * u, (size.height * 0.5 - 164 * u) / 0.92)
         for (i, s) in ring.enumerated() {
             let a = (-90 + 180 / Double(n) + Double(i) * 360 / Double(n)) * .pi / 180
             pts[s.name] = CGPoint(x: c.x + rx * CGFloat(cos(a)), y: c.y + ry * CGFloat(sin(a)))
@@ -204,6 +204,7 @@ struct ClusterMapView: View {
     }
 
     private static let cometLife = 2.3
+    private static let stationKey = "station:"
 
     private func draw(_ ctx: inout GraphicsContext, size: CGSize, now: Date) {
         let stations = map.stations
@@ -267,6 +268,9 @@ struct ClusterMapView: View {
         resolvePointer(hits: hits, g: g, now: now)
         if let key = pointer.selectedKey, let h = hits.first(where: { $0.0.key == key }) {
             drawTooltip(&ctx, h.0, h.1, at: h.2, g: g, size: size)
+        } else if let key = pointer.selectedKey, key.hasPrefix(Self.stationKey),
+                  let s = stations.first(where: { Self.stationKey + $0.name == key }), let p = g.points[s.name] {
+            drawStationTooltip(&ctx, s, at: p, g: g, size: size)
         }
     }
 
@@ -276,6 +280,14 @@ struct ClusterMapView: View {
             for (m, _, p) in hits {
                 let d = hypot(p.x - q.x, p.y - q.y) - m.radius * g.u
                 if d < 18 * g.u, d < (best?.1 ?? .infinity) { best = (m.key, d) }
+            }
+            if best == nil {
+                // Not on a moon: the station itself (its full LLM job + purpose).
+                for s in map.stations {
+                    guard let p = g.points[s.name] else { continue }
+                    let d = hypot(p.x - q.x, p.y - q.y) - g.coreRadius(s)
+                    if d < 16 * g.u, d < (best?.1 ?? .infinity) { best = (Self.stationKey + s.name, d) }
+                }
             }
             return best?.0
         }
@@ -451,6 +463,27 @@ struct ClusterMapView: View {
         }
     }
 
+    private func drawStationTooltip(_ ctx: inout GraphicsContext, _ s: StationVM, at p: CGPoint, g: MapGeometry, size: CGSize) {
+        let u = g.u
+        let rr = g.coreRadius(s) + 7 * u
+        ctx.stroke(Path(ellipseIn: CGRect(x: p.x - rr, y: p.y - rr, width: rr * 2, height: rr * 2)),
+                   with: .color(.white.opacity(0.7)), lineWidth: 1 * u)
+        let text = Text(NodeLines.detail(s.node))
+            .font(.system(size: 11.5 * u, design: .monospaced))
+            .foregroundColor(Palette.text)
+        let resolved = ctx.resolve(text)
+        let ts = resolved.measure(in: CGSize(width: 440 * u, height: 400 * u))
+        let pad = 10 * u
+        var box = CGRect(x: p.x + rr + 8 * u, y: p.y - ts.height / 2 - pad, width: ts.width + pad * 2, height: ts.height + pad * 2)
+        if box.maxX > size.width - 6 { box.origin.x = p.x - rr - 8 * u - box.width }
+        box.origin.x = max(6, box.origin.x)
+        box.origin.y = min(max(6, box.origin.y), size.height - box.height - 6)
+        let shape = Path(roundedRect: box, cornerRadius: 9 * u, style: .continuous)
+        ctx.fill(shape, with: .color(Color.black.opacity(0.88)))
+        ctx.stroke(shape, with: .color(s.hue.color(0.55)), lineWidth: 1)
+        ctx.draw(resolved, in: box.insetBy(dx: pad, dy: pad))
+    }
+
     private func drawTooltip(_ ctx: inout GraphicsContext, _ m: MoonVM, _ s: StationVM, at p: CGPoint, g: MapGeometry, size: CGSize) {
         let u = g.u
         let rr = m.radius * u + 7 * u
@@ -529,32 +562,34 @@ struct StationLabel: View {
     private var mono: Font { .system(size: 11 * u, design: .monospaced) }
 
     var body: some View {
+        // Always the same lines in the same order (one line each), so a label never changes height and the
+        // map never jumps: name, LLM job, purpose, chip · OS, memory, traffic, tonight / models.
         VStack(spacing: 2.5 * u) {
             HStack(spacing: 7 * u) {
                 Text(s.name)
                     .font(.system(size: (s.isHub ? 15 : 13.5) * u, weight: .semibold, design: .monospaced))
                     .foregroundStyle(s.hue.mixed(toWhite: 0.15).color())
+                    .layoutPriority(2)
+                if let alias = NodeLines.alias(n) {
+                    Text("(\(alias))")
+                        .font(.system(size: 10.5 * u, design: .monospaced))
+                        .foregroundStyle(s.hue.mixed(toWhite: 0.15).color(0.6))
+                        .layoutPriority(1)
+                }
                 badge
             }
             .lineLimit(1)
-            if !s.live {
-                Text("silent \(Fmt.ago(n.age_s ?? 0))")
-                    .font(mono).foregroundStyle(Palette.alert.opacity(0.8))
-            }
+            NodeRoleLines(node: n, u: u, size: 11, alignment: .center)
             Text("\(Fmt.chip(n.chip)) · \(Fmt.os(n.os))")
                 .font(mono).foregroundStyle(.white.opacity(0.42)).lineLimit(1)
             Text("\(Fmt.gb(n.free_gb))/\(Fmt.gb(n.mem_gb)) GB free · load \(Fmt.one(n.load))")
                 .font(mono).foregroundStyle(.white.opacity(0.42)).lineLimit(1)
             trafficLine
             if let m = n.minion {
-                if let job = jobText(m) {
-                    Text(job).font(mono).foregroundStyle(Palette.terminal.opacity(0.9))
-                        .lineLimit(1).truncationMode(.tail)
-                }
                 Text(tonight(m.tonight))
                     .font(mono).foregroundStyle(Palette.text.opacity(0.62)).lineLimit(1)
-            } else if !s.moons.isEmpty {
-                Text(s.moons.map { ModelHue.short($0.model) }.joined(separator: " · "))
+            } else {
+                Text(s.moons.isEmpty ? "no models loaded" : s.moons.map { ModelHue.short($0.model) }.joined(separator: " · "))
                     .font(.system(size: 10.5 * u, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.36)).lineLimit(1).truncationMode(.tail)
             }
@@ -591,18 +626,6 @@ struct StationLabel: View {
             .font(.system(size: 11 * u, weight: hot ? .semibold : .regular, design: .monospaced))
             .foregroundStyle(hot ? Palette.warm : .white.opacity(0.5))
             .lineLimit(1)
-    }
-
-    /// "› reading: The Godfather · mapping +1" / "› transcribing: <episode>"; nil when waiting.
-    private func jobText(_ m: ClusterSnapshot.Minion) -> String? {
-        let r = m.now_reading ?? []
-        guard let first = r.first else { return nil }
-        let phase = (first.phase ?? "reading").lowercased()
-        let title = first.title ?? "…"
-        let more = r.count > 1 ? " +\(r.count - 1)" : ""
-        if phase == "transcribing" { return "› transcribing: \(title)\(more)" }
-        if phase == "reading" { return "› reading: \(title)\(more)" }
-        return "› \(phase): \(title)\(more)"
     }
 
     private func tonight(_ t: ClusterSnapshot.Tonight?) -> String {

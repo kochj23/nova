@@ -33,6 +33,23 @@ flowchart LR
     CL -- "JSON every 2 s<br/>X-Minion-Token" --> Pad["Nova Cluster<br/>(iPad)"]
 ```
 
+## Every machine: LLM job + purpose (both views)
+
+Each station label (map) and machine card (dashboard) always carries two fixed-height lines:
+
+1. **▸ LLM job** — the hub's `llm_job.text`: the job that sent the request now on this machine's LLM
+   (`nova_notifier @ mac-studio → qwen3:8b · generating 52 tok`, `reading: <work>`,
+   `transcribing (whisper): <episode>`), else `Idle · last: … · 4m ago`, `Idle · 2 models loaded`,
+   `No LLM on this node` or `Silent · probe last heard …`. Jobs come from the probes' connection tables
+   joined at the hub (script/app names only) and from `minion_activity` — never guessed; a busy slot
+   whose caller can't be matched says `caller not identified`.
+2. **Core purpose** — `minion_nodes.purpose` in PG (e.g. `PG standby · Mosquitto · embeddings`). The
+   name shows the alias too: `mac-studio (nova-core8)` (`minion_nodes.alias`). Change either with an
+   `UPDATE minion_nodes …`; the app picks it up on the next poll.
+
+Lines truncate; the full text is on hover (Mac), tap a station on the map (both), or long-press a
+dashboard card (iPad).
+
 ## Two views
 
 Tap the wordmark to switch (Mac: **View › Cluster Map ⌘1 / Dashboard ⌘2**, or
@@ -124,3 +141,5 @@ lands. Measured on the M3 Ultra at 1440×900 with live traffic: about 24–28 % 
 | `NovaCluster/Palette.swift` | palette, model-family hues, formatting, dust |
 | `NovaCluster/ClusterConfig.swift` | hub/node/token storage, deep links |
 | `NovaClusterMac/MacSettings.swift` | macOS Settings window |
+| `NovaCluster/NodeLines.swift` | the per-machine LLM-job + purpose lines (text, cleaning, fixed-height view) |
+| `Tests/NodeLinesTests.swift` | XCTest, 7 categories (`xcodebuild -scheme NovaClusterMac test`; not app-hosted) |

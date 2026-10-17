@@ -9,10 +9,13 @@
 /* Begin PBXBuildFile section */
 		05466FD4003B614F068C1EC6 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A49C3E6C79225425EF4D2D19 /* Assets.xcassets */; };
 		1787256FFD39386EE3AEDB0E /* MacSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 170C4889C16562313989172B /* MacSettings.swift */; };
+		1971F20E1C07C1D5385086EC /* NodeLinesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2028B71DFC8AF1B259B7D4A3 /* NodeLinesTests.swift */; };
 		43CEB11962D4E65D62500C0F /* Cluster.swift in Sources */ = {isa = PBXBuildFile; fileRef = C39A9ACD991F51B4B62E164E /* Cluster.swift */; };
 		49D65C334CEECD7A038FF43B /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9125D25D592C3C4A77303531 /* Views.swift */; };
 		4CD93514B7B612EA84F5D475 /* ClusterConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD81C272AC09022CFF3383D7 /* ClusterConfig.swift */; };
+		5BA8BF79C75461D03DEAB51C /* NodeLines.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5B8178B5F9959A6DD1BF24 /* NodeLines.swift */; };
 		647AE03B21E362DD0B2B472D /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C08C85821DFE82FC434B3C5 /* DashboardView.swift */; };
+		691A846B7A287BF5F3923C79 /* Palette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 700FE44BE3D2E67271438271 /* Palette.swift */; };
 		6B644FACA4B4E9E59980E493 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 07D292F2558B56C3E618E442 /* Assets.xcassets */; };
 		6F34B03F14F37FF1C2143227 /* NovaClusterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CADB3C72F3259EE50E0893B /* NovaClusterApp.swift */; };
 		7CA52776663E0C511416FC20 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9125D25D592C3C4A77303531 /* Views.swift */; };
@@ -20,21 +23,28 @@
 		9C98E7F5A58B0D46F3183295 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C08C85821DFE82FC434B3C5 /* DashboardView.swift */; };
 		A7DD4B8784BA1261B641376C /* Cluster.swift in Sources */ = {isa = PBXBuildFile; fileRef = C39A9ACD991F51B4B62E164E /* Cluster.swift */; };
 		A9F9EB6A9CF09F585ADF6C76 /* Palette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 700FE44BE3D2E67271438271 /* Palette.swift */; };
+		C773B41E3A2F121B27779A0E /* NodeLines.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5B8178B5F9959A6DD1BF24 /* NodeLines.swift */; };
 		D13CA4888B46747A75EFE0B9 /* NovaClusterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CADB3C72F3259EE50E0893B /* NovaClusterApp.swift */; };
 		D67D28AC5D24119849E6C0B3 /* ClusterMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4647A44D805423ED4850D6D /* ClusterMap.swift */; };
+		D9EC7E22CB0FE60C8CEA6E87 /* ClusterConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD81C272AC09022CFF3383D7 /* ClusterConfig.swift */; };
 		E9B152E78CC029F2F8DC3A57 /* Palette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 700FE44BE3D2E67271438271 /* Palette.swift */; };
 		FA7AA9622CAB5CF7E953AAE4 /* ClusterConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD81C272AC09022CFF3383D7 /* ClusterConfig.swift */; };
+		FC68F9138BE671A204B34237 /* NodeLines.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5B8178B5F9959A6DD1BF24 /* NodeLines.swift */; };
+		FD07102827296372A44EF6F5 /* Cluster.swift in Sources */ = {isa = PBXBuildFile; fileRef = C39A9ACD991F51B4B62E164E /* Cluster.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		07D292F2558B56C3E618E442 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		170C4889C16562313989172B /* MacSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSettings.swift; sourceTree = "<group>"; };
+		2028B71DFC8AF1B259B7D4A3 /* NodeLinesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeLinesTests.swift; sourceTree = "<group>"; };
+		5AE6ACA02422ADEE69F2BF7E /* NovaClusterTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NovaClusterTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		700FE44BE3D2E67271438271 /* Palette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Palette.swift; sourceTree = "<group>"; };
 		8C08C85821DFE82FC434B3C5 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
 		9125D25D592C3C4A77303531 /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views.swift; sourceTree = "<group>"; };
 		9CADB3C72F3259EE50E0893B /* NovaClusterApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaClusterApp.swift; sourceTree = "<group>"; };
 		A49C3E6C79225425EF4D2D19 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		ACA7F39CD05736028AF22DD1 /* NovaClusterMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NovaClusterMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AD5B8178B5F9959A6DD1BF24 /* NodeLines.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeLines.swift; sourceTree = "<group>"; };
 		AD81C272AC09022CFF3383D7 /* ClusterConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterConfig.swift; sourceTree = "<group>"; };
 		C39A9ACD991F51B4B62E164E /* Cluster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cluster.swift; sourceTree = "<group>"; };
 		C4647A44D805423ED4850D6D /* ClusterMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterMap.swift; sourceTree = "<group>"; };
@@ -57,8 +67,17 @@
 			children = (
 				EEDDCA6AC491B96BA0B2037A /* NovaCluster */,
 				5DA54BE4C834311C12D7796C /* NovaClusterMac */,
+				B2F26B1BCF98F829D76A568E /* Tests */,
 				DC509D58FF1DFEFAD4F25A20 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		B2F26B1BCF98F829D76A568E /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				2028B71DFC8AF1B259B7D4A3 /* NodeLinesTests.swift */,
+			);
+			path = Tests;
 			sourceTree = "<group>";
 		};
 		DC509D58FF1DFEFAD4F25A20 /* Products */ = {
@@ -66,6 +85,7 @@
 			children = (
 				ACA7F39CD05736028AF22DD1 /* NovaClusterMac.app */,
 				F156BDC51B34A60ADF576BD9 /* NovaClusterPad.app */,
+				5AE6ACA02422ADEE69F2BF7E /* NovaClusterTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -79,6 +99,7 @@
 				C4647A44D805423ED4850D6D /* ClusterMap.swift */,
 				8C08C85821DFE82FC434B3C5 /* DashboardView.swift */,
 				D722EFD1B4DA8014C032194A /* Info.plist */,
+				AD5B8178B5F9959A6DD1BF24 /* NodeLines.swift */,
 				9CADB3C72F3259EE50E0893B /* NovaClusterApp.swift */,
 				700FE44BE3D2E67271438271 /* Palette.swift */,
 				9125D25D592C3C4A77303531 /* Views.swift */,
@@ -106,6 +127,23 @@
 			productName = NovaClusterPad;
 			productReference = F156BDC51B34A60ADF576BD9 /* NovaClusterPad.app */;
 			productType = "com.apple.product-type.application";
+		};
+		36E6C94739203B48E254DD1D /* NovaClusterTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 54D2B9C6E959E8F6AFE41DCE /* Build configuration list for PBXNativeTarget "NovaClusterTests" */;
+			buildPhases = (
+				EB211E2FDB2F95CCB7FD3C5E /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NovaClusterTests;
+			packageProductDependencies = (
+			);
+			productName = NovaClusterTests;
+			productReference = 5AE6ACA02422ADEE69F2BF7E /* NovaClusterTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 		CE4DFF91809660EA002A6843 /* NovaClusterMac */ = {
 			isa = PBXNativeTarget;
@@ -138,6 +176,10 @@
 						DevelopmentTeam = QRRCB8HB3W;
 						ProvisioningStyle = Automatic;
 					};
+					36E6C94739203B48E254DD1D = {
+						DevelopmentTeam = QRRCB8HB3W;
+						ProvisioningStyle = Automatic;
+					};
 					CE4DFF91809660EA002A6843 = {
 						DevelopmentTeam = QRRCB8HB3W;
 						ProvisioningStyle = Automatic;
@@ -160,6 +202,7 @@
 			targets = (
 				0C5ECC1D5ED2476C2256A99D /* NovaClusterPad */,
 				CE4DFF91809660EA002A6843 /* NovaClusterMac */,
+				36E6C94739203B48E254DD1D /* NovaClusterTests */,
 			);
 		};
 /* End PBXProject section */
@@ -193,6 +236,7 @@
 				D67D28AC5D24119849E6C0B3 /* ClusterMap.swift in Sources */,
 				647AE03B21E362DD0B2B472D /* DashboardView.swift in Sources */,
 				1787256FFD39386EE3AEDB0E /* MacSettings.swift in Sources */,
+				C773B41E3A2F121B27779A0E /* NodeLines.swift in Sources */,
 				D13CA4888B46747A75EFE0B9 /* NovaClusterApp.swift in Sources */,
 				E9B152E78CC029F2F8DC3A57 /* Palette.swift in Sources */,
 				49D65C334CEECD7A038FF43B /* Views.swift in Sources */,
@@ -207,9 +251,22 @@
 				4CD93514B7B612EA84F5D475 /* ClusterConfig.swift in Sources */,
 				81FDFDDEC2FFB97BAE2713F6 /* ClusterMap.swift in Sources */,
 				9C98E7F5A58B0D46F3183295 /* DashboardView.swift in Sources */,
+				5BA8BF79C75461D03DEAB51C /* NodeLines.swift in Sources */,
 				6F34B03F14F37FF1C2143227 /* NovaClusterApp.swift in Sources */,
 				A9F9EB6A9CF09F585ADF6C76 /* Palette.swift in Sources */,
 				7CA52776663E0C511416FC20 /* Views.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EB211E2FDB2F95CCB7FD3C5E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FD07102827296372A44EF6F5 /* Cluster.swift in Sources */,
+				D9EC7E22CB0FE60C8CEA6E87 /* ClusterConfig.swift in Sources */,
+				FC68F9138BE671A204B34237 /* NodeLines.swift in Sources */,
+				1971F20E1C07C1D5385086EC /* NodeLinesTests.swift in Sources */,
+				691A846B7A287BF5F3923C79 /* Palette.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -271,6 +328,25 @@
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		1214E9F292BB47D4EDAC789B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = QRRCB8HB3W;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.digitalnoise.NovaClusterTests;
+				SDKROOT = macosx;
 			};
 			name = Release;
 		};
@@ -361,6 +437,25 @@
 			};
 			name = Debug;
 		};
+		95F85E336490C83922583E90 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				DEVELOPMENT_TEAM = QRRCB8HB3W;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.digitalnoise.NovaClusterTests;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
 		AA0C2A841376266B682B0DD7 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -428,6 +523,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		54D2B9C6E959E8F6AFE41DCE /* Build configuration list for PBXNativeTarget "NovaClusterTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				95F85E336490C83922583E90 /* Debug */,
+				1214E9F292BB47D4EDAC789B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		61E8A6F4F7F52B32B26F256D /* Build configuration list for PBXNativeTarget "NovaClusterPad" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
