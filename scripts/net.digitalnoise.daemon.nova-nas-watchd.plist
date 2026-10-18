@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- UNAS->Synology near-real-time replication (nova_nas_watchd.py). Installed by
+     `nova_nas_watchd.py --install`, which fills __HOME__/__DIR__ and copies the code to __DIR__
+     (local disk: the daemon must never read the /Volumes/nas SMB mount). Written by Jordan Koch. -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>net.digitalnoise.daemon.nova-nas-watchd</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>HOME</key>
+		<string>__HOME__</string>
+		<key>PYTHONPATH</key>
+		<string>__DIR__</string>
+		<key>PYTHONUNBUFFERED</key>
+		<string>1</string>
+	</dict>
+	<key>UserName</key>
+	<string>kochj</string>
+	<key>GroupName</key>
+	<string>staff</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/opt/homebrew/bin/python3</string>
+		<string>__DIR__/nova_nas_watchd.py</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>__DIR__</string>
+	<key>KeepAlive</key>
+	<true/>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
+	<key>StandardOutPath</key>
+	<string>__HOME__/.openclaw/logs/nova-nas-watchd.log</string>
+	<key>StandardErrorPath</key>
+	<string>__HOME__/.openclaw/logs/nova-nas-watchd.log</string>
+</dict>
+</plist>

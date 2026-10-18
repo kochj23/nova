@@ -49,6 +49,9 @@ NIGHTLY = {
     "pg_backup": 26,              # nightly 02:00 pg_dump of every DB (runs ~2.5h)
     "studio_state_backup": 26,    # nightly 03:30 Signal/HA/HomeKit state -> NAS
     "restore_drill": 8 * 24 + 2,  # weekly Sun 06:30 restore drill (+1 day grace)
+    # 2026-10-17: the 05:00 UNAS->Synology full diff now exits non-zero on a failed copy. The 15-min
+    # incremental rows keep nova-backup:<share>:% fresh, so a failing nightly full needs this alarm.
+    "nas_localdiff_reverse": 26,
 }
 
 

@@ -46,7 +46,7 @@ SHARES = [
     ("nas",      "/volume1/nas",       "nas"),
     ("external", "/volume1/external",  "External"),
 ]
-PRUNE = r'-name @eaDir -prune -o -name "#recycle" -prune -o -name .snapshot -prune -o'
+PRUNE = r'-name @eaDir -prune -o -name "#recycle" -prune -o -name "#nova_deleted" -prune -o -name .snapshot -prune -o'
 MIN_FILES = 1000
 MAX_DELETE_FRACTION = 0.35     # refuse to delete more than this share of the replica
 

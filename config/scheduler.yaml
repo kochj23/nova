@@ -233,12 +233,30 @@ tasks:
     timeout: 5400
     overlap: skip
 
-  nas_localdiff_reverse:               # UNAS-primary cutover 2026-09-10: REVERSE mirror UNAS->Synology, keeps the Synology a current warm replica now that it's the secondary. Self-defers (aborts cheaply, no writes/scan) while the Synology RAID resyncs, then activates automatically once resync completes. Additive; deletes stay OFF (no --allow-deletes) until we've watched several clean rounds post-resync.
+  # ── UNAS (primary) -> Synology (replica) replication, three layers (2026-10-17, agent_docs design-656-nasbackup §9) ──
+  #   1. net.digitalnoise.daemon.nova-nas-watchd (LaunchDaemon, NOT this scheduler): fanotify watcher on the UNAS,
+  #      copies each file ~60-75 s after it settles. Reconnect/overflow -> catch-up incremental.
+  #   2. nas_reverse_incremental (below, every 15m): find -newermt/-newerct since the last SUCCESSFUL pass
+  #      (marker: service_config nas_replicate/marker:<share>); catches renames + anything the watcher missed.
+  #   3. nas_localdiff_reverse (below, 05:00): full path+size diff, the correctness backstop.
+  # All three share one per-share flock (~/.openclaw/workspace/state/nas_localdiff_reverse/lock_<share>), so they
+  # never rsync concurrently; exit 3 = another layer holds the lock (not a failure). Telemetry: nova-backup:<share>:
+  # reverse | reverse-incr | reverse-watch. Soft deletes (#nova_deleted/<date>/, 30d purge, anti-wipe guards) exist
+  # behind --soft-deletes and are OFF pending Jordan. --allow-deletes (hard delete) stays disabled everywhere.
+  nas_localdiff_reverse:               # UNAS-primary cutover 2026-09-10: REVERSE mirror UNAS->Synology, nightly FULL diff (layer 3). Self-defers (exit 0, no writes) while the Synology RAID resyncs. Additive. 2026-10-17: records real files/bytes (was files=list size, bytes=0); skips files modified <60 s ago; exits 1 on a failed copy. The ~100k files/night it used to report were real new data (frigate NVR ~92k segments/day + pg WAL/dumps), now copied during the day by layers 1-2.
     enabled: true
     script: nova_nas_localdiff_reverse.py
     args: ["--apply"]
     schedule: cron 0 5 * * *
     timeout: 12150
+    overlap: skip
+
+  nas_reverse_incremental:             # layer 2 (2026-10-17): UNAS->Synology incremental every 15 min, both shares. UNAS find at nice 19/ionice idle (~5.5 min on nas). Marker advances only on success. Quiet in Slack unless it fails.
+    enabled: true
+    script: nova_nas_localdiff_reverse.py
+    args: ["--mode", "incremental", "--apply"]
+    schedule: every 15m
+    timeout: 3000
     overlap: skip
 
 

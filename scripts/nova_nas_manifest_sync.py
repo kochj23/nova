@@ -71,6 +71,7 @@ SHARES = [
 EXCLUDE_SEGMENTS = {
     "@eaDir", "#recycle", "#snapshot", ".Spotlight-V100", ".Trashes",
     "@tmp", ".nova-trash", ".DS_Store",
+    "#nova_deleted",   # 2026-10-17: the Synology replica's soft-delete trash (nova_nas_localdiff_reverse)
 }
 
 # Safety defaults (all overridable on the CLI).

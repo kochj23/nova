@@ -45,7 +45,8 @@ JOBS = [
 # recycle bin (deleted backups) counted as "differing" on every run, so the nas share
 # NEVER reached parity (ok=false forever). Anchor with (^|/) and also drop DSM index
 # sidecars (@SynoEAStream / SYNOINDEX_*), which are regenerable metadata, never user data.
-EXCL = re.compile(r"@eaDir|@Syno|SYNOINDEX|(^|/)#recycle|(^|/)#snapshot|\.DS_Store$|\.app/|GoogleDriveBackups/Pics/Pictures/\.com-apple-bird-noname-")
+# 2026-10-17: + #nova_deleted, the Synology replica's soft-delete trash — never copy it back.
+EXCL = re.compile(r"@eaDir|@Syno|SYNOINDEX|(^|/)#recycle|(^|/)#snapshot|(^|/)#nova_deleted(/|$)|\.DS_Store$|\.app/|GoogleDriveBackups/Pics/Pictures/\.com-apple-bird-noname-")
 
 
 def slack(msg):

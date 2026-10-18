@@ -136,7 +136,7 @@ class TestSecurity(unittest.TestCase):
         sc.pg.return_value = "0"
         sc.sh.return_value = (0, "done")
         sc.check_backups(); sc.results.clear(); sc.check_backups()
-        reruns = [c for c in _cmds() if "nova_backup_agent.sh incremental" in " ".join(c)]
+        reruns = [c for c in _cmds() if "nova_nas_localdiff_reverse.py" in " ".join(c)]
         self.assertEqual(len(reruns), 1)
         self.assertEqual(sc.results[-1][2], "rerun already attempted today")
 

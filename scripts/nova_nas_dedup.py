@@ -38,7 +38,8 @@ PROTECTED_DIRS = {"GoogleDriveBackups", "Google-Drive-kochjpar",
 # Absolute-path prefixes that must NEVER be a deletion target, no matter what.
 # Hard, unconditional guard — checked first in protected().
 NEVER_DELETE_PREFIXES = ("/Volumes/NAS/iTunes",)
-SKIP_DIRS = {"#recycle", "@eaDir", ".Trash", "#snapshot", ".TemporaryItems", "#sharesnap"}
+SKIP_DIRS = {"#recycle", "@eaDir", ".Trash", "#snapshot", ".TemporaryItems", "#sharesnap",
+             "#nova_deleted"}  # 2026-10-17: the replica's soft-delete trash (nova_nas_localdiff_reverse)
 MIN_SIZE = 1_048_576          # ignore <1MB — focus on space; skips tiny-file noise
 CHUNK = 65536
 
