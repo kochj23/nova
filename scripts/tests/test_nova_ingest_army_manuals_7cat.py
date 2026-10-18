@@ -42,21 +42,26 @@ def search_pages(*pages):
 
 
 class FakeCur:
-    def __init__(self, seen=(), stored=0):
-        self.seen, self.stored, self.calls, self._r = list(seen), stored, [], None
+    """seen: identifiers (Army, 0 chunks) or full (identifier, title, chunks, service) rows; stored: prior Army
+    chunks; has_service: whether ia_ingest_seen has the service column (nova_ingest_service_manuals.py adds it)."""
+    def __init__(self, seen=(), stored=0, has_service=True):
+        self.rows = [r if isinstance(r, tuple) else (r, f"seen {r}", 0, "army") for r in seen]
+        if stored:
+            self.rows.append(("_prior", "prior run", stored, "army"))
+        self.has_service, self.calls, self._r = has_service, [], None
 
     def execute(self, sql, params=None):
         self.calls.append((sql, params))
-        if sql.startswith("SELECT identifier"):
-            self._r = [(s,) for s in self.seen]
-        elif "sum(chunks)" in sql:
-            self._r = [(self.stored,)]
+        if "information_schema.columns" in sql:
+            self._r = [(1,)] if self.has_service else []
+        elif sql.startswith("SELECT identifier"):
+            self._r = [r if self.has_service else (*r[:3], "army") for r in self.rows]
 
     def fetchall(self):
         return self._r
 
     def fetchone(self):
-        return self._r[0]
+        return self._r[0] if self._r else None
 
 
 class TestSecurity(unittest.TestCase):
@@ -216,6 +221,58 @@ class TestFunctional(unittest.TestCase):
         cur = FakeCur(stored=10 ** 6)
         _, oc = self._run([], cur, [("p", "FM 9", "")])
         oc.assert_not_called()
+
+
+class TestSharedSeenTable(unittest.TestCase):
+    """2026-10-18: ia_ingest_seen is shared with the other services; the Army target and dedup are Army-only."""
+    _run = TestFunctional._run
+
+    def test_other_services_chunks_do_not_count_toward_army_target(self):
+        cur = FakeCur(seen=[("n1", "NAVEDTRA 14325", 50000, "navy"), ("a1", "FM 7-8 Infantry", 2, "army")])
+        _, oc = self._run(["--target", "10"], cur, [("p2", "FM 9-1", "")])
+        oc.assert_called_once_with("p2")
+
+    def test_army_target_counts_army_rows(self):
+        cur = FakeCur(seen=[("a1", "FM 7-8 Infantry", 10, "army")])
+        _, oc = self._run(["--target", "10"], cur, [("p2", "FM 9-1", "")])
+        oc.assert_not_called()
+
+    def test_duplicate_publication_number_skipped(self):
+        cur = FakeCur(seen=[("a1", "FM 21-26 Map Reading 1993", 5, "army")])
+        pubs = [("x1", "FM21-26 Map Reading and Land Navigation", ""), ("x2", "FM 7-8 Infantry", ""),
+                ("x3", "FM 7-8 The Infantry Rifle Platoon (copy)", "")]
+        _, oc = self._run([], cur, pubs)
+        self.assertEqual([c.args[0] for c in oc.call_args_list], ["x2"])
+
+    def test_same_number_under_another_service_not_a_duplicate(self):
+        cur = FakeCur(seen=[("m1", "FM 21-26 Marine copy", 5, "marines")])
+        _, oc = self._run([], cur, [("x1", "FM 21-26 Map Reading", "")])
+        oc.assert_called_once_with("x1")
+
+    def test_new_rows_tagged_army_when_service_column_exists(self):
+        cur = FakeCur()
+        self._run([], cur, [("p", "FM 9", "")])
+        ins = [s for s, _ in cur.calls if s.startswith("INSERT")]
+        self.assertTrue(ins and all("'army'" in s for s in ins))
+
+    def test_legacy_table_without_service_column(self):
+        cur = FakeCur(seen=["s1"], has_service=False)
+        _, oc = self._run([], cur, [("s1", "FM 1", ""), ("p", "FM 9", "")])
+        oc.assert_called_once_with("p")
+        ins = [s for s, _ in cur.calls if s.startswith("INSERT")]
+        self.assertTrue(ins and all("service" not in s for s in ins))
+
+    def test_pub_key_normalises_numbers(self):
+        k = m.pub_key
+        self.assertEqual(k("FM 21-26 Map Reading 1993"), "FM 21-26")
+        self.assertEqual(k("FM21-26 Map Reading"), "FM 21-26")
+        self.assertEqual(k("TM_9-801_Truck_GMC"), "TM 9-801")
+        self.assertEqual(k("Tm9-879HarleyWla"), "TM 9-879")
+        self.assertEqual(k("Technical Manual TM9-1828A Fuel Pumps"), "TM 9-1828A")
+        self.assertEqual(k("FM 3-55.93 Long Range"), "FM 3-55.93")
+        self.assertEqual(k("DA PAM 310-4 Index"), "DA PAM 310-4")
+        self.assertEqual(k("Simple Sabotage Field Manual"), "simple sabotage field manual")
+        self.assertEqual(k(None), "")
 
 
 class TestFrame(unittest.TestCase):

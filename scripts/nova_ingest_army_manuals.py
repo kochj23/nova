@@ -5,6 +5,8 @@ public-domain U.S. Army training publications").
 
 HathiTrust holds the same scans but sits behind a Cloudflare bot check, so the Internet Archive is the
 source. Most-downloaded first; resumable (nova_ops.ia_ingest_seen); stops at --target stored chunks.
+ia_ingest_seen is shared with nova_ingest_service_manuals.py: only Army rows count toward --target, and one
+copy per publication number is stored (2026-10-18; the first run stored ~24 duplicate uploads).
 Usage: nova_ingest_army_manuals.py [--target 50000] [--vector military_doctrine] [--dry-run]
 """
 import argparse
@@ -79,6 +81,18 @@ def search():
     return out
 
 
+PUBNO = re.compile(r"\b(FM|TM|TC|ATP|ADP|ADRP|ATTP|AR|ST|GTA|DA\s*PAM)[\s_-]*(\d+(?:[.\-]\d+)*(?:[A-Z](?![A-Za-z]))?)(?![\d.])", re.I)
+
+
+def pub_key(title):
+    """One key per publication: series + number (e.g. 'FM 21-26'), else the normalised title. Pure.
+    Several Archive uploads of the same manual collapse to one; the first (most downloaded) wins."""
+    m = PUBNO.search(title or "")
+    if m:
+        return f"{re.sub(r'\s+', ' ', m.group(1).upper())} {re.sub(r'[\s_]+', '-', m.group(2).upper()).rstrip('.-')}"
+    return re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
+
+
 def ocr_text(ident):
     ident = urllib.parse.quote(ident, safe="")   # identifiers come from the search API; keep them one path segment
     files = json.loads(get(f"https://archive.org/metadata/{ident}/files")).get("result", [])
@@ -98,12 +112,23 @@ def main():
     oc = _connect(); oc.autocommit = True; cur = oc.cursor()
     cur.execute("""CREATE TABLE IF NOT EXISTS ia_ingest_seen (identifier text PRIMARY KEY, title text,
                    chunks int, at timestamptz DEFAULT now())""")
-    cur.execute("SELECT identifier FROM ia_ingest_seen")
-    seen = {r[0] for r in cur.fetchall()}
-    cur.execute("SELECT coalesce(sum(chunks), 0) FROM ia_ingest_seen")
-    stored = int(cur.fetchone()[0])
+    # The table is shared with nova_ingest_service_manuals.py (service column, NULL = Army): the target counts
+    # Army rows only, and a publication number already stored for the Army is not stored again (2026-10-18).
+    cur.execute("SELECT 1 FROM information_schema.columns WHERE table_name = 'ia_ingest_seen' AND column_name = 'service'")
+    has_svc = bool(cur.fetchone())
+    cur.execute("SELECT identifier, title, coalesce(chunks, 0), coalesce(service, 'army') FROM ia_ingest_seen"
+                if has_svc else "SELECT identifier, title, coalesce(chunks, 0), 'army' FROM ia_ingest_seen")
+    rows = cur.fetchall()
+    seen = {r[0] for r in rows}
+    seen_keys = {pub_key(r[1]) for r in rows if r[3] == "army"}
+    stored = sum(int(r[2]) for r in rows if r[3] == "army")
 
-    pubs = [p for p in search() if p[0] not in seen]
+    pubs = []
+    for p in search():
+        k = pub_key(p[1])
+        if p[0] not in seen and k not in seen_keys:
+            seen_keys.add(k)
+            pubs.append(p)
     ni.notify(f":military_helmet: *Army training publications ingest* — {len(pubs)} manuals to go from the Internet "
               f"Archive -> `{a.vector}`, target {a.target:,} memories ({stored:,} already stored).")
     done_hashes, last = set(), time.time()
@@ -123,8 +148,14 @@ def main():
                 n += 1
         stored += n
         if not a.dry_run:
-            cur.execute("INSERT INTO ia_ingest_seen (identifier, title, chunks) VALUES (%s, %s, %s) "
-                        "ON CONFLICT (identifier) DO UPDATE SET chunks = excluded.chunks, at = now()", (ident, title, n))
+            if has_svc:
+                cur.execute("INSERT INTO ia_ingest_seen (identifier, title, chunks, service) VALUES (%s, %s, %s, 'army') "
+                            "ON CONFLICT (identifier) DO UPDATE SET chunks = excluded.chunks, at = now()",
+                            (ident, title, n))
+            else:
+                cur.execute("INSERT INTO ia_ingest_seen (identifier, title, chunks) VALUES (%s, %s, %s) "
+                            "ON CONFLICT (identifier) DO UPDATE SET chunks = excluded.chunks, at = now()",
+                            (ident, title, n))
         ni.log(f"[{i}/{len(pubs)}] {title[:80]}: {n} chunks (total {stored:,})")
         if time.time() - last >= 300:
             ni.notify(f":military_helmet: Army manuals: {i}/{len(pubs)} — latest *{title[:90]}* — {stored:,} memories")
