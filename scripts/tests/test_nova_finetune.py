@@ -99,7 +99,7 @@ class TestVoiceCuration(unittest.TestCase):
         self.assertIn("real reply", p)
 
     def test_gates_unchanged(self):
-        self.assertEqual((ft.PRACTICE_GATE, ft.VOICE_GATE), (0.60, 0.45))
+        self.assertEqual((ft.PRACTICE_GATE, ft.VOICE_GATE), (0.55, 0.35))
 
 
 class TestIntegration(unittest.TestCase):

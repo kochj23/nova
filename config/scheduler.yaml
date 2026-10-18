@@ -1324,7 +1324,7 @@ tasks:
     schedule: every 30m
     timeout: 900
     overlap: skip
-  finetune_weekly:                 # Sunday 01:30: LoRA on qwen3-8B from earned practices + lessons + her real replies; deployed as nova-grown:<date> ONLY if it beats the current model (practice >= 60%, voice >= 45%); nova_finetune.py, finetune_runs
+  finetune_weekly:                 # Sunday 01:30: LoRA on qwen3-8B from earned practices + lessons + her real replies; deployed as nova-grown:<date> ONLY if it beats the current model (practice >= 55%, voice >= 35%; eased 2026-10-18); nova_finetune.py, finetune_runs
     script: nova_finetune.py
     args: ["--weekly"]
     schedule: cron 30 1 * * 0

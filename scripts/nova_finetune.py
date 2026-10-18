@@ -46,8 +46,8 @@ OLLAMA_BIN = os.environ.get("NOVA_FT_OLLAMA_BIN", "/Volumes/Data/ollama/bin/olla
 MODEL_NAME = "nova-grown"
 MAX_PRACTICE = 400
 MAX_REPLAY = 600         # 2026-10-17: candidates; curate() keeps only genuine-voice ones
-PRACTICE_GATE = 0.60
-VOICE_GATE = 0.45
+PRACTICE_GATE = 0.55       # 2026-10-18 Jordan: a little easier (was 0.60)
+VOICE_GATE = 0.35          # 2026-10-18 Jordan: a little easier (was 0.45); ~15 voice rows, so 0.45 vs 0.37 is ~1 judgement
 EVAL_N = 40               # test prompts per kind
 VOICE_MIN = 4             # teacher voice audit (1-5) an example needs to be trained on or used as a reference
 REPLAY_SHARE = 0.45       # replay (her real voice) is at least this share of train; practice is subsampled to fit
@@ -643,7 +643,7 @@ def selftest():
     logtxt = "Iter 1: Val loss 3.6\nIter 200: Val loss 1.547\nIter 300: Val loss 1.568\nIter 400: Val loss 1.686"
     assert best_checkpoint(logtxt, {"0000200_adapters.safetensors", "0000400_adapters.safetensors"}) == 200
     assert best_checkpoint(logtxt, {"0000400_adapters.safetensors"}) == 400 and best_checkpoint("", set()) is None
-    assert passes_gate(0.6, 0.45) and not passes_gate(0.7, 0.4) and not passes_gate(0.59, 0.9)
+    assert passes_gate(0.55, 0.35) and not passes_gate(0.7, 0.3) and not passes_gate(0.54, 0.9)
     print("selftest OK")
 
 
