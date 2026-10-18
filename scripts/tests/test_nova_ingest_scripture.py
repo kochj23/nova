@@ -85,6 +85,7 @@ class TestUnit(unittest.TestCase):
 
     def test_title_and_index_detection(self):
         self.assertEqual(S.page_title(HYMN), "Rig-Veda Book 1: HYMN I. Agni.")
+        self.assertEqual(S.page_title("<title>I Ching: XV. The <I>Kh</I>ien Hexagram</title>"), "XV. The Khien Hexagram")
         self.assertTrue(S.is_index_page(INDEX, S.page_text(INDEX)))
         self.assertFalse(S.is_index_page(HYMN, S.page_text(HYMN)))
 

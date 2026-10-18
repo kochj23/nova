@@ -228,7 +228,7 @@ def fetch_st(path: str) -> str | None:
 
 def page_title(html: str) -> str:
     m = re.search(r"(?is)<title>(.*?)</title>", html)
-    t = htmllib.unescape(re.sub(r"\s+", " ", m.group(1))).strip() if m else ""
+    t = htmllib.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", m.group(1)))).strip() if m else ""
     return t.split(": ", 1)[1].strip() if ": " in t else t
 
 
