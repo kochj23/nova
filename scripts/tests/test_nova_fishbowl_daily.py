@@ -136,7 +136,7 @@ class TestIntegration(_Base):
         self.assertIn("from nova_fishbowl_summaries import source_links", SRC)
         self.run_main()
         args, kw = fb.nj.publish_hugo.call_args
-        self.assertEqual(args[2], "opinions")
+        self.assertEqual(args[2], "watches")
         self.assertEqual(kw["stable_slug"], "the-fishbowl")
         self.assertEqual(kw["cited_memory_ids"], [1])
         self.assertIn("https://yt/x", args[1])                  # Sources block appended
@@ -152,7 +152,7 @@ class TestFunctional(_Base):
     def test_golden_path_publishes_pushes_notifies(self):
         rc, _ = self.run_main()
         self.assertEqual(rc, 0)
-        fb.nj.git_push.assert_called_once_with("opinions", "Betty Melts Down Over Superchats")
+        fb.nj.git_push.assert_called_once_with("watches", "Betty Melts Down Over Superchats")
         self.assertEqual(fb.nj.notify_slack.call_args[0][0], "fishbowl")
         self.assertIn("(3)", fb.nova_voice.system_prompt.call_args[0][0])
 

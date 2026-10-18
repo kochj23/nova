@@ -140,11 +140,11 @@ class TestFunctional(unittest.TestCase):
         with _Run() as r:
             self.assertEqual(fr.main(), 0)
         title, body, section, tags = r.pub.call_args[0][:4]
-        self.assertEqual(section, "opinions")
+        self.assertEqual(section, "watches")
         self.assertIn("fishbowl", tags)
         self.assertIn("### Mookie (ch1)", r.llm.call_args[0][1])
-        r.push.assert_called_once_with("opinions", "Report Card")
-        self.assertEqual(r.slack.call_args[0][0], "opinions")
+        r.push.assert_called_once_with("watches", "Report Card")
+        self.assertEqual(r.slack.call_args[0][0], "watches")
 
 
 class TestFrame(unittest.TestCase):

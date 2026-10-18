@@ -104,7 +104,7 @@ def main():
             f"--- NEWEST FISHBOWL ACTIVITY (newest first) ---\n{sample_block}\n\n"
             f"Write today's opinion column.")
     import nova_article_history
-    _h = nova_article_history.recent_articles_context("opinions")
+    _h = nova_article_history.recent_articles_context("watches")
     if _h:
         user = user + "\n\n" + _h
     raw = nj.call_openrouter(system, user, max_tokens=2600, temperature=0.9)
@@ -134,8 +134,8 @@ def main():
 
     img = None
     try:
-        ip = nj.get_image_prompt(title, "the online watch-community livestream drama scene, an opinion column", "opinions")
-        img = nj.generate_image(ip, width=1024, height=768, section="opinions")
+        ip = nj.get_image_prompt(title, "the online watch-community livestream drama scene, an opinion column", "watches")
+        img = nj.generate_image(ip, width=1024, height=768, section="watches")
     except Exception as e:
         nj.log(f"[opinion-fishbowl] image gen failed (non-fatal): {e}")
 
@@ -145,15 +145,15 @@ def main():
     # return meant this job logged "PUBLISHED" and exited 0 having written nothing —
     # indistinguishable from a real success in scheduler_runs, which is precisely how a
     # dead article job hides. Report the failure so the run is marked failed and retried.
-    if not nj.publish_hugo(title, body, "opinions", tags, desc, image_path=img, emoji="🗣️", sources=user,
+    if not nj.publish_hugo(title, body, "watches", tags, desc, image_path=img, emoji="🗣️", sources=user,
                            profile="opinion-fishbowl"):
         nj.log(f"[opinion-fishbowl] NOT PUBLISHED — quality guard rejected: {title}")
-        nj.git_push("opinions", title)   # still ship any pending deletions/cleanup
+        nj.git_push("watches", title)   # still ship any pending deletions/cleanup
         return 1
-    _push = nj.git_push("opinions", title)
+    _push = nj.git_push("watches", title)
     # git_push returns 'pushed'/'committed_not_pushed'/'nothing'/'failed' — only a real push is PUBLISHED
     _pub = {"committed_not_pushed": "COMMITTED (not yet pushed)", "failed": "NOT COMMITTED (git failed)"}.get(_push, "PUBLISHED")
-    nj.notify_slack("opinions", f"🗣️ {title}", "Nova's daily Fishbowl opinion column.")
+    nj.notify_slack("watches", f"🗣️ {title}", "Nova's daily Fishbowl opinion column.")
     nj.log(f"[opinion-fishbowl] {_pub}: {title}")
     return 0
 

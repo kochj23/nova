@@ -81,7 +81,7 @@ def main():
             f"--- THIN-FILE ENTRIES (handle per the voice-calibration instructions above) ---\n{thin_block}\n\n"
             f"Write the channel-by-channel opinion column.")
     import nova_article_history
-    _h = nova_article_history.recent_articles_context("opinions")
+    _h = nova_article_history.recent_articles_context("watches")
     if _h:
         user = user + "\n\n" + _h
     raw = nj.call_openrouter(system, user, max_tokens=6000, temperature=0.9)
@@ -100,19 +100,19 @@ def main():
 
     img = None
     try:
-        ip = nj.get_image_prompt(title, "a channel-by-channel report card on the watch-community livestream cast", "opinions")
-        img = nj.generate_image(ip, width=1024, height=768, section="opinions")
+        ip = nj.get_image_prompt(title, "a channel-by-channel report card on the watch-community livestream cast", "watches")
+        img = nj.generate_image(ip, width=1024, height=768, section="watches")
     except Exception as e:
         nj.log(f"[opinion-fishbowl-roster] image gen failed (non-fatal): {e}")
 
     tags = ["opinion", "fishbowl", "watch-community", "roster", "report-card"]
     desc = "Nova's channel-by-channel verdict on the Fishbowl cast."
-    nj.publish_hugo(title, body, "opinions", tags, desc, image_path=img, emoji="🗣️", sources=user,
+    nj.publish_hugo(title, body, "watches", tags, desc, image_path=img, emoji="🗣️", sources=user,
                     profile="opinion-fishbowl-roster")
-    _push = nj.git_push("opinions", title)
+    _push = nj.git_push("watches", title)
     # git_push returns 'pushed'/'committed_not_pushed'/'nothing'/'failed' — only a real push is PUBLISHED
     _pub = {"committed_not_pushed": "COMMITTED (not yet pushed)", "failed": "NOT COMMITTED (git failed)"}.get(_push, "PUBLISHED")
-    nj.notify_slack("opinions", f"🗣️ {title}", "Nova's channel-by-channel Fishbowl roster review.")
+    nj.notify_slack("watches", f"🗣️ {title}", "Nova's channel-by-channel Fishbowl roster review.")
     nj.log(f"[opinion-fishbowl-roster] {_pub}: {title}")
     return 0
 

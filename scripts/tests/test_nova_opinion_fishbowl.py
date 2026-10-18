@@ -121,8 +121,8 @@ class TestFunctional(unittest.TestCase):
     def test_golden_path_publishes_pushes_notifies(self):
         rc, nj, pb, _, _ = _run()
         self.assertEqual(rc, 0)
-        self.assertEqual(nj.publish_hugo.call_args[0][:3], ("The Bezel Wars Escalate Again", nj.publish_hugo.call_args[0][1], "opinions"))
-        nj.git_push.assert_called_once_with("opinions", "The Bezel Wars Escalate Again")
+        self.assertEqual(nj.publish_hugo.call_args[0][:3], ("The Bezel Wars Escalate Again", nj.publish_hugo.call_args[0][1], "watches"))
+        nj.git_push.assert_called_once_with("watches", "The Bezel Wars Escalate Again")
         nj.notify_slack.assert_called_once()
         pb.assert_not_called()
 

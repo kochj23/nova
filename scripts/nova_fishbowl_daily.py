@@ -101,10 +101,10 @@ def main():
             f"--- FRESHEST INGESTED STREAMS (newest first) ---\n{sample_block}\n\n"
             f"Write today's Fishbowl dispatch.")
     import nova_article_history
-    # 'opinions' now (the dispatch moved sections 2026-08-11) — NOT 'fishbowl'. The old
+    # 'watches' (Watches and Friends) since 2026-10-18; 'opinions' before — NOT 'fishbowl'. The old
     # content/fishbowl dir was removed, so passing 'fishbowl' here fell through to _content_dir's
     # last-resort recursive home glob and WEDGED the whole run for minutes (py-spy caught it).
-    _h = nova_article_history.recent_articles_context("opinions")
+    _h = nova_article_history.recent_articles_context("watches")
     if _h:
         user = user + "\n\n" + _h
     raw = nj.call_openrouter(system, user, max_tokens=3200, temperature=0.85)
@@ -147,12 +147,12 @@ def main():
     # it's ONE living article the cast gets added to/removed from — never a new post per day.
     # A guard rejection must FAIL the run, not log a publish: the evergreen slug means a silent
     # no-op leaves yesterday's article in place, so the site looks current while the job is dead.
-    if not nj.publish_hugo(title, body, "opinions", tags, desc, image_path=img, emoji="🐠",
+    if not nj.publish_hugo(title, body, "watches", tags, desc, image_path=img, emoji="🐠",
                            stable_slug=STABLE_SLUG, cited_memory_ids=cited_ids, sources=user,
                            profile="fishbowl-daily"):
         nj.log(f"[fishbowl-daily] NOT PUBLISHED — quality guard rejected: {title}")
         return 1
-    _push = nj.git_push("opinions", title)
+    _push = nj.git_push("watches", title)
     # git_push returns 'pushed'/'committed_not_pushed'/'nothing'/'failed' — only a real push is PUBLISHED
     _pub = {"committed_not_pushed": "COMMITTED (not yet pushed)", "failed": "NOT COMMITTED (git failed)"}.get(_push, "PUBLISHED")
     nj.notify_slack("fishbowl", f"🐠 {title}", "Nova's daily Fishbowl dispatch updated.")
