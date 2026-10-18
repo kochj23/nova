@@ -234,7 +234,7 @@ tasks:
     overlap: skip
 
   # ── UNAS (primary) -> Synology (replica) replication, three layers (2026-10-17, agent_docs design-656-nasbackup §9) ──
-  #   1. net.digitalnoise.daemon.nova-nas-watchd (LaunchDaemon, NOT this scheduler): fanotify watcher on the UNAS,
+  #   1. net.digitalnoise.nova-nas-watchd (gui/501 LaunchAgent, NOT this scheduler): fanotify watcher on the UNAS,
   #      copies each file ~60-75 s after it settles. Reconnect/overflow -> catch-up incremental.
   #   2. nas_reverse_incremental (below, every 15m): find -newermt/-newerct since the last SUCCESSFUL pass
   #      (marker: service_config nas_replicate/marker:<share>); catches renames + anything the watcher missed.

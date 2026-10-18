@@ -3,7 +3,7 @@
 
 The feature Jordan liked most in DART: copy a file as soon as it settles, not at 05:00.
 
-    UNAS (.69)                      this Mac (launchd KeepAlive)            Synology (.11)
+    UNAS (.69)                      this Mac (launchd KeepAlive LaunchAgent)            Synology (.11)
     nova_nas_fanwatch.py  --ssh-->  nova_nas_watchd.py  --ssh rsync -->   /volume1/<share>
     (fanotify, in memory,           debounce + batch, shared lock,        reads its CIFS mount
      settle check, read-only)       telemetry, reconnect + catch-up       of the UNAS
@@ -13,7 +13,7 @@ The feature Jordan liked most in DART: copy a file as soon as it settles, not at
   a 25%-of-one-core self-throttle, and a 24 h lifetime (then we reconnect).
 * This daemon never touches this Mac's SMB mounts of the NASes (they have hung the kernel):
   it talks to both NASes over SSH only, and runs from a LOCAL install dir (INSTALL_DIR), not from the
-  repo on the SMB share. `--install` copies the code there and writes the LaunchDaemon plist.
+  repo on the SMB share. `--install` copies the code there and writes/loads the LaunchAgent plist.
 * Every (re)connect and every watcher overflow triggers a catch-up incremental pass
   (nova_nas_localdiff_reverse.run_incremental), because events may have been missed.
 * Copies go through nova_nas_localdiff_reverse.copy_batch: the same per-share lock as the nightly
@@ -42,11 +42,11 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import nova_nas_localdiff_reverse as rev  # noqa: E402
 
-LABEL = "net.digitalnoise.daemon.nova-nas-watchd"
+LABEL = "net.digitalnoise.nova-nas-watchd"
 INSTALL_DIR = "/Volumes/Data/nova-nas-replicate"
 INSTALL_FILES = ("nova_nas_watchd.py", "nova_nas_fanwatch.py", "nova_nas_localdiff_reverse.py",
                  "nova_config.py", "nova_dsn.py", "nova_notify.py", "nova_secrets.py")
-PLIST_TEMPLATE = "net.digitalnoise.daemon.nova-nas-watchd.plist"
+PLIST_TEMPLATE = "net.digitalnoise.nova-nas-watchd.plist"
 WATCHER = HERE / "nova_nas_fanwatch.py"
 
 DEBOUNCE_S = 2.0          # a path must be quiet this long in our queue before it is batched
@@ -247,7 +247,7 @@ class Daemon:
         f = open(WATCHER, "rb")
         try:
             return subprocess.Popen(["ssh", *rev.SSH_OPTS, rev.UNAS, watcher_cmd()], stdin=f,
-                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                                    stdout=subprocess.PIPE)      # ssh stderr -> our log
         finally:
             f.close()
 
@@ -458,7 +458,12 @@ class Daemon:
 
 
 def install():
-    """Copy the code to INSTALL_DIR (local disk) and (re)load the LaunchDaemon."""
+    """Copy the code to INSTALL_DIR (local disk) and (re)load the LaunchAgent.
+
+    A user LaunchAgent (gui/<uid>), not a system LaunchDaemon: the SSH key to both NASes is
+    passphrase-protected and only usable through the login session's ssh-agent (SSH_AUTH_SOCK),
+    the same reason com.nova.scheduler is an agent. A LaunchDaemon gets 'Permission denied
+    (publickey)'."""
     os.makedirs(INSTALL_DIR, exist_ok=True)
     for name in INSTALL_FILES:
         src = HERE / name
@@ -468,13 +473,14 @@ def install():
         "__DIR__", INSTALL_DIR)
     tmp = os.path.join(INSTALL_DIR, PLIST_TEMPLATE)
     Path(tmp).write_text(plist)
-    dest = f"/Library/LaunchDaemons/{LABEL}.plist"
-    for cmd in (["sudo", "-n", "launchctl", "bootout", f"system/{LABEL}"],
-                ["sudo", "-n", "install", "-m", "644", "-o", "root", "-g", "wheel", tmp, dest],
-                ["sudo", "-n", "launchctl", "bootstrap", "system", dest]):
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        print(" ".join(cmd[2:4]), "->", r.returncode, (r.stderr or "").strip()[:200])
-    return 0
+    dest = str(Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist")
+    domain = f"gui/{os.getuid()}"
+    subprocess.run(["launchctl", "bootout", f"{domain}/{LABEL}"], capture_output=True, timeout=60)
+    shutil.copy2(tmp, dest)
+    r = subprocess.run(["launchctl", "bootstrap", domain, dest], capture_output=True, text=True,
+                       timeout=60)
+    print(f"bootstrap {domain} {dest} -> {r.returncode} {(r.stderr or '').strip()[:200]}")
+    return r.returncode
 
 
 def main(argv=None):
