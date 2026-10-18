@@ -231,8 +231,10 @@ def check_backups():
         return
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.touch()
-    rc, out = fix("backups: rerun incremental backup agent on synology",
-                  SSH + ["kochj@nas.digitalnoise.net", "/volume1/homes/kochj/nova_backup_agent.sh incremental"], 3600)
+    # 2026-10-17: the UNAS is primary, so the repair is the UNAS->Synology reverse mirror. Never rerun
+    # the retired Synology->UNAS nova_backup_agent.sh — it writes the secondary's copies over the primary.
+    rc, out = fix("backups: rerun UNAS->Synology reverse mirror",
+                  [sys.executable, str(Path(__file__).parent / "nova_nas_localdiff_reverse.py"), "--apply"], 3600)
     if rc == 3:
         # Agent exits 3 (stdout "LOCKED: ...") when another NAS job holds the flock — e.g. the Sunday
         # 04:30 full run, which takes most of the day. Nothing is broken; do not burn today's rerun
@@ -259,7 +261,7 @@ MESH_FIX = {
     "nuk": (SSH + ["kochj@192.168.1.10", "sudo -n systemctl restart nova-mesh-agent"]),
     "tv-movies-mini": (SSH + ["kochj@192.168.1.7", "sudo -n launchctl kickstart -k system/net.digitalnoise.nova-mesh-agent"]),
     "mac-mini": (SSH + ["kochj@192.168.1.77", "launchctl kickstart -k gui/501/net.digitalnoise.nova-mesh-agent"]),  # .77 = wired (.251 is Wi-Fi); agent is a GUI LaunchAgent, not system/
-    "mac-studio": ["launchctl", "kickstart", "-k", "gui/501/net.digitalnoise.nova-mesh-agent"],
+    "mac-studio": ["sudo", "-n", "launchctl", "kickstart", "-k", "system/net.digitalnoise.daemon.nova-mesh-agent"],
 }
 
 
