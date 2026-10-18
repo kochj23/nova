@@ -21,6 +21,7 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Inference pool | 10/10 backends healthy across 8 pools (code/conversation/nova/fast/mtplx/reasoner/vision/embed) — Ollama on .6/.77/.7/.5/.86/.10/.252/.125, MLX on .6/.77, llama.cpp on .6; routers on .2/.86/.10 |
 | Storage failover | `nova_datashare_failover.py` — 2-min timer on .2/.86/.10; **UNAS (.69) primary**, Synology (.11) read-only fallback (PRIMARY/FALLBACK were inverted after the 2026-09-10 cutover, fixed 2026-10-03); every node verified Synology-free 2026-10-03 |
 | Secrets (2026-10-03) | 1Password vault **Nova** → `nova.secrets` (hourly mirror) + Mac System keychains; read-only service account per host; Postgres SCRAM-only, no LAN trust; control-plane LaunchDaemons on .6 |
+| NAS replication (2026-10-17) | UNAS (.69) → Synology (.11) in about 66 s: fanotify watcher streamed over SSH (`nova_nas_watchd.py`), 15-min incremental safety net, 05:00 full diff; soft deletes built, OFF pending Jordan |
 | Resilience node | nova-core4 (.250) — warm Gateway standby + cold standbys, local code, host-sealed secrets |
 | Witness registry | `telemetry.witness_proven_red` — a check clears health only with recent proven-red |
 | Presence | 9 methods incl. `wifi_rssi` — resolves WiFi clients to NAMED people via `telemetry.device_owner` |
@@ -3394,6 +3395,45 @@ Now: dumps connect **straight to the primary** (never the pooler), a dump under 
 > failed the `nova` database every night, because it is a retired shell with zero tables whose
 > correct dump really is ~4KB. Guarding against an empty dump must not mean guarding against an
 > empty database.
+
+---
+
+## NAS Replication — UNAS → Synology (2026-10-17)
+
+The UNAS Pro 8 (.69) is the primary; the Synology (.11) is a replica. Three layers keep it current,
+borrowing the best idea from DART (an old file-replication service): start copying the moment a file lands.
+
+| Layer | What | When |
+|-------|------|------|
+| Watcher | `nova_nas_watchd.py` (LaunchAgent `net.digitalnoise.nova-nas-watchd`) streams `nova_nas_fanwatch.py` to the UNAS over SSH; one fanotify mark covers the whole volume. Nothing is installed on the UNAS | always, ~66 s median latency |
+| Incremental | `nova_nas_localdiff_reverse.py --mode incremental`: files with mtime/ctime newer than the last *successful* pass (marker in `service_config`) | every 15 min, plus after every watcher reconnect |
+| Full diff | `nova_nas_localdiff_reverse.py --apply` | 05:00 nightly |
+
+```mermaid
+flowchart LR
+    W[Writes to UNAS .69] --> F[fanotify mark<br/>whole volume]
+    F -- "SSH stdout" --> D[nova_nas_watchd<br/>on the Studio .6]
+    D -- "settle 60 s · debounce · batch" --> L{per-share lock}
+    I[15-min incremental] --> L
+    N[05:00 full diff] --> L
+    L --> R[rsync on the Synology<br/>--files-from]
+    R --> S[(Synology .11 replica)]
+    R --> T[(telemetry.backup_runs)]
+```
+
+- **Why classic fanotify:** per-directory inotify would need about 2.3M watches. The newer `FAN_REPORT_DFID_NAME` mode fails with EXDEV on the UNAS's btrfs subvolume (kernel 5.10). Classic mode sees every write-close but not renames or deletes; the incremental pass catches renames through ctime.
+- **Safety:**
+  - Nothing is ever written to the UNAS.
+  - Files changed in the last 60 s are skipped until they settle.
+  - One lock per share, with a stale-lock reaper.
+  - The full diff exits 1 when a copy fails.
+- **The "100k files a night" was real data, not a bug.** It was mostly Frigate's ~92k clips a day. The bug was in the reporting: `files` counted the planned list and `bytes` was hard-coded to 0. Both now come from rsync's own stats.
+- **Soft deletes (`--soft-deletes`) are built but OFF:**
+  - Files gone from the UNAS are moved on the Synology into `#nova_deleted/YYYY-MM-DD/`, which is purged after 30 days.
+  - The run aborts with a critical backup alert if the scan is empty or short, the mount is dead, or the moves would exceed max(500, 1%) of the share.
+  - The report-only run hit that cap on expired Frigate footage, so enabling it needs a churn exclusion such as `--churn-prefix frigate/`.
+- **Forward Synology → UNAS jobs:** they're retired, and the Synology crontab entries are commented out.
+- Full design: `agent_docs` `design-656-nasbackup` §9.
 
 ---
 
