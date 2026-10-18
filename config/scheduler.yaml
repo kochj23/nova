@@ -825,6 +825,13 @@ tasks:
 
 
 
+  game_report:                           # Nova's opinion column on every game Little Mister finishes (GTNW, CarTest, Blompie, MUSH; Mac + web). Reads play.sessions/play.events on the Games DB (core3) as the read-only play_reader; one column per finished session -> /opinions (exactly once via service_config nova_game_report/reported; trivial <2 min / 0-action sessions skipped). See agent_docs 'nova-game-report'.
+    script: nova_game_report.py
+    schedule: every 10m
+    timeout: 1500                        # LLM draft + grounded expansion + image + journal push
+    overlap: skip
+    group: llm
+
   rando_daily_ops:                       # THE daily operations report — "Day in the Life of My Infrastructure", covers everything done today (30 sources) in Nova's sassy voice -> /operations
     script: nova_rando_daily_ops.py
     enabled: true  # re-enabled on .6 2026-07-30 (was orphaned: disabled here, never landed on .2). Runs here reliably — journal repo + OpenRouter key + git creds all present. .2 migration deferred until those exist there.

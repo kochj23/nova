@@ -549,6 +549,7 @@ ARTICLE_LENGTH = {
     "fishbowl-daily":          _OPINION,
     "opinion-fishbowl":        _OPINION,
     "opinion-fishbowl-roster": _OPINION,
+    "game-report":             (600, 1100, EXPAND_GROUNDED),   # nova_game_report.py (one column per game session)
     "local-airwaves":          _LOCAL,
     "local-trends":            _LOCAL,
     "emergency-daily":         _LOCAL,
@@ -1292,7 +1293,7 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
                  stable_slug: str | None = None,
                  cited_memory_ids: list | None = None,
                  sources: str | None = None, profile: str | None = None,
-                 min_words: int | None = None) -> bool:
+                 min_words: int | None = None, show_time: bool = True) -> bool:
     """Write a Hugo markdown post and copy cover image.
 
     stable_slug: if set, the post uses a FIXED filename ("<slug>.md", no date prefix) so
@@ -1309,6 +1310,9 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
     given, and only with facts in draft+sources (see longform_expand).
     min_words: per-story floor that beats the table/DB overrides (raises the min and
     enables grounded expansion; still needs sources + passes the grounding check).
+    show_time: False = no time of day anywhere on the post (no weather dateline, date-only
+    byline, noon front-matter time) for articles whose publish time would reveal when Jordan
+    was home doing something (nova_game_report.py publishes minutes after a game ends).
     """
     _razor_draft = body  # The Razor Blade: the first model draft, measured against what publishes
     # Central title fallback (2026-09-13): degenerate titles ("Abstract", "Let me…",
@@ -1374,8 +1378,9 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
             log(f"[ideal-reader] skipped ({e})")
 
     try:  # prepend the live backyard-weather dateline to the BODY (never the title)
-        from nova_weather_blurb import weather_dateline_line
-        body = weather_dateline_line() + body
+        if show_time:
+            from nova_weather_blurb import weather_dateline_line
+            body = weather_dateline_line() + body
     except Exception:
         pass
     content_dir = HUGO_ROOT / f"content/{section}"
@@ -1411,7 +1416,7 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
         hugo_image = f"/images/{section}/{img_base}.webp"
         log(f"Image copied: {img_dest.name}")
 
-    timestamp = now_dt().strftime("%Y-%m-%dT%H:%M:%S-07:00")
+    timestamp = now_dt().strftime("%Y-%m-%dT%H:%M:%S-07:00" if show_time else "%Y-%m-%dT12:00:00-07:00")
     tags_yaml = json.dumps(tags)
     safe_title = title.replace('"', '')
     display_title = f"{emoji} {safe_title}" if emoji else safe_title
@@ -1429,7 +1434,7 @@ description: "{description.replace('"', "'")}"
     front_matter += "---\n\n"
 
     # Add publication timestamp to article body
-    pub_time = now_dt().strftime("%A, %B %d, %Y at %I:%M %p PT")
+    pub_time = now_dt().strftime("%A, %B %d, %Y at %I:%M %p PT" if show_time else "%A, %B %d, %Y")
     byline = f"*Published {pub_time}*\n\n"
 
     output = content_dir / filename
