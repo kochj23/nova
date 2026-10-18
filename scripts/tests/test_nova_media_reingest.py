@@ -458,9 +458,27 @@ class TestMinionsUnit(unittest.TestCase):
         self.assertEqual(plan, [("mac-studio", None, 0, "Darwin", 0), ("nova-core9", "kochj@192.168.1.7", 0, "Darwin", 1)])
 
     def test_whisper_minions_maps_hosts(self):
-        cur = _Cur([("FROM minion_nodes", [("mac-studio", "192.168.1.6", 2, 0, "Darwin"),
-                                           ("nova-core3", "192.168.1.5", 2, 12, "Linux"), ("x", None, 1, 0, "")])])
-        self.assertEqual([r[1] for r in mr.whisper_minions(cur)], [None, "kochj@192.168.1.5", "x"])
+        cur = _Cur([("FROM minion_nodes", [("mac-studio", "192.168.1.6", 2, 0, "Darwin", 1, 10),
+                                           ("nova-core3", "192.168.1.5", 2, 12, "Linux", 0, 0), ("x", None, 1, 0, "", 0, 0)])])
+        rows = mr.whisper_minions(cur)
+        self.assertEqual([r[1] for r in rows], [None, "kochj@192.168.1.5", "x"])
+        self.assertEqual(rows[0][5:], (1, 10))
+        self.assertIn("exclude_nodes", cur.sql[-1])                # a node can be benched without touching it
+        self.assertEqual(cur.params[-1][1], mr.SERVICE)
+
+    def test_cpu_slots_beside_gpu_slots(self):
+        rows = [("nova-core10", "kochj@192.168.1.77", 2, 0, "Darwin", 1, 8)]
+        plan = mr.plan_workers(rows, {"nova-core10": {0, 1}})
+        self.assertEqual(plan, [("nova-core10", "kochj@192.168.1.77", 8, "Darwin", mr.CPU_SLOT0)])
+        calls = []
+
+        def run(cmd, **kw):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout=b'{"text": "x", "audio_s": 1.0}', stderr=b"")
+        mr.minion_fetch("nova-core10", "kochj@192.168.1.77", 8, "Darwin", _run=run, _stream=lambda *a: None,
+                        cpu=True)(EP, 60)
+        self.assertIn("--json --cpu --threads 8", calls[0][-1])
+        self.assertIn("nice -n 15", calls[0][-1])
 
 
 class TestMinionsIntegration(unittest.TestCase):
@@ -529,7 +547,7 @@ class TestMinionsFrame(unittest.TestCase):
         txt = yml.read_text()
         for task in ("media_reingest_minions", "work_lessons"):
             block = txt.split(f"\n  {task}:", 1)[1][:900]
-            self.assertIn("schedule: every 5m", block)
+            self.assertRegex(block, r"schedule: every [15]m")
             self.assertIn("overlap: skip", block)
 
 

@@ -685,13 +685,23 @@ FILE_TIMEOUT_S = 80 * 60        # one file's extract + transcribe; the run deadl
 PCM_BYTES_PER_SEC = 32000
 
 
+CPU_SLOT0 = 100                 # slots >= this run the CPU backend (faster-whisper) beside a Mac's MLX/GPU slots
+
+
 def whisper_minions(oc) -> list[tuple]:
-    """(node, ssh host, workers, threads, os) for every fresh idle/dedicated whisper minion."""
+    """(node, ssh host, workers, threads, os, cpu_workers, cpu_threads) for every fresh idle/dedicated whisper minion
+    not listed in service_config media_reingest/exclude_nodes. cpu_workers (2026-10-18): a Mac whose GPU is full of
+    MLX Whisper still has idle CPU cores — extra faster-whisper workers fill them."""
     oc.execute("SELECT node, ip, greatest(1, least(8, coalesce((info->>'whisper_workers')::int, 1))), "
-               "coalesce((info->>'whisper_threads')::int, 0), coalesce(info->>'os', '') FROM minion_nodes "
+               "coalesce((info->>'whisper_threads')::int, 0), coalesce(info->>'os', ''), "
+               "greatest(0, least(8, coalesce((info->>'whisper_cpu_workers')::int, 0))), "
+               "coalesce((info->>'whisper_cpu_threads')::int, 0) FROM minion_nodes "
                "WHERE state IN ('idle','dedicated') AND (info->>'whisper')::boolean "
-               "AND last_seen > now() - %s * interval '1 second' ORDER BY node", (MINION_FRESH_S,))
-    return [(n, None if n == STUDIO_NODE else (f"kochj@{ip}" if ip else n), w, t, o) for n, ip, w, t, o in oc.fetchall()]
+               "AND last_seen > now() - %s * interval '1 second' AND node NOT IN (SELECT jsonb_array_elements_text("
+               "coalesce((SELECT value FROM service_config WHERE service = %s AND key = 'exclude_nodes'), '[]'::jsonb))) "
+               "ORDER BY node", (MINION_FRESH_S, SERVICE))
+    return [(n, None if n == STUDIO_NODE else (f"kochj@{ip}" if ip else n), w, t, o, cw, ct)
+            for n, ip, w, t, o, cw, ct in oc.fetchall()]
 
 
 def minion_free(oc, node: str) -> bool:
@@ -743,14 +753,30 @@ def pcm_to_wav(pcm: Path, wav: Path) -> float:
     return pcm.stat().st_size / PCM_BYTES_PER_SEC
 
 
+STUDIO_WHISPER_PY = str(Path.home() / ".nova-minion" / "whisper-venv" / "bin" / "python")
+MINION_WHISPER = str(Path(__file__).resolve().parent / "minion" / "nova_minion_whisper.py")
+
+
 def minion_fetch(node: str, host: str | None, threads: int = 0, os_name: str = "", _run=subprocess.run,
-                 _stream=None):
+                 _stream=None, cpu: bool = False):
     """fetch(path, timeout) -> (text, audio_s) for process(): extract on the media host, transcribe on the node."""
     _stream = _stream or stream_pcm
 
     def fetch(path: str, timeout: float):
         timeout = max(timeout, FILE_TIMEOUT_S)
         name = f"reingest-{uuid.uuid4().hex[:12]}.pcm"
+        if host is None and cpu:                           # the Studio's CPU slots: faster-whisper at utility QoS
+            tmp = Path(tempfile.mkdtemp(prefix="nova-reingest-"))
+            try:
+                _stream(path, None, str(tmp / name), timeout)
+                r = _run([*QOS, STUDIO_WHISPER_PY, MINION_WHISPER, str(tmp / name), "--json", "--cpu"]
+                         + (["--threads", str(int(threads))] if threads else []),
+                         check=True, timeout=timeout, capture_output=True)
+                out = r.stdout.decode("utf-8", "ignore") if isinstance(r.stdout, bytes) else str(r.stdout or "")
+                d = json.loads(out.strip().splitlines()[-1]) if out.strip() else {}
+                return str(d.get("text") or "").strip(), float(d.get("audio_s") or 0.0)
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
         if host is None:                                   # the Studio itself: local MLX Whisper at utility QoS
             tmp = Path(tempfile.mkdtemp(prefix="nova-reingest-"))
             try:
@@ -761,11 +787,11 @@ def minion_fetch(node: str, host: str | None, threads: int = 0, os_name: str = "
             finally:
                 shutil.rmtree(tmp, ignore_errors=True)
         ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host]
-        prio = "nice -n 19 ionice -c3" if os_name == "Linux" else "nice -n 5"
+        prio = "nice -n 19 ionice -c3" if os_name == "Linux" else ("nice -n 15" if cpu else "nice -n 5")
         try:
             _stream(path, host, name, timeout)
             r = _run(ssh + [f"cd .nova-minion && {prio} whisper-venv/bin/python nova_minion_whisper.py {name} --json"
-                            + (f" --threads {int(threads)}" if threads else "")],
+                            + (" --cpu" if cpu else "") + (f" --threads {int(threads)}" if threads else "")],
                      check=True, timeout=timeout, capture_output=True)
             out = r.stdout.decode("utf-8", "ignore") if isinstance(r.stdout, bytes) else str(r.stdout or "")
             d = json.loads(out.strip().splitlines()[-1]) if out.strip() else {}
@@ -818,8 +844,8 @@ def minion_worker(node: str, host: str | None, threads: int, os_name: str, deadl
                   lock: threading.Lock, slot: int = 0):
     oc, mc = shared_conn("nova_ops").cursor(), shared_conn("nova_memories").cursor()
     mine = {"done": 0, "empty": 0, "error": 0, "audio_s": 0.0, "gpu_s": 0.0}
-    fetch = minion_fetch(node, host, threads, os_name)
-    tag = f" [{node}#{slot}]"
+    fetch = minion_fetch(node, host, threads, os_name, cpu=slot >= CPU_SLOT0)
+    tag = f" [{node}#{slot}{' cpu' if slot >= CPU_SLOT0 else ''}]"
     while datetime.now() < deadline and minion_free(oc, node) and not guards(oc, check_movie=False):
         if host is None:
             cpu, memf = studio_load()
@@ -846,13 +872,16 @@ def minion_worker(node: str, host: str | None, threads: int, os_name: str, deadl
 
 
 def plan_workers(rows: list[tuple], alive: dict, studio_n=None) -> list[tuple]:
-    """Pure: (node, host, threads, os, slot) workers to start so each node runs its wanted count."""
+    """Pure: (node, host, threads, os, slot) workers to start so each node runs its wanted count. Slots
+    0..workers-1 are the node's default backend; CPU_SLOT0.. are its extra CPU (faster-whisper) workers."""
     out = []
-    for node, host, want, threads, os_name in rows:
+    for node, host, want, threads, os_name, *cpu in rows:
+        cw, ct = (cpu + [0, 0])[:2]
         if node == STUDIO_NODE and studio_n is not None:
             want = studio_n(want)
         have = alive.get(node, set())
         out += [(node, host, threads, os_name, s) for s in range(want) if s not in have]
+        out += [(node, host, ct, os_name, CPU_SLOT0 + i) for i in range(cw) if CPU_SLOT0 + i not in have]
     return out
 
 

@@ -50,6 +50,10 @@ PORT = 37590
 STATES = ("idle", "away", "dedicated", "offline")
 WINDOW_H = 12                 # "tonight" = the last 12 hours
 ACTIVITY_MAX_MIN = 20         # a minion_activity row older than this is a crashed reader, not a read
+# ... except a transcription: a CPU minion takes 20-40 min on one episode, and its queue row being 'running' already
+# proves it is live (a dead worker's row reverts after 2 h). 2026-10-18: Linux minions showed "waiting for work"
+# while transcribing because their activity aged past 20 min.
+RECENT = "(a.started_at > now() - %s * interval '1 minute' OR a.work_key LIKE 'media:%%')"
 FRESH_S = 90
 # only works the reader really has in hand (a --dry-run or a crashed stream leaves rows behind)
 LIVE = ("(EXISTS (SELECT 1 FROM work_lessons w WHERE w.work_key = a.work_key AND w.status = 'running') OR "
@@ -149,8 +153,8 @@ def status(cur, node: str) -> dict:
             out["model"] = info["model_last"]
         if info.get("os_name") or info.get("os"):
             out["os"] = info.get("os_name") or info.get("os")
-    cur.execute("SELECT title, kind, phase, started_at FROM minion_activity a WHERE node=%s AND started_at > now() - "
-                "%s * interval '1 minute' AND " + LIVE + " ORDER BY started_at", (node, ACTIVITY_MAX_MIN))
+    cur.execute("SELECT title, kind, phase, started_at FROM minion_activity a WHERE node=%s AND " + RECENT + " AND "
+                + LIVE + " ORDER BY started_at", (node, ACTIVITY_MAX_MIN))
     out["now_reading"] = [{"title": t, "kind": k, "phase": p or "reading", "started": iso(s)} for t, k, p, s in cur.fetchall()]
     win = f"{WINDOW_H} hours"
     cur.execute("""SELECT count(*), coalesce(sum(lessons_kept),0), coalesce(sum(cardinality(belief_ids)),0)
@@ -194,7 +198,7 @@ def fleet(cur) -> dict:
                    FROM minion_nodes m WHERE coalesce(m.role,'minion') = 'minion' ORDER BY m.node""",
                 (FRESH_S, f"{WINDOW_H} hours", f"{WINDOW_H} hours"))
     rows = cur.fetchall()
-    cur.execute("SELECT node, title, kind, phase, started_at FROM minion_activity a WHERE started_at > now() - %s * interval '1 minute' "
+    cur.execute("SELECT node, title, kind, phase, started_at FROM minion_activity a WHERE " + RECENT + " "
                 "AND " + LIVE + " ORDER BY started_at", (ACTIVITY_MAX_MIN,))
     act: dict = {}
     for n, t, k, p, st in cur.fetchall():

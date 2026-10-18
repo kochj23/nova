@@ -8,7 +8,8 @@ s16le 16 kHz mono) — the minion needs no ffmpeg.
 Backends (2026-10-18; picked by what the venv has):
   mlx      Apple Silicon: mlx_whisper, mlx-community/whisper-large-v3-turbo (same model + settings as the Studio)
   faster   Linux/CPU: faster-whisper (CTranslate2, int8), the same large-v3-turbo weights in CT2 form
-  nova_minion_whisper.py AUDIO.{wav,pcm} [--model M] [--threads N] [--json]   |   --selftest   |   --backend
+  nova_minion_whisper.py AUDIO.{wav,pcm} [--model M] [--threads N] [--json] [--cpu]   |   --selftest   |   --backend
+--cpu forces faster-whisper (CPU) even where MLX exists, so a Mac can run CPU workers beside its GPU ones.
 --json prints {"text", "audio_s", "backend", "model", "s"} instead of bare text.
 Written by Jordan Koch (via Claude).
 """
@@ -45,6 +46,9 @@ def load_audio(path: str):
 
 
 def backend() -> str:
+    if "--cpu" in sys.argv:                   # 2026-10-18: a Mac's extra CPU workers beside its MLX (GPU) ones
+        import faster_whisper  # noqa: F401
+        return "faster"
     try:
         import mlx_whisper  # noqa: F401
         return "mlx"

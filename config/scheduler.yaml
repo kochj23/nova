@@ -1292,9 +1292,9 @@ tasks:
     gpu_heavy: true
   media_reingest_minions:          # continuous: every idle/dedicated whisper minion (Macs MLX, Linux faster-whisper; info.whisper_workers each) re-transcribes TV, any hour; nova-core extracts the audio, the Studio claims + stores (2026-10-16, fleet-wide 2026-10-18)
     script: nova_media_reingest.py
-    args: ["--minions", "--minutes", "55"]   # 2026-10-18: continuous — every 5m + overlap skip = back-to-back runs; the run re-scans minions every 30 s and feeds each N workers; media host extracts, minions transcribe
-    schedule: every 5m
-    timeout: 7800                    # 55 min of claiming + up to 70 min for the last in-flight file
+    args: ["--minions", "--minutes", "240"]   # 2026-10-18: continuous — every 1m + overlap skip = back-to-back runs; the run re-scans minions every 30 s and feeds each N workers; media host extracts, minions transcribe. 4 h runs: a run ends only when its slowest in-flight file does (CPU minions take 15-40 min), so short runs idled the fleet at every hand-over
+    schedule: every 1m
+    timeout: 19500                   # 240 min of claiming + up to 80 min (FILE_TIMEOUT_S) for the last in-flight file
     overlap: skip
   media_reingest_queue:            # Sun 21:30 — refresh the re-transcription queue (new files, Plex plays, recall)
     script: nova_media_reingest.py
@@ -1305,7 +1305,7 @@ tasks:
   work_lessons:                    # Nova's work reader: lessons, not dialogue (Jordan 2026-10-15). Fills free nova-core10 slots (2) and its own Ollama (net.digitalnoise.ollama-bulk :11436, 3 slots) concurrently, else one Studio call at a time; backs off when embeddings slow; per-tier switches service_config work_lessons/backfill_enabled_{A,B,C}
     script: nova_work_lessons.py
     args: ["--scheduled", "--minutes", "20", "--streams", "5"]   # 20 + finishing in-flight reads (~8-12) < 30: back-to-back runs, no skipped slot (2026-10-16)
-    schedule: every 5m               # 2026-10-18: runs took 27-44 min, so "every 30m" left minions idle up to 30 min between runs; every 5m + overlap skip = back-to-back
+    schedule: every 1m               # 2026-10-18: runs took 27-44 min, so "every 30m" left minions idle up to 30 min between runs; every 1m + overlap skip = back-to-back (the next run starts <=1 min after one ends)
     timeout: 2700
     overlap: skip
   belief_promote:                  # 2026-10-17: lessons are belief CANDIDATES; every 2h the best of them (generality, novelty, relevance, credibility, independent sources) are restated by the local 30B and booked/revised/reinforced within the hour's share of the 50/day cap; nova_beliefs.py, belief_candidates

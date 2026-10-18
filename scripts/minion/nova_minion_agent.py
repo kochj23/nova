@@ -20,6 +20,7 @@ Python 3.9 stdlib only (runs on the system python3 of a fresh Mac). Config: ~/.n
    "min_free_gb": 4 (optional), "max_load_per_core": 0.5 (Linux),
    "whisper": true (optional: ~/.nova-minion/whisper-venv + nova_minion_whisper.py -> TV re-transcription),
    "whisper_workers": 2, "whisper_threads": 8 (optional, 1.5: parallel transcriptions here / CPU threads each),
+   "whisper_cpu_workers": 1, "whisper_cpu_threads": 8 (optional, 1.5, Macs: faster-whisper CPU workers beside MLX),
    "ignore_console": true (optional, 1.5, Linux: a logged-in console session does not make the server 'away')}
 Token: login Keychain, service 'nova-minion', account <node>; else ~/.nova-minion/token (0600, SSH installs)
   python3 nova_minion_agent.py [--once] [--selftest]
@@ -218,8 +219,8 @@ def tick(conf: dict, tok: str) -> str:
              {"node": conf["node"], "state": state, "ollama_url": ollama, "models": have,
               "info": {"agent": VERSION, "os": platform.system(), "os_name": os_label(), "free_gb": round(free_gb(), 1),
                        "whisper": bool(conf.get("whisper")), "ncpu": os.cpu_count() or 0,
-                       **({"whisper_workers": int(conf["whisper_workers"])} if conf.get("whisper_workers") else {}),
-                       **({"whisper_threads": int(conf["whisper_threads"])} if conf.get("whisper_threads") else {}),
+                       **{k: int(conf[k]) for k in ("whisper_workers", "whisper_threads", "whisper_cpu_workers",
+                                                    "whisper_cpu_threads") if conf.get(k) is not None},
                        **({} if LINUX else {"ac": on_ac(), "throttled": throttled(), "idle_s": int(idle_seconds())})}},
              token=tok)
     except Exception as e:  # noqa: BLE001
