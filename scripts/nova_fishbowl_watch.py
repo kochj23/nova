@@ -40,6 +40,12 @@ NICK_LINKS = [
 THREAT = ("dox", "doxx", "fired", "your job", "your employer", "your work", "end in tears",
           "coming after", "come after you", "expose you", "your family", "your address",
           "get you fired", "contact your", "real world", "and yours")
+# Word-bounded so "dox" can't match a channel called "DOXX Report" (2026-10-17 false alarm).
+NICK_RE = re.compile(r"\b(" + "|".join(re.escape(n) for n in NICK) + r")\b", re.I)
+THREAT_RE = re.compile(r"\b(" + "|".join(re.escape(t) for t in THREAT) + r")\b", re.I)
+# nova_yt_capture.py prefixes every chunk with "[Fishbowl stream — <channel> — <title>]";
+# match only the spoken transcript, never the channel name or video title.
+_HEADER_RE = re.compile(r"^\s*\[Fishbowl stream —.*?\]\s*(\(transcript\))?\s*", re.I | re.S)
 
 
 def _load():
@@ -56,12 +62,12 @@ def _save(d):
 
 def hits(text: str):
     """Return the list of trip reasons for a memory, or [] if clean."""
-    t = (text or "").lower()
+    t = _HEADER_RE.sub("", text or "", count=1).lower()
     reasons = []
     m = IDENTITY_RE.search(t)
     if m:
         reasons.append(f"identity:{m.group(1)}")
-    if any(n in t for n in NICK) and any(th in t for th in THREAT):
+    if NICK_RE.search(t) and THREAT_RE.search(t):
         reasons.append("nicholas+threat")
     return reasons
 
