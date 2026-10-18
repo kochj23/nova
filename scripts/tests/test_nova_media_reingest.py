@@ -370,3 +370,176 @@ class TestTranscribeRemote(unittest.TestCase):
         with self.assertRaises(subprocess.CalledProcessError):
             mr.transcribe_remote("nova-core6", Path("/tmp/a.wav"), 600, _run=run)
         self.assertEqual(len(calls), 3)                           # scp, whisper (failed), cleanup still ran
+
+
+# ---------------------------------------------------------------- 2026-10-18: continuous, media-host extraction
+class _Popen:
+    """subprocess.Popen stand-in for stream_pcm: records argv, yields fixed PCM bytes, given return codes."""
+    made = []
+
+    def __init__(self, cmd, stdout=None, stdin=None, stderr=None, rc=0, data=b"\1\0" * 16000):
+        self.cmd, self.rc = cmd, rc
+        self.stdout = io.BytesIO(data) if stdout is not None else None
+        self.stderr = io.BytesIO(b"") if stderr is not None else None
+        _Popen.made.append(self)
+
+    def wait(self, timeout=None):
+        return self.rc
+
+    def kill(self):
+        pass
+
+
+class TestMinionsSecurity(unittest.TestCase):
+    def test_extract_cmd_quotes_the_path_and_runs_at_idle_priority(self):
+        nasty = ROOT + "TVShows/x/a'; touch /tmp/pwned #.mp4"
+        cmd = mr.extract_cmd(nasty)
+        self.assertIn("'\"'\"'", cmd)                              # the quote is escaped, not closed
+        self.assertTrue(cmd.startswith("nice -n 19 ionice -c3 ffmpeg"))
+        self.assertTrue(cmd.endswith("-f s16le -"))
+
+    def test_minion_cleanup_only_removes_its_own_clip(self):
+        calls = []
+
+        def run(cmd, **kw):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout=b'{"text": "hi", "audio_s": 3.0}', stderr=b"")
+        fetch = mr.minion_fetch("nova-core3", "kochj@192.168.1.5", 12, "Linux", _run=run, _stream=lambda *a: None)
+        self.assertEqual(fetch(EP, 600), ("hi", 3.0))
+        self.assertIn("--threads 12", calls[0][-1])
+        self.assertRegex(calls[-1][-1], r"/bin/rm -f -- reingest-[0-9a-f]{12}\.pcm$")
+
+
+class TestMinionsPerformance(unittest.TestCase):
+    def test_plan_workers_scales(self):
+        rows = [(f"n{i}", f"kochj@10.0.{i // 250}.{i % 250}", 2, 8, "Linux") for i in range(5000)]
+        t0 = time.monotonic()
+        plan = mr.plan_workers(rows, {f"n{i}": {0} for i in range(0, 5000, 2)})
+        self.assertLess(time.monotonic() - t0, 1.0)
+        self.assertEqual(len(plan), 2500 * 1 + 2500 * 2)
+
+
+class TestMinionsRetry(unittest.TestCase):
+    def test_clip_removed_when_whisper_fails(self):
+        calls = []
+
+        def run(cmd, **kw):
+            calls.append(cmd)
+            if "nova_minion_whisper.py" in cmd[-1]:
+                raise subprocess.CalledProcessError(1, cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
+        fetch = mr.minion_fetch("nova-core2", "kochj@192.168.1.86", 0, "Linux", _run=run, _stream=lambda *a: None)
+        with self.assertRaises(subprocess.CalledProcessError):
+            fetch(EP, 600)
+        self.assertIn("/bin/rm -f --", calls[-1][-1])
+
+    def test_failed_extraction_raises_with_reason(self):
+        _Popen.made = []
+
+        def popen(cmd, **kw):
+            return _Popen(cmd, rc=1 if "ffmpeg" in cmd[-1] else 0, **kw)
+        with tempfile.TemporaryDirectory() as d, self.assertRaises(RuntimeError):
+            mr.stream_pcm(EP, None, os.path.join(d, "x.pcm"), 60, _popen=popen)
+
+
+class TestMinionsUnit(unittest.TestCase):
+    def test_studio_load_and_budget(self):
+        cpu, mem = mr.studio_load("  10.0\n 290.5\n abc\n 0.0\n", 4, "System-wide memory free percentage: 87%")
+        self.assertAlmostEqual(cpu, 0.751, places=3)
+        self.assertEqual(mem, 0.87)
+        self.assertTrue(mr.over_budget(cpu, mem))                 # 75.1% CPU > 75%
+        self.assertFalse(mr.over_budget(0.5, 0.30))
+        self.assertTrue(mr.over_budget(0.5, 0.20))                # under 25% free memory
+        self.assertEqual(mr.studio_load("", 8, "")[1], 1.0)       # unreadable pressure never blocks
+
+    def test_plan_workers_respects_alive_slots_and_studio_cap(self):
+        rows = [("mac-studio", None, 2, 0, "Darwin"), ("nova-core9", "kochj@192.168.1.7", 2, 0, "Darwin")]
+        plan = mr.plan_workers(rows, {"nova-core9": {0}}, studio_n=lambda w: w - 1)
+        self.assertEqual(plan, [("mac-studio", None, 0, "Darwin", 0), ("nova-core9", "kochj@192.168.1.7", 0, "Darwin", 1)])
+
+    def test_whisper_minions_maps_hosts(self):
+        cur = _Cur([("FROM minion_nodes", [("mac-studio", "192.168.1.6", 2, 0, "Darwin"),
+                                           ("nova-core3", "192.168.1.5", 2, 12, "Linux"), ("x", None, 1, 0, "")])])
+        self.assertEqual([r[1] for r in mr.whisper_minions(cur)], [None, "kochj@192.168.1.5", "x"])
+
+
+class TestMinionsIntegration(unittest.TestCase):
+    def test_process_with_fetch_stores_and_supersedes(self):
+        oc = _Cur([("source_vector FROM media_ingest_state", ("automotive",))])
+        mc = _Cur([("FROM memories WHERE metadata->>'show'", [("old-1", "automotive", "tv_transcript", 400, True)])])
+        stored = []
+
+        def post(text, source, meta):
+            stored.append(meta)
+            return {"id": f"new-{len(stored)}", "status": "stored"}
+        with mock.patch.object(mr, "extract_audio", side_effect=AssertionError("the Studio must not extract")), \
+                redirect_stdout(io.StringIO()):
+            r = mr.process(oc, mc, (EP, "Engine Masters", "Cheap Carb Showdown", "trash"), 600, post=post,
+                           fetch=lambda p, t: (SPEECH, 1800.0))
+        self.assertEqual((r["status"], r["audio_s"], r["superseded"]), ("done", 1800.0, 1))
+        state = [p for q, p in _writes(oc) if "UPDATE media_ingest_state" in q][0]
+        self.assertIn("minion whisper", state[3])
+
+    def test_stream_pcm_pipes_media_host_into_the_minion(self):
+        _Popen.made = []
+        mr.stream_pcm(EP, "kochj@192.168.1.5", "reingest-abc.pcm", 60, _popen=lambda cmd, **kw: _Popen(cmd, **kw))
+        src, dst = _Popen.made
+        self.assertEqual(src.cmd[-2], mr.MEDIA_HOST)
+        self.assertEqual(dst.cmd[-2], "kochj@192.168.1.5")
+        self.assertEqual(dst.cmd[-1], "cat > .nova-minion/reingest-abc.pcm")
+
+
+class TestMinionsFunctional(unittest.TestCase):
+    def test_studio_local_path_wraps_pcm_and_uses_local_whisper(self):
+        def stream(path, host, dest, timeout):
+            self.assertIsNone(host)
+            Path(dest).write_bytes(b"\0\0" * 16000 * 3)
+        with mock.patch.object(mr, "transcribe_local", return_value="local text") as tl:
+            text, audio_s = mr.minion_fetch("mac-studio", None, _stream=stream)(EP, 60)
+        self.assertEqual((text, audio_s), ("local text", 3.0))
+        self.assertTrue(tl.call_args[0][0].name.endswith(".wav"))
+
+    def test_supervisor_starts_each_slot_and_stops_when_queue_is_empty(self):
+        started = []
+        pend = iter([(1,), None])
+        cur = _Cur([("status = 'pending' LIMIT 1", lambda c: next(pend))])
+        conn = mock.Mock()
+        conn.cursor.return_value = cur
+        rows = [("nova-core3", "kochj@192.168.1.5", 2, 12, "Linux"), ("nova-core4", "kochj@192.168.1.250", 1, 6, "Linux")]
+        with mock.patch.object(mr, "connect", return_value=conn), mock.patch.object(mr, "guards", return_value=None), \
+                mock.patch.object(mr, "revert_stale"), mock.patch.object(mr, "whisper_minions", return_value=rows), \
+                mock.patch.object(mr, "minion_worker", side_effect=lambda *a: started.append((a[0], a[-1]))), \
+                redirect_stdout(io.StringIO()):
+            mr.run_minions(5, _sleep=lambda s: None)
+        self.assertEqual(sorted(started), [("nova-core3", 0), ("nova-core3", 1), ("nova-core4", 0)])
+
+
+class TestMinionsFrame(unittest.TestCase):
+    def test_studio_heavy_work_runs_at_utility_qos(self):
+        if sys.platform == "darwin":
+            self.assertEqual(mr.QOS[:3], ["/usr/sbin/taskpolicy", "-c", "utility"])   # not -b: 6x slower Whisper
+        self.assertIn("*QOS, WHISPER_BIN", SRC)
+        self.assertIn("*QOS, FFMPEG_BIN", SRC)
+        self.assertEqual(mr.STUDIO_BUDGET, 0.75)
+
+    def test_scheduler_runs_the_dispatchers_back_to_back(self):
+        yml = SCRIPTS.parent / "config" / "scheduler.yaml"
+        if not yml.exists():
+            self.skipTest("no scheduler.yaml next to scripts")
+        txt = yml.read_text()
+        for task in ("media_reingest_minions", "work_lessons"):
+            block = txt.split(f"\n  {task}:", 1)[1][:900]
+            self.assertIn("schedule: every 5m", block)
+            self.assertIn("overlap: skip", block)
+
+
+class TestInterruptedAttempt(unittest.TestCase):
+    """2026-10-18: chunks an interrupted attempt stored (pipeline already reingest) are retired on the retry."""
+
+    def test_old_memories_includes_own_pipeline_rows_as_legacy(self):
+        mc = _Cur([("FROM memories", [])])
+        mr.old_memories(mc, "Engine Masters", EP)
+        sql, params = mc.sql[-1], mc.params[-1]
+        self.assertNotIn("<> %s AND (metadata->>'source_file'", sql)
+        self.assertIn("metadata->>'source_file' = %s AND coalesce(metadata->>'pipeline', '') <> %s", sql)
+        self.assertEqual(params[:3], (EP, mr.PIPELINE, "Engine Masters"))

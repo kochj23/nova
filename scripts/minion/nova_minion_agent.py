@@ -18,7 +18,9 @@ Python 3.9 stdlib only (runs on the system python3 of a fresh Mac). Config: ~/.n
   {"node": "studio-2", "hub": "http://<studio>:37590", "ollama_url": "http://<this mac>:11434",
    "idle_after_min": 10, "hours": "22-07" (optional), "dedicated": false, "models": ["qwen3:30b-a3b"],
    "min_free_gb": 4 (optional), "max_load_per_core": 0.5 (Linux),
-   "whisper": true (optional: ~/.nova-minion/whisper-venv + nova_minion_whisper.py -> TV re-transcription)}
+   "whisper": true (optional: ~/.nova-minion/whisper-venv + nova_minion_whisper.py -> TV re-transcription),
+   "whisper_workers": 2, "whisper_threads": 8 (optional, 1.5: parallel transcriptions here / CPU threads each),
+   "ignore_console": true (optional, 1.5, Linux: a logged-in console session does not make the server 'away')}
 Token: login Keychain, service 'nova-minion', account <node>; else ~/.nova-minion/token (0600, SSH installs)
   python3 nova_minion_agent.py [--once] [--selftest]
 Written by Jordan Koch (via Claude).
@@ -41,7 +43,7 @@ CONF = os.path.expanduser("~/.nova-minion/config.json")
 LOCAL_PORT = 37591
 BEAT_S = 30
 STATUS_TTL_S = 4
-VERSION = "1.4"
+VERSION = "1.5"
 _cache = {"t": 0.0, "body": None, "lock": threading.Lock()}
 _state = {"state": "offline", "since": None}
 
@@ -122,6 +124,7 @@ def linux_busy(conf: dict, loadavg: str | None = None, who_out: str | None = Non
     load5 = float(la.split()[1])
     users = who_out if who_out is not None else sh("/usr/bin/who")
     interactive = any(re.search(r"\s(tty\d+|:\d+|seat\d+)\b", l) for l in users.splitlines())
+    interactive = interactive and not conf.get("ignore_console")   # 1.5: a kiosk/auto-login desktop is not a person
     return load5 / float(ncpu or os.cpu_count() or 1) > float(conf.get("max_load_per_core", 0.5)) or interactive
 
 
@@ -198,8 +201,9 @@ def tick(conf: dict, tok: str) -> str:
     else:
         state = decide(conf, idle_seconds(), screensaver_up(), on_ac(), throttled(), datetime.now().hour, mem)
     have = models_here(ollama) if ollama else []
-    if not have and state != "away":
-        state = "away"                           # Ollama is down: nothing to lend
+    if not have and state != "away" and not conf.get("whisper"):
+        state = "away"                           # Ollama is down and no Whisper: nothing to lend (1.5: a Whisper
+                                                 # minion lends its CPU/GPU to transcription without Ollama)
     prev = _state["state"]
     if state != prev:
         log(f"{prev} -> {state}")
@@ -213,7 +217,9 @@ def tick(conf: dict, tok: str) -> str:
         http(conf["hub"].rstrip("/") + "/heartbeat",
              {"node": conf["node"], "state": state, "ollama_url": ollama, "models": have,
               "info": {"agent": VERSION, "os": platform.system(), "os_name": os_label(), "free_gb": round(free_gb(), 1),
-                       "whisper": bool(conf.get("whisper")),
+                       "whisper": bool(conf.get("whisper")), "ncpu": os.cpu_count() or 0,
+                       **({"whisper_workers": int(conf["whisper_workers"])} if conf.get("whisper_workers") else {}),
+                       **({"whisper_threads": int(conf["whisper_threads"])} if conf.get("whisper_threads") else {}),
                        **({} if LINUX else {"ac": on_ac(), "throttled": throttled(), "idle_s": int(idle_seconds())})}},
              token=tok)
     except Exception as e:  # noqa: BLE001
@@ -289,6 +295,7 @@ def selftest() -> int:
     assert linux_busy({}, "0.10 3.50 1.0 1/1 1", "", 6) is True                         # load 3.5/6 > 0.5
     assert linux_busy({}, "0.10 0.50 1.0 1/1 1", "kochj pts/0 2026-10-16 (10.0.0.9)", 6) is False   # ssh is fine
     assert linux_busy({}, "0.10 0.50 1.0 1/1 1", "kochj tty2 2026-10-16", 6) is True     # someone at the console
+    assert linux_busy({"ignore_console": True}, "0.10 0.50 1.0 1/1 1", "kochj tty2 2026-10-16", 6) is False
     print("selftest OK")
     return 0
 

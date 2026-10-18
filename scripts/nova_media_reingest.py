@@ -82,6 +82,10 @@ WHISPER_BIN = "/opt/homebrew/bin/mlx_whisper"
 FFMPEG_BIN = "/opt/homebrew/bin/ffmpeg"
 WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
 HF_HOME = str(Path.home() / "mlxb_hf")
+# 2026-10-18 (Jordan): the Studio is a worker at ~75% of its CPU/GPU/RAM, with his desktop apps winning contention.
+# Studio-side heavy subprocesses run at utility QoS + nice 10 (background QoS measured 6x slower for MLX Whisper:
+# 33 s vs 5.4 s on a 5-min clip; utility costs nothing and still yields to interactive work).
+QOS = ["/usr/sbin/taskpolicy", "-c", "utility", "/usr/bin/nice", "-n", "10"] if sys.platform == "darwin" else []
 WAV_BYTES_PER_SEC = 32000                      # 16 kHz * 16-bit * mono
 STATEMENT_TIMEOUT_MS = 120000
 TRANSCRIPT_TYPES = ("tv_transcript", "video_transcript", "youtube_transcript")
@@ -437,7 +441,7 @@ def build_queue(oc, mc, files: dict | None = None, plex: dict | None = None) -> 
 # ---------------------------------------------------------------- one file
 
 def _ffmpeg(src: str, wav: Path, _run=subprocess.run) -> None:
-    _run([FFMPEG_BIN, "-nostdin", "-loglevel", "error", "-y", "-i", src, "-vn", "-ac", "1", "-ar", "16000",
+    _run([*QOS, FFMPEG_BIN, "-nostdin", "-loglevel", "error", "-y", "-i", src, "-vn", "-ac", "1", "-ar", "16000",
           "-acodec", "pcm_s16le", str(wav)], check=True, timeout=3600, capture_output=True)
 
 
@@ -470,7 +474,7 @@ def extract_audio(path: str, tmp: Path, _run=subprocess.run) -> Path:
 def transcribe_local(wav: Path, tmp: Path, timeout: float, _run=subprocess.run) -> str:
     """mlx_whisper CLI (a subprocess, so a time-boxed batch can kill it). Local only."""
     env = dict(os.environ, HF_HOME=os.environ.get("HF_HOME", HF_HOME))
-    _run([WHISPER_BIN, str(wav), "--model", WHISPER_MODEL, "--language", "en",
+    _run([*QOS, WHISPER_BIN, str(wav), "--model", WHISPER_MODEL, "--language", "en",
           "--condition-on-previous-text", "False", "--output-format", "txt",
           "--output-dir", str(tmp), "--output-name", "transcript", "--verbose", "False"],
          check=True, timeout=timeout, capture_output=True, env=env)
@@ -498,15 +502,16 @@ def old_memories(mcur, show: str, path: str) -> list[tuple]:
     The source is the one the ingest wrote (metadata.reclass_from when a later re-router moved the row).
     Two shapes: nova_tv_ingest's (metadata.source_file) and the May-2026 'tv_transcript-transcription' rows
     (metadata.file = basename, 'part n/m' titles); both are transcripts of this file and both are superseded."""
+    # 2026-10-18: live chunks of THIS pipeline for the file can only come from an earlier attempt that stored and then
+    # died before booking the row (a killed dispatcher); they are retired like legacy rows, never left as duplicates.
     mcur.execute("SELECT id, coalesce(metadata->>'reclass_from', source), metadata->>'type', "
                  "array_length(regexp_split_to_array(text, '\\s+'), 1), "
-                 "metadata->>'source_file' = %s "
+                 "metadata->>'source_file' = %s AND coalesce(metadata->>'pipeline', '') <> %s "
                  "FROM memories WHERE metadata->>'show' = %s AND superseded_by IS NULL "
-                 "AND coalesce(metadata->>'pipeline', '') <> %s "
                  "AND (metadata->>'source_file' = %s OR (metadata->>'file' = %s "
                  "AND metadata->>'origin' LIKE '%%transcription')) "
                  "ORDER BY (metadata->>'chunk')::int NULLS LAST, id",
-                 (path, show, PIPELINE, path, os.path.basename(path)))
+                 (path, PIPELINE, show, path, os.path.basename(path)))
     return mcur.fetchall()
 
 
@@ -536,20 +541,27 @@ def supersede(mcur, target: str, old_ids: list[str]) -> int:
     return mcur.rowcount or 0
 
 
-def process(oc, mc, item: tuple, timeout: float, dry_out: Path | None = None, post=None, transcribe=None) -> dict:
-    """Transcribe one file and (unless dry_out) store + supersede. Returns the measured result."""
+def process(oc, mc, item: tuple, timeout: float, dry_out: Path | None = None, post=None, transcribe=None,
+            fetch=None) -> dict:
+    """Transcribe one file and (unless dry_out) store + supersede. Returns the measured result.
+    fetch(path, timeout) -> (text, audio_s): extraction AND transcription happen elsewhere (2026-10-18: the media host
+    extracts, a minion transcribes); gpu_s is then the whole fetch."""
     import nova_tv_ingest as tv
     path, show, title, prior = item
     t0 = time.monotonic()
-    tmp = Path(tempfile.mkdtemp(prefix="nova-reingest-"))
-    try:
-        wav = extract_audio(path, tmp)
-        audio_s = wav_seconds(wav.stat().st_size)
-        g0 = time.monotonic()
-        text = transcribe(wav, timeout) if transcribe else transcribe_local(wav, tmp, timeout)
-        gpu_s = time.monotonic() - g0
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    if fetch is not None:
+        text, audio_s = fetch(path, timeout)
+        gpu_s = time.monotonic() - t0
+    else:
+        tmp = Path(tempfile.mkdtemp(prefix="nova-reingest-"))
+        try:
+            wav = extract_audio(path, tmp)
+            audio_s = wav_seconds(wav.stat().st_size)
+            g0 = time.monotonic()
+            text = transcribe(wav, timeout) if transcribe else transcribe_local(wav, tmp, timeout)
+            gpu_s = time.monotonic() - g0
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
     raw_words = len(text.split())
     chunks = tv.chunk_text(text)
     old = old_memories(mc, show, path)
@@ -581,7 +593,7 @@ def process(oc, mc, item: tuple, timeout: float, dry_out: Path | None = None, po
     res["stored"] = len(ids)
     oc.execute("UPDATE media_ingest_state SET status = 'ingested', chunks = %s, words = %s, source_vector = %s, "
                "processed_at = now(), error_message = %s WHERE file_path = %s",
-               (len(ids), raw_words, source, f"{PIPELINE}: {'minion' if transcribe else 'local'} MLX whisper; "
+               (len(ids), raw_words, source, f"{PIPELINE}: {'minion' if (transcribe or fetch) else 'local'} whisper; "
                                              f"{res['superseded']} old superseded",
                 path))
     try:
@@ -609,11 +621,11 @@ def guards(oc, check_movie: bool = True) -> str | None:
 
 
 def do_item(oc, mc, item: tuple, left: float, stats: dict, post=None, transcribe=None, tag: str = "",
-            node: str = "mac-studio") -> bool:
+            node: str = "mac-studio", fetch=None) -> bool:
     """Process one claimed file and book the result. False = the window closed mid-file (stop the loop)."""
     log(f"▶{tag} {item[1]} — {item[2][:70]}")
     try:
-        r = process(oc, mc, item, timeout=left, post=post, transcribe=transcribe)
+        r = process(oc, mc, item, timeout=left, post=post, transcribe=transcribe, fetch=fetch)
     except subprocess.TimeoutExpired:
         finish(oc, item[0], "pending", error="batch window closed mid-file")
         log(f" {tag} window closed mid-file; back to pending")
@@ -655,27 +667,166 @@ def run_batch(oc, mc, deadline: datetime, limit: int | None, post=None) -> dict:
     return stats
 
 
-# ---------------------------------------------------------------- minions (2026-10-16)
-# Idle minion Macs with MLX Whisper (agent config "whisper": true -> minion_nodes.info.whisper) transcribe while
-# idle, any hour: the Studio claims + extracts audio (CPU), the minion runs Whisper on its GPU, the Studio stores.
-# No GPU lock: the Studio's GPU is not used. Each minion shows "transcribing: <episode>" on its screensaver.
+# ---------------------------------------------------------------- minions (2026-10-16; continuous since 2026-10-18)
+# Whisper minions (agent config "whisper": true -> minion_nodes.info.whisper) transcribe whenever they are idle or
+# dedicated, any hour. 2026-10-18: the MEDIA HOST (nova-core, where the files live) extracts the audio with ffmpeg at
+# nice 19 / ionice idle (a 30-min episode in ~5 s) and the raw 16 kHz PCM streams through here straight onto the
+# minion — the Studio no longer reads videos over SMB or runs ffmpeg for minions; it only claims, pipes bytes and
+# stores. Each node runs info.whisper_workers workers (default 1; 2 keeps a GPU busy while the next clip streams and
+# the last one is stored). A supervisor re-scans every RESCAN_S, so a node that turns idle mid-run joins at once and
+# one that turns away stops after its current file. The Studio (mac-studio) works too, inside Jordan's 75% budget.
+# Safety unchanged: claim with SKIP LOCKED, supersede never delete, a failed file retries up to MAX_ATTEMPTS.
 MINION_FRESH_S = 90
+MEDIA_HOST = REMOTE_HOST
+STUDIO_NODE = "mac-studio"
+STUDIO_BUDGET = 0.75            # Jordan 2026-10-18: "Consume 75% of it!" — leave ~25% for Teams/Outlook
+RESCAN_S = 30
+FILE_TIMEOUT_S = 80 * 60        # one file's extract + transcribe; the run deadline only stops new claims
+PCM_BYTES_PER_SEC = 32000
 
 
-def whisper_minions(oc) -> list[str]:
-    oc.execute("SELECT node FROM minion_nodes WHERE state IN ('idle','dedicated') AND (info->>'whisper')::boolean "
+def whisper_minions(oc) -> list[tuple]:
+    """(node, ssh host, workers, threads, os) for every fresh idle/dedicated whisper minion."""
+    oc.execute("SELECT node, ip, greatest(1, least(8, coalesce((info->>'whisper_workers')::int, 1))), "
+               "coalesce((info->>'whisper_threads')::int, 0), coalesce(info->>'os', '') FROM minion_nodes "
+               "WHERE state IN ('idle','dedicated') AND (info->>'whisper')::boolean "
                "AND last_seen > now() - %s * interval '1 second' ORDER BY node", (MINION_FRESH_S,))
-    return [r[0] for r in oc.fetchall()]
+    return [(n, None if n == STUDIO_NODE else (f"kochj@{ip}" if ip else n), w, t, o) for n, ip, w, t, o in oc.fetchall()]
 
 
 def minion_free(oc, node: str) -> bool:
-    return node in whisper_minions(oc)
+    return any(r[0] == node for r in whisper_minions(oc))
 
 
-def minion_worker(node: str, deadline: datetime, stats: dict, lock: threading.Lock):
-    oc, mc = connect("nova_ops").cursor(), connect("nova_memories").cursor()
+def extract_cmd(path: str) -> str:
+    """Shell command for the media host: the file's audio as raw 16 kHz mono s16le on stdout, at idle priority."""
+    return ("nice -n 19 ionice -c3 ffmpeg -nostdin -loglevel error -i " + shlex.quote(to_remote(path)) +
+            " -vn -ac 1 -ar 16000 -f s16le -")
+
+
+def stream_pcm(path: str, host: str | None, dest: str, timeout: float, _popen=subprocess.Popen) -> None:
+    """media host ffmpeg -> (this host) -> the minion's ~/.nova-minion/<dest>, or a local file when host is None."""
+    src = _popen(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", MEDIA_HOST, extract_cmd(path)],
+                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    out = open(dest, "wb") if host is None else None
+    try:
+        dst = _popen(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host,
+                      "cat > .nova-minion/" + shlex.quote(dest)], stdin=src.stdout) if host else None
+        if dst is None:
+            shutil.copyfileobj(src.stdout, out, 1 << 20)
+        src.stdout.close()
+        rc_dst = dst.wait(timeout=timeout) if dst else 0
+        rc_src = src.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        src.kill()
+        raise
+    finally:
+        if out:
+            out.close()
+    if rc_src or rc_dst:
+        err = (src.stderr.read() if src.stderr else b"") or b""
+        raise RuntimeError(f"audio extraction on {MEDIA_HOST} failed (ffmpeg {rc_src}, copy {rc_dst}): "
+                           f"{err.decode(errors='ignore')[-200:]}")
+
+
+def pcm_to_wav(pcm: Path, wav: Path) -> float:
+    import wave
+    with open(pcm, "rb") as f, wave.open(str(wav), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        while True:
+            b = f.read(1 << 20)
+            if not b:
+                break
+            w.writeframes(b)
+    return pcm.stat().st_size / PCM_BYTES_PER_SEC
+
+
+def minion_fetch(node: str, host: str | None, threads: int = 0, os_name: str = "", _run=subprocess.run,
+                 _stream=None):
+    """fetch(path, timeout) -> (text, audio_s) for process(): extract on the media host, transcribe on the node."""
+    _stream = _stream or stream_pcm
+
+    def fetch(path: str, timeout: float):
+        timeout = max(timeout, FILE_TIMEOUT_S)
+        name = f"reingest-{uuid.uuid4().hex[:12]}.pcm"
+        if host is None:                                   # the Studio itself: local MLX Whisper at utility QoS
+            tmp = Path(tempfile.mkdtemp(prefix="nova-reingest-"))
+            try:
+                _stream(path, None, str(tmp / name), timeout)
+                audio_s = pcm_to_wav(tmp / name, tmp / "audio.wav")
+                (tmp / name).unlink(missing_ok=True)
+                return transcribe_local(tmp / "audio.wav", tmp, timeout, _run=_run), audio_s
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+        ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host]
+        prio = "nice -n 19 ionice -c3" if os_name == "Linux" else "nice -n 5"
+        try:
+            _stream(path, host, name, timeout)
+            r = _run(ssh + [f"cd .nova-minion && {prio} whisper-venv/bin/python nova_minion_whisper.py {name} --json"
+                            + (f" --threads {int(threads)}" if threads else "")],
+                     check=True, timeout=timeout, capture_output=True)
+            out = r.stdout.decode("utf-8", "ignore") if isinstance(r.stdout, bytes) else str(r.stdout or "")
+            d = json.loads(out.strip().splitlines()[-1]) if out.strip() else {}
+            return str(d.get("text") or "").strip(), float(d.get("audio_s") or 0.0)
+        finally:
+            _run(ssh + [f"cd .nova-minion && /bin/rm -f -- {name}"], timeout=60, capture_output=True)
+    return fetch
+
+
+def studio_load(ps_out: str | None = None, ncpu: int | None = None, mp_out: str | None = None) -> tuple[float, float]:
+    """(CPU busy fraction, memory free fraction) of this Mac. CPU = sum of process %cpu / cores (load average counts
+    GPU-waiting threads and read ~1.1/core while the CPU was ~30% busy); memory = memory_pressure's free %."""
+    if ps_out is None:
+        ps_out = subprocess.run(["/bin/ps", "-A", "-o", "%cpu="], capture_output=True, text=True, timeout=20).stdout
+    if mp_out is None:
+        mp_out = subprocess.run(["/usr/bin/memory_pressure"], capture_output=True, text=True, timeout=20).stdout
+    n = ncpu or os.cpu_count() or 1
+    cpu = sum(float(x) for x in ps_out.split() if re.match(r"^\d+(\.\d+)?$", x)) / (100.0 * n)
+    m = re.search(r"free percentage:\s*(\d+)%", mp_out)
+    return round(cpu, 3), (int(m.group(1)) / 100.0 if m else 1.0)
+
+
+def over_budget(cpu: float, mem_free: float, budget: float = STUDIO_BUDGET) -> bool:
+    return cpu > budget or mem_free < 1.0 - budget
+
+
+def studio_workers(oc, wanted: int) -> int:
+    """The Studio's whisper workers: info.whisper_workers, one fewer while its own nightly batch holds the GPU lock."""
+    oc.execute("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND granted "
+               "AND objid::bigint = (hashtext(%s)::bigint & 4294967295)", (GPU_WHISPER_LOCK,))
+    return max(0, wanted - (1 if (oc.fetchone() or [0])[0] else 0))
+
+
+_SHARED: dict = {}
+_SHARED_LOCK = threading.Lock()
+
+
+def shared_conn(dbname: str):
+    """One connection per database for the whole dispatcher, shared by every worker thread (psycopg2 connections
+    are thread-safe; each thread uses its own cursor). 2026-10-18: two connections per worker x 20 workers pushed
+    the PG primary to max_connections and the minion hub started answering 503."""
+    with _SHARED_LOCK:
+        c = _SHARED.get(dbname)
+        if c is None or c.closed:
+            c = _SHARED[dbname] = connect(dbname)
+        return c
+
+
+def minion_worker(node: str, host: str | None, threads: int, os_name: str, deadline: datetime, stats: dict,
+                  lock: threading.Lock, slot: int = 0):
+    oc, mc = shared_conn("nova_ops").cursor(), shared_conn("nova_memories").cursor()
     mine = {"done": 0, "empty": 0, "error": 0, "audio_s": 0.0, "gpu_s": 0.0}
-    while (deadline - datetime.now()).total_seconds() > 300 and minion_free(oc, node) and not guards(oc, check_movie=False):
+    fetch = minion_fetch(node, host, threads, os_name)
+    tag = f" [{node}#{slot}]"
+    while datetime.now() < deadline and minion_free(oc, node) and not guards(oc, check_movie=False):
+        if host is None:
+            cpu, memf = studio_load()
+            if over_budget(cpu, memf):
+                log(f"{tag} over the Studio budget (cpu {cpu:.0%}, mem free {memf:.0%}); waiting")
+                time.sleep(RESCAN_S)
+                continue
         item = claim_next(oc)
         if not item:
             break
@@ -683,8 +834,7 @@ def minion_worker(node: str, deadline: datetime, stats: dict, lock: threading.Lo
         oc.execute("INSERT INTO minion_activity (node, work_key, title, kind, phase) VALUES (%s,%s,%s,'tv','transcribing') "
                    "ON CONFLICT (node, work_key) DO UPDATE SET started_at=now()", (node, key, f"{item[1]} — {item[2]}"[:300]))
         try:
-            ok = do_item(oc, mc, item, (deadline - datetime.now()).total_seconds(), mine,
-                         transcribe=lambda wav, t: transcribe_remote(node, wav, t), tag=f" [{node}]", node=node)
+            ok = do_item(oc, mc, item, FILE_TIMEOUT_S, mine, fetch=fetch, tag=tag, node=node)
         finally:
             oc.execute("DELETE FROM minion_activity WHERE node=%s AND work_key=%s", (node, key))
         if not ok:
@@ -692,31 +842,56 @@ def minion_worker(node: str, deadline: datetime, stats: dict, lock: threading.Lo
     with lock:
         for k, v in mine.items():
             stats[k] += v
-    log(f"[{node}] stopped: {mine['done']} done, {mine['error']} error, {mine['audio_s'] / 60:.0f} min audio")
+    log(f"{tag} stopped: {mine['done']} done, {mine['error']} error, {mine['audio_s'] / 60:.0f} min audio")
 
 
-def run_minions(minutes: float) -> dict:
-    oc = connect("nova_ops").cursor()
+def plan_workers(rows: list[tuple], alive: dict, studio_n=None) -> list[tuple]:
+    """Pure: (node, host, threads, os, slot) workers to start so each node runs its wanted count."""
+    out = []
+    for node, host, want, threads, os_name in rows:
+        if node == STUDIO_NODE and studio_n is not None:
+            want = studio_n(want)
+        have = alive.get(node, set())
+        out += [(node, host, threads, os_name, s) for s in range(want) if s not in have]
+    return out
+
+
+def run_minions(minutes: float, _sleep=time.sleep) -> dict:
+    oc = shared_conn("nova_ops").cursor()
     why = guards(oc, check_movie=False)
     if why:
         log(f"minions: standing down — {why}")
-        return {}
-    nodes = whisper_minions(oc)
-    if not nodes:
-        log("minions: no idle whisper minion")
         return {}
     revert_stale(oc)
     deadline = datetime.now() + timedelta(minutes=minutes)
     stats = {"done": 0, "empty": 0, "error": 0, "audio_s": 0.0, "gpu_s": 0.0}
     lock = threading.Lock()
-    threads = [threading.Thread(target=minion_worker, args=(n, deadline, stats, lock), daemon=True) for n in nodes]
-    log(f"minions: {', '.join(nodes)} for {minutes:.0f} min")
-    for t in threads:
-        t.start()
-    for t in threads:
+    threads: dict = {}                                  # (node, slot) -> Thread
+    seen: set = set()
+    while datetime.now() < deadline and not guards(oc, check_movie=False):
+        oc.execute("SELECT 1 FROM media_reingest_queue WHERE status = 'pending' LIMIT 1")
+        if not oc.fetchone():
+            break
+        alive: dict = {}
+        for (n, s), t in threads.items():
+            if t.is_alive():
+                alive.setdefault(n, set()).add(s)
+        for node, host, thr, os_name, slot in plan_workers(whisper_minions(oc), alive,
+                                                            studio_n=lambda w: studio_workers(oc, w)):
+            t = threading.Thread(target=minion_worker, args=(node, host, thr, os_name, deadline, stats, lock, slot),
+                                 daemon=True)
+            threads[(node, slot)] = t
+            t.start()
+            if node not in seen:
+                seen.add(node)
+                log(f"minions: {node} joined")
+        _sleep(RESCAN_S)
+    for t in threads.values():
         t.join()
+    if not threads:
+        log("minions: no idle whisper minion")
     log(f"minions: {stats['done']} done, {stats['empty']} empty, {stats['error']} error, "
-        f"{stats['audio_s'] / 3600:.1f} h of audio")
+        f"{stats['audio_s'] / 3600:.1f} h of audio on {len(seen)} node(s)")
     return stats
 
 
