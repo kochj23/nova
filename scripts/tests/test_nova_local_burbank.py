@@ -212,7 +212,7 @@ class TestFunctional(unittest.TestCase):
     def _feeds(self):
         return [patch.object(lb, n, return_value=v) for n, v in (
             ("get_local_news", [{"text": "Burbank news item", "source": "local_news", "created_at": "", "metadata": {}}]),
-            ("get_burbank_search", []), ("get_scanner_blotter", None), ("get_overhead_flights", None),
+            ("get_burbank_search", []), ("get_la_channel_news", []), ("get_scanner_blotter", None), ("get_overhead_flights", None),
             ("get_wifi_ble_summary", None), ("get_bluetooth_patterns", None), ("get_myburbank_arrests", []),
             ("get_lora_summary", None), ("generate_article", "ARTICLE BODY"))]
 

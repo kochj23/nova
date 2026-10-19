@@ -185,7 +185,9 @@ class TestSecurity(unittest.TestCase):
         conn, seen = _fake_mem({})
         with patch.object(pc, "_mem_conn", return_value=conn):
             pc.gather_brief()
-        self.assertEqual([p[0] for _, p in seen], list(pc.POLITICAL_SOURCES))
+        # the political shelves, then the news/business channel pool (subscription audio, privacy-filtered)
+        self.assertEqual([p[0] for _, p in seen], [*pc.POLITICAL_SOURCES, "yt_subs_audio"])
+        self.assertIn("NOT IN ('private', 'local-only')", seen[-1][0])
 
 
 class TestPerformance(unittest.TestCase):

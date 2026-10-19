@@ -1147,6 +1147,20 @@ tasks:
     timeout: 3600
     overlap: skip
 
+  history_and_friends:          # Jordan 2026-10-19: history channels -> /history/ ("This Day in History"); 5-min stagger after travel (journal push race)
+    script: nova_friends.py
+    args: ["--subject", "history", "--days", "1"]
+    schedule: cron 0 8 * * *
+    timeout: 3600
+    overlap: skip
+
+  faith_and_friends:            # Jordan 2026-10-19: faith channels -> /faith/ ("Verse of the Day", quote verified against the scripture library); 5-min stagger
+    script: nova_friends.py
+    args: ["--subject", "faith", "--days", "1"]
+    schedule: cron 5 8 * * *
+    timeout: 3600
+    overlap: skip
+
   opinion_fishbowl:                  # Nova's daily OPINION column on Watch Fishbowl updates -> /opinions
     script: nova_opinion_fishbowl.py
     schedule: cron 0 6 * * *         # daily 6:00 AM — dated opinion piece, operations voice

@@ -43,7 +43,12 @@ Eight more siblings (Jordan 2026-10-19), same shape, each with its own top block
   Stealing", travel "Place of the Day". Thin channels: a daily run with fewer than THIN_MIN videos
   widens its window to WIDEN_DAYS (new subjects only).
 
-Usage: nova_friends.py --subject cars|tech|food|music|military|screen|science|mystery|crime|workshop|travel
+History and Faith (Jordan 2026-10-19, second pass): history "This Day in History" (Nova's world_history /
+  history memories for today's month-day, non-military events first; falls back to the day's best story);
+  faith "Verse of the Day" (one passage from Nova's scripture library, quoted word for word and cited —
+  verse_ok() checks the quote against the library text and the Bible chapter:verse, fail closed).
+
+Usage: nova_friends.py --subject cars|tech|food|music|military|screen|science|mystery|crime|workshop|travel|history|faith
                        [--days 1] [--dry-run]
 """
 import argparse
@@ -94,8 +99,12 @@ CARS_CHANNELS = (
     "WestCoast Grudge Racing Media", "Wheeler Dealers", "Zack Klapman's Drivers' Test",
     "Zero To Sixty Automotive", "ᴢᴇʀᴏ ᴛᴏ ꜱɪxᴛʏ", "Zip Tie Tuning", "Bikes and Beards",
     "Orange County Choppers Original Network", "Pepe's Towing Service",
-    # Jordan 2026-10-19: RC cars -> Cars (Parkflyers RC, planes, stays out)
+    # Jordan 2026-10-19: RC cars -> Cars
     "AMain Hobbies", "RCDriver_Online", "RC Girl", "Redcat Racing", "TeamAssociatedRC", "1:10 Rod Shop",
+    # Jordan 2026-10-19 (second pass; Parkflyers RC, RC planes, now in Cars too, by his call)
+    "Exotic Rubber", "Quick Shift", "Auto Focus", "Joy Riding", "GarageInsiderTV. com", "Drake Built",
+    "Frankly Built", "MegaBuilds", "DipYourCar", "Glease Man", "Junktown James", "Riding With Alex Taylor",
+    "RR&BD Driving School", "Rev Explained", "Toprank Importers", "John Clay Wolfe", "Parkflyers RC",
 )
 TECH_CHANNELS = (
     "3D Printed Props", "3D Printing Nerd", "3D Print Stuff", "9to5Mac", "Action Retro", "Adam Savage's Tested",
@@ -120,6 +129,10 @@ TECH_CHANNELS = (
     "WIRED", "WunderTech", "YouTux Channel", "Welch Labs",
     "Mark Rober", "Real Engineering", "Veritasium",   # Jordan 2026-10-19: engineering/science -> Tech
     "Honest HiFi",                                    # Jordan 2026-10-19: HiFi -> Tech
+    # Jordan 2026-10-19 (second pass)
+    "TheGamingLemon", "Joe's Classic Video Games", "GhostStrats", "Zip Tie Tech", "Digit Nerd HTv", "styropyro",
+    "Design Docs", "ModBot", "Lars Klint", "The Next Layer", "nthroot", "Bleeps and Boops", "Williston Audio Labs",
+    "BocaBola",
 )
 FOOD_CHANNELS = (   # Jordan 2026-10-19. Undecided, so NOT here: Bacon 28, fonki cheff, The Stock Pot
     #                   (Peter Santenello and Miha's Life in Japan went to Travel).
@@ -146,11 +159,16 @@ MUSIC_CHANNELS = (
     "DJ Studio | Bass Portal & DnB Portal", "Didi Early Rave", "TRACKLIB", "Mixtape Magic", "Pearl Acoustics",
     "FeelTheSound", "Synthet", "DJRapOfficial", "BASSKILLAH", "KROQ", "Current Joys", "EYEDRESS", "Jonathan Bree",
     "Tubeway Army - Topic", "RŮDE - Topic", "Sleepy Fish - Topic", "Nvrsoft - Topic",
+    # Jordan 2026-10-19 (second pass)
+    "djvlad", "Key of Geebz", "Goddess Music YT", "Airplay Beats", "JAEL", "Singapore Community Radio",
+    "The Streets", "Wax Lounge", "Letters Live",
 )
 MILITARY_CHANNELS = (
     "Forgotten Weapons", "LazerPig", "Task & Purpose", "Ward Carroll", "Military Aviation History",
     "The Military Show", "Cold War Impact", "The Great War", "WW2 Stories", "VASAviation -",
     "American Veterans Center", "U.S. Navy", "Combat Veteran News", "Airforceproud95",
+    # Jordan 2026-10-19 (second pass)
+    "Ukraine News NowUA", "RFU News — Strategic Geopolitics", "Professor Gerdes Explains 🇺🇦", "Shawn Ryan Show",
 )
 SCREEN_CHANNELS = (
     "RedLetterMedia", "CinemaSins", "Screen Junkies", "ScreenCrush", "How It Should Have Ended",
@@ -160,6 +178,11 @@ SCREEN_CHANNELS = (
     "Jimmy Kimmel Live", "Late Night with Seth Meyers", "Late Night With Conan O'Brien", "LastWeekTonight",
     "The Daily Show", "The Problem With Jon Stewart", "The Weekly Show with Jon Stewart", "Trevor Noah",
     "Patton Oswalt", "Kevin Smith",
+    # Jordan 2026-10-19 (second pass): comedy, TV, Star Wars/Marvel, reactions, sports-comedy
+    "The Onion", "Tim Heidecker", "Neal Brennan", "Brad Williams", "Cliff Cash Comedy", "Binge Burr",
+    "The West Wing", "Hulu", "Stickman Anakin", "R2-D2 SPEAKS! The REAL hero of STAR WARS", "Marvelous Videos",
+    "Marvelous Anime", "AV Pop Culture", "Rob Squad Reactions", "POLO REACTS", "Stay Tuned",
+    "Trash Taste Highlights", "Jomboy Media",
 )
 SCIENCE_CHANNELS = (   # Veritasium, Real Engineering and Mark Rober stay in TECH_CHANNELS
     "PBS Space Time", "PBS Eons", "PBS Terra", "SciShow", "SciShow Space", "MinuteEarth", "minutephysics",
@@ -186,6 +209,18 @@ TRAVEL_CHANNELS = (
     "American Hobo - Train Riding", "Hobo Shoestring", "Koda Bear the Explorer", "Away Together w/ Nik and Allie",
     "Smarty Van", "Sidetrack Adventures", "Deep Sea Explorer YT",
 )
+HISTORY_CHANNELS = (   # Jordan 2026-10-19. Military history stays in MILITARY_CHANNELS.
+    "OverSimplified", "Biographics", "Geographics", "History Buffs", "History Comes to Life",
+    "History of Everything", "AlternateHistoryHub", "RealLifeLore", "Megaprojects", "Sealed History",
+    "Vidstorical Films", "Well There's Your Problem Podcast", "Who Do You Think You Are?",
+)
+FAITH_CHANNELS = (     # Jordan 2026-10-19
+    "Ascension Presents", "Godsplaining | Catholic Podcast", "The Pope Leo's Path", "Thy Kingdom Come",
+    "The God Show", "Sacred Logic", "DeepBeliever",
+)
+# Jordan 2026-10-19: style and health stay unassigned — in NO subject and no pool (a test enforces it).
+UNASSIGNED_CHANNELS = ("GQ", "Real Men Real Style", "Brick and Sole", "Freshhkiicks", "Inkbox", "Doctor Mike",
+                       "Dr.Sanders", "Jesse Enkamp")
 # Editorial ground truth (Jordan 2026-10-19), injected like Watches' KNOWN_FACTS: always for Military, and
 # for Screen/Travel only when the day's material touches the war (STANCE_TOPICS).
 MILITARY_STANCE = (
@@ -200,8 +235,8 @@ STANCE_TOPICS = re.compile(r"\b(?:ukrain\w*|russia\w*|kremlin|putin|nato|kyiv|mo
 
 
 def stance_for(subj, text):
-    """MILITARY_STANCE for Military always; for Screen/Travel only if the material touches the war."""
-    if subj == "military" or (subj in ("screen", "travel") and STANCE_TOPICS.search(text or "")):
+    """MILITARY_STANCE for Military always; for Screen/Travel/History only if the material touches the war."""
+    if subj == "military" or (subj in ("screen", "travel", "history") and STANCE_TOPICS.search(text or "")):
         return MILITARY_STANCE
     return ""
 
@@ -218,6 +253,24 @@ MILITARY_WORDS = re.compile(r"\b(?:war|battle|army|armies|navy|naval|fleet|troop
 
 CITATION_RE = re.compile(r"\b(?:JP|AFI|AFMAN|AR|FM|ATP|MCRP|MCWP|DoD[DI]?|CNGBI|OPNAVINST|SECNAVINST)\s?\d|"
                          r"Directive|Instruction|Memorandum|Memo\b|Publication|Change \d|supersedes", re.I)
+
+# History top block: "This Day in History" from the general history library (any kind of event; a non-military
+# one is preferred — military history has its own section).
+GENERAL_HISTORY_SOURCES = ("world_history", "history")
+
+# Faith top block: "Verse of the Day" from Nova's scripture library (every passage carries its citation header).
+SCRIPTURE_SOURCES = ("bible", "quran", "buddhism", "hinduism", "sikhism", "taoism", "shinto", "confucianism",
+                     "jainism", "zoroastrianism", "egyptian_book_of_the_dead", "books_of_the_dead", "nontheism")
+SCRIPTURE_MAX, SCRIPTURE_CHARS, SCRIPTURE_PER_SOURCE = 5, 1500, 2
+SCRIPTURE_STOP = {"church", "catholic", "christian", "podcast", "episode", "father", "people", "really", "things",
+                  "should", "because", "something", "actually", "question", "answer", "explained", "anything",
+                  "everything", "nothing", "little", "always", "believe", "pretty", "having", "talking", "before",
+                  "another", "around", "through", "better", "without", "though", "between", "during", "within"}
+FAITH_TONE = ("Tone: respectful and curious about every tradition — never preachy, never proselytising, never "
+              "ranking religions, never mocking believers or unbelievers. Report what each speaker or tradition "
+              "says in its own terms ('Catholics believe...', 'the Gita teaches...'). Quote scripture only "
+              "word-for-word from the material with its exact citation; never invent, paraphrase-as-quote or "
+              "misattribute a verse.")
 
 # Mystery top block may lean on the esoteric library for context. Labels travel with every excerpt.
 LORE_SOURCES = ("occult", "necronomicon", "books_of_the_dead", "shams_al_maarif")
@@ -344,6 +397,19 @@ SUBJECTS.update({
                        "an open road, an old train yard, a ghost town and a sweeping map",
                        ["travel", "exploration"], "travel",
                        "Never invent prices, opening hours, directions or travel logistics."),
+    "history": _subject("history", "History and Friends", "🏛️", HISTORY_CHANNELS,
+                        "world history and its turning points, biographies, geography and how places got that "
+                        "way, alternate history, megaprojects and engineering disasters, lost and sealed "
+                        "history, family history",
+                        "history buffs", "an old atlas, marble columns, archival photographs and a museum hall",
+                        ["history", "world-history"], "history",
+                        "Separate what is documented from legend, speculation and alternate-history 'what ifs' — "
+                        "label alternate history as hypothetical. Never invent dates, numbers or quotes."),
+    "faith": _subject("faith", "Faith and Friends", "🕊️", FAITH_CHANNELS,
+                      "scripture and what it says, belief and practice, the saints and church history, the papacy "
+                      "and the Church today, apologetics and big questions, other traditions in their own words",
+                      "believers, seekers and the curious", "candlelit stone chapels, old illuminated manuscripts, "
+                      "temple lanterns and quiet morning light", ["faith", "religion"], "faith", FAITH_TONE),
 })
 
 # The featured block at the top of each issue: (heading, task). Grounded, fail closed (featured_block).
@@ -399,6 +465,23 @@ FEATURES = {
                  "One build, repair, restoration or technique from the material worth copying in your own shop or "
                  "home: what was made, the key trick, and the tools and materials ONLY as the source names them. "
                  "Never invent measurements or product names."),
+    "history": ("🏛️ This Day in History",
+                "The THIS DAY IN HISTORY notes in the material come from Nova's world-history library for "
+                "{today}. Pick the most interesting event a note states happened on {today} in a past year — "
+                "preferably not a battle (military history has its own section): what happened, the year, why it "
+                "mattered, linked to that note's page. If one of the day's videos connects to it, say so and link "
+                "it too. If no note gives an event on this date, write up the day's single most interesting "
+                "history story from the videos instead and say plainly that it is today's story. Never invent "
+                "dates, numbers, names or quotes."),
+    "faith": ("🕯️ Verse of the Day",
+              "Choose ONE passage from the SCRIPTURE LIBRARY in the material — any tradition — that speaks to "
+              "something in the day's videos. Quote it EXACTLY, word for word, as a markdown blockquote (lines "
+              "starting with '> '), copying only a contiguous run of words from that passage (you may drop the "
+              "inline verse numbers); then on its own line the citation exactly as given in its CITE AS line, "
+              "narrowed to the verse(s) you quoted when the passage numbers its verses. Then a short reflection "
+              "(80-200 words) tying it to the day's material, linking the video it connects to. Never invent, "
+              "alter or paraphrase-as-quote scripture; never quote anything that is not in the library text. "
+              "If nothing in the library fits, reply NONE."),
     "travel": ("🗺️ Place of the Day",
                "One place from the material: where it is, what makes it worth knowing about, and what the creator "
                "found there. Never invent prices, opening hours, directions or logistics."),
@@ -542,18 +625,22 @@ def month_day(today=None):
     return f"{d.strftime('%B')} {d.day}"
 
 
-def fetch_history(cur, today=None, n=HISTORY_MAX):
-    """This-day-in-military-history notes: Nova's military/world history memories (with a source URL)
-    that state a military event on today's month-day in a past year ("October 19, 1944" / "19 October
-    1307"). -> [{channel,title,url,date,text}] with the text cut around the date. Date-seeded order."""
+def fetch_history(cur, today=None, n=HISTORY_MAX, military=True):
+    """This-day-in-history notes: Nova's history memories (with a source URL) that state an event on
+    today's month-day in a past year ("October 19, 1944" / "19 October 1307"). -> [{channel,title,url,
+    date,text}] with the text cut around the date. Date-seeded order.
+    military=True (Military and Friends): military_history / world_history / military_doctrine*, and the
+    dated sentence must describe a military event. military=False (History and Friends): world_history /
+    history, any event, non-military ones ranked first (military history has its own section)."""
     md_ = month_day(today)
     mon, day = md_.split()
     rx = rf"(\m{mon} {day},? [0-9]{{3,4}}\M|\m{day} {mon},? [0-9]{{3,4}}\M)"
+    srcs = HISTORY_SOURCES if military else GENERAL_HISTORY_SOURCES
     cur.execute("""/* on_this_day */ SELECT text, created_at, metadata FROM memories
-                   WHERE (source = ANY(%s) OR source LIKE 'military_doctrine%%')
+                   WHERE (source = ANY(%s) OR (%s AND source LIKE 'military_doctrine%%'))
                      AND metadata->>'url' LIKE 'http%%'
                      AND coalesce(metadata->>'privacy', 'public') NOT IN ('private', 'local-only')
-                     AND text ~ %s""", (list(HISTORY_SOURCES), rx))
+                     AND text ~ %s""", (list(srcs), bool(military), rx))
     seed, picked = nj.today_str(), {}
     find = re.compile(rf"\b(?:{mon} {day},? \d{{3,4}}|{day} {mon},? \d{{3,4}})\b")
     for text, created, md in cur.fetchall():
@@ -568,15 +655,143 @@ def fetch_history(cur, today=None, n=HISTORY_MAX):
         start = max(text.rfind(". ", 0, hit.start()), text.rfind("\n", 0, hit.start())) + 1
         ends = [i for i in (text.find(". ", hit.end()), text.find("\n", hit.end())) if i != -1]
         sentence = text[start:min(ends) if ends else len(text)]
-        if not MILITARY_WORDS.search(sentence) or CITATION_RE.search(sentence):
+        is_mil = bool(MILITARY_WORDS.search(sentence))
+        if (military and not is_mil) or CITATION_RE.search(sentence):
             continue
         picked[url] = {"channel": "Nova's history library", "title": md.get("title") or "history note",
                        "url": url, "date": md_, "text": snip.strip(),
-                       "_rank": ("wikipedia.org/" in url, zlib.crc32(f"{seed}{url}".encode()))}   # encyclopedia before manuals
+                       "_rank": (military or not is_mil,             # History: non-military events first
+                                 "wikipedia.org/" in url, zlib.crc32(f"{seed}{url}".encode()))}   # encyclopedia before manuals
     out = sorted(picked.values(), key=lambda v: v["_rank"], reverse=True)[:n]
     for v in out:
         v.pop("_rank")
     return out
+
+
+def scripture_cite(source, md, text):
+    """The citation a Verse of the Day must carry: Bible '<Book> <ch>:<verses> (KJV)', Qur'an 'Qur'an
+    <sura> (Rodwell)', else the passage's own header ('<work> — <section> (<translator> <year>)')."""
+    if source == "bible" and md.get("book") and md.get("chapter"):
+        tr = "KJV" if "King James" in (md.get("translation") or "KJV") else md.get("translation")
+        return f"{md['book']} {md['chapter']}:{md.get('verses') or ''} ({tr})".replace(": (", " (")
+    if source == "quran" and md.get("sura"):
+        return f"Qur'an {md['sura']} ({(md.get('translation') or 'Rodwell').split(' (')[0]})"
+    head = re.match(r"\[([^\]]{4,240})\]", text or "")
+    if head:
+        return head.group(1).strip()
+    bits = [md.get("work") or md.get("title"), md.get("section")]
+    return " — ".join(b for b in bits if b) or "scripture"
+
+
+def scripture_stems(item):
+    """Citation stems the published block must contain (any one): Bible 'Book ch', Qur'an sura, else the
+    first two words of the work."""
+    md = item.get("_md") or {}
+    if item.get("_source") == "bible":
+        return [f"{md.get('book')} {md.get('chapter')}"]
+    if item.get("_source") == "quran":
+        return [f"Qur'an {md.get('sura')}", f"Quran {md.get('sura')}", f"Sura {md.get('sura')}",
+                f"Surah {md.get('sura')}"]
+    work = re.sub(r"\(.*?\)", "", md.get("work") or md.get("title") or item.get("title") or "")
+    return [" ".join(work.split()[:2])] if work.strip() else []
+
+
+def fetch_scripture(cur, videos, n=SCRIPTURE_MAX, today=None):
+    """Scripture-library passages for the Verse of the Day: the passages sharing the most real words
+    (>= 6 letters) with the day's video titles and text, at most SCRIPTURE_PER_SOURCE per tradition, plus
+    one date-seeded passage so a thin match still leaves a choice. Every item carries its citation (title)
+    and tradition label (channel). -> [{channel,title,url,date,text,_source,_md}]"""
+    seed = today or nj.today_str()
+    blob = " ".join(f"{v['title']} {v['title']} {v.get('text', '')[:3000]}" for v in videos).lower()
+    freq = {}
+    for w in re.findall(r"[a-z]{6,}", blob):
+        if w not in SCRIPTURE_STOP:
+            freq[w] = freq.get(w, 0) + 1
+    words_ = [w for w, _ in sorted(freq.items(), key=lambda kv: (-kv[1], kv[0]))[:14]]
+    rows = []
+    if words_:
+        cur.execute("""/* scripture_library */ SELECT text, metadata, source FROM memories
+                       WHERE source = ANY(%s) AND metadata->>'type' IN ('scripture', 'philosophy')
+                         AND coalesce(metadata->>'privacy', 'public') NOT IN ('private', 'local-only')
+                         AND text ~* %s
+                       LIMIT 400""", (list(SCRIPTURE_SOURCES), r"\m(" + "|".join(words_) + r")\M"))
+        rows = list(cur.fetchall())
+    cur.execute("""/* scripture_library */ SELECT text, metadata, source FROM memories
+                   WHERE source = ANY(%s) AND metadata->>'type' IN ('scripture', 'philosophy')
+                     AND coalesce(metadata->>'privacy', 'public') NOT IN ('private', 'local-only')
+                     AND length(text) > 200
+                   ORDER BY md5(coalesce(metadata->>'uid', '') || left(text, 60) || %s) LIMIT 1""",
+                (list(SCRIPTURE_SOURCES), seed))
+    fallback = list(cur.fetchall())
+    scored = []
+    for text, md, src in rows:
+        md = md if isinstance(md, dict) else {}
+        low = (text or "").lower()
+        hit = {w for w in words_ if re.search(rf"\b{w}\b", low)}
+        scored.append((len(hit), sum(freq[w] for w in hit), zlib.crc32(f"{seed}{text[:80]}".encode()), text, md, src))
+    scored.sort(key=lambda r: r[:3], reverse=True)
+    picked, per = [], {}
+    for *_, text, md, src in scored + [(0, 0, 0, t, m, s_) for t, m, s_ in fallback]:
+        md = md if isinstance(md, dict) else {}
+        if len(picked) >= n or per.get(src, 0) >= SCRIPTURE_PER_SOURCE or BANNED.search(text or ""):
+            continue
+        if any(p["text"] == (text or "")[:SCRIPTURE_CHARS] for p in picked):
+            continue
+        per[src] = per.get(src, 0) + 1
+        url = md.get("url") or md.get("source_url")
+        tradition = md.get("tradition") or {"bible": "Christianity / Judaism (Bible)", "quran": "Islam"}.get(src, src)
+        if src == "nontheism":
+            tradition += " — philosophy, not scripture"
+        picked.append({"channel": f"Nova's scripture library — {tradition}", "title": scripture_cite(src, md, text),
+                       "url": url if url and url.startswith("http") else None, "date": seed,
+                       "text": (text or "")[:SCRIPTURE_CHARS], "_source": src, "_md": md})
+    return picked
+
+
+_VERSE_NUM = re.compile(r"(?:^|\s)(\d{1,3})\s+(?=[A-Z\[(‘“'\"])")
+
+
+def _flat(t):
+    """Compare-key for quotes: verse numbers, punctuation, case and whitespace removed."""
+    t = re.sub(r"\d+", " ", (t or "").lower().replace("’", "'"))
+    return " ".join(re.sub(r"[^a-z' ]+", " ", t).split())
+
+
+def _bible_verses(text):
+    """{verse_no: verse text} from a KJV passage ('[Book ch:a-b (KJV)] 1 In the ... 2 And ...')."""
+    body = re.sub(r"^\[[^\]]*\]\s*", "", text or "")
+    parts = _VERSE_NUM.split(" " + body)
+    return {int(parts[i]): parts[i + 1] for i in range(1, len(parts) - 1, 2)}
+
+
+def verse_ok(block, items):
+    """Fail-closed check for the Verse of the Day: the block's blockquote must be a word-for-word run from
+    ONE scripture passage, the block must carry that passage's citation stem, and a Bible citation's
+    verse numbers must contain the quoted words. -> (ok, reason)."""
+    quote_lines = [ln[1:].strip() for ln in (block or "").splitlines() if ln.startswith(">")]
+    quote = " ".join(q for q in quote_lines if q and not re.match(r"^[—–-]", q))
+    quote = re.sub(r"[—–-]\s*[A-Z][^\n]*\d[^\n]*$", "", quote).strip()   # trailing attribution on the quote line
+    fq = _flat(quote)
+    if len(fq.split()) < 5:
+        return False, "no quoted passage"
+    for it in (i for i in items if i.get("_source")):
+        if fq not in _flat(it["text"]):
+            continue
+        stems = [st for st in scripture_stems(it) if st.strip()]
+        if stems and not any(st.lower() in block.lower() for st in stems):
+            return False, f"quote matches {it['title']!r} but the block does not cite it"
+        if it["_source"] == "bible":
+            md = it.get("_md") or {}
+            m = re.search(rf"{re.escape(str(md.get('book')))}\s+{md.get('chapter')}:(\d+)(?:\s*[-–]\s*(\d+))?", block)
+            if not m:
+                return False, "Bible quote without a chapter:verse citation"
+            verses = _bible_verses(it["text"])
+            a, b = int(m.group(1)), int(m.group(2) or m.group(1))
+            span = " ".join(verses.get(v, "") for v in range(a, b + 1))
+            if verses and fq not in _flat(span):
+                return False, f"quoted words are not in {md.get('book')} {md.get('chapter')}:{a}-{b}"
+        return True, it["title"]
+    return False, "quote is not word-for-word from the scripture library"
 
 
 def lore_label(source, md):
@@ -626,12 +841,19 @@ def fetch_lore(cur, videos, n=LORE_MAX):
     return group_videos(rows, LORE_CHARS, n)
 
 
+EXTRA_LABELS = {"military": "THIS DAY IN HISTORY", "history": "THIS DAY IN HISTORY",
+                "faith": "SCRIPTURE LIBRARY (quote word for word, cite exactly)",
+                "mystery": "ESOTERIC LIBRARY (keep each label)"}
+EXTRA_SOURCE_HEADINGS = {"military": "This Day in History", "history": "This Day in History",
+                         "faith": "Scripture", "mystery": "Library"}
+
+
 def top_block(subj, videos, arts, recipes=(), food_rules=None, extra=()):
     """The featured block for this subject ("" = omitted, fail closed). Food needs its house rules
     (food_rules) and a block free of every private term, or there is no block. `extra` = the
     military history notes / mystery library excerpts (linkable grounding, labelled)."""
     heading, task = FEATURES[subj]
-    if subj == "military":
+    if subj in ("military", "history"):
         task = task.replace("{today}", month_day())
     if subj == "food":
         if not food_rules:
@@ -642,8 +864,12 @@ def top_block(subj, videos, arts, recipes=(), food_rules=None, extra=()):
     if recipes:
         material += "\n\n--- RECIPE PAGES (Nova's recipe memories) ---\n\n" + digest(list(recipes))
     if extra:
-        label = "THIS DAY IN HISTORY" if subj == "military" else "ESOTERIC LIBRARY (keep each label)"
-        material += f"\n\n--- {label} ---\n\n" + digest(list(extra))
+        label = EXTRA_LABELS.get(subj, "ESOTERIC LIBRARY (keep each label)")
+        if subj == "faith":   # every passage with the exact citation to copy
+            material += f"\n\n--- {label} ---\n\n" + "\n\n".join(
+                f"[{x['channel']}]\nCITE AS: {x['title']}\n{x['text']}" for x in extra)
+        else:
+            material += f"\n\n--- {label} ---\n\n" + digest(list(extra))
     if SUBJECTS[subj].get("extra_rules"):
         task += " " + SUBJECTS[subj]["extra_rules"]
     stance = stance_for(subj, material)
@@ -655,6 +881,12 @@ def top_block(subj, videos, arts, recipes=(), food_rules=None, extra=()):
              "ingredients, amounts or quotes that are not in the material.")
     block = featured_block(heading, task, material, [*videos, *arts, *recipes, *extra], rules, llm=nj.call_openrouter,
                            max_words=650 if subj == "food" else 450)   # a recipe needs room for its method
+    if block and subj == "faith":
+        ok, why = verse_ok(block, extra)
+        if not ok:
+            log(f"Verse of the Day: {why} — block omitted (fail closed)")
+            return ""
+        log(f"Verse of the Day: verified against {why}")
     if block and subj == "crime" and ADDRESS_RE.search(block):
         log("Case of the Day: street address in the block — omitted (fail closed)")
         return ""
@@ -676,7 +908,7 @@ def source_list(items):
 
 def main():
     ap = argparse.ArgumentParser(description="The *and Friends* roundups (cars, tech, food, music, military, "
-                                             "screen, science, mystery, crime, workshop, travel)")
+                                             "screen, science, mystery, crime, workshop, travel, history, faith)")
     ap.add_argument("--subject", choices=sorted(SUBJECTS), required=True)
     ap.add_argument("--days", type=int, default=1)
     ap.add_argument("--dry-run", action="store_true")
@@ -752,6 +984,10 @@ def main():
     try:   # optional grounding for the top block; never sinks the issue
         if a.subject == "military":
             extra = fetch_history(mc)
+        elif a.subject == "history":
+            extra = fetch_history(mc, military=False)
+        elif a.subject == "faith":
+            extra = fetch_scripture(mc, videos)
         elif a.subject == "mystery":
             extra = fetch_lore(mc, videos)
     except Exception as e:  # noqa: BLE001
@@ -774,10 +1010,13 @@ def main():
     linked = [r for r in recipes if r["url"] in block]
     if linked:
         body += "\n### Recipe\n\n" + source_list(linked) + "\n"
-    linked = [r for r in extra if r["url"] in block]
+    linked = [r for r in extra if r["url"] and r["url"] in block]
+    if a.subject == "faith" and block:   # the verified passage is listed even when its page is not linked
+        ok, cite = verse_ok(block, extra)
+        linked = [r for r in extra if (ok and r["title"] == cite) or (r["url"] and r["url"] in block)][:2]
     if linked:
-        body += "\n### " + ("This Day in History" if a.subject == "military" else "Library") + "\n\n" + \
-            source_list(linked) + "\n"
+        body += "\n### " + EXTRA_SOURCE_HEADINGS.get(a.subject, "Library") + "\n\n" + \
+            source_list([{k: v for k, v in r.items() if not k.startswith("_")} for r in linked]) + "\n"
     body = body.rstrip() + "\n"
     if a.subject == "crime":   # never a street address in a public crime write-up
         body = ADDRESS_RE.sub("[address withheld]", body)

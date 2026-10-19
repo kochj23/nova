@@ -136,6 +136,28 @@ def get_local_news(hours=24, limit=50):
             for r in rows]
 
 
+def get_la_channel_news(hours=36, limit=25):
+    """The LA local YouTube pool (nova_channel_pools.LA_LOCAL_CHANNELS: ABC7, KTLA 5, NBCLA, CBS LA, FOX 11,
+    KQED, California Weather Watch, LAPD, ...; Jordan 2026-10-19) as news items, one per video, labelled
+    with the channel. Same item shape as get_local_news, so the California filter, locality scoring and
+    grounding rules in generate_article apply unchanged. [] on any failure (fail open: never sinks the piece)."""
+    try:
+        import psycopg2
+        import nova_channel_pools as ncp
+        conn = psycopg2.connect(PG_DSN, connect_timeout=8)
+        try:
+            vids = ncp.fetch_pool(conn.cursor(), ncp.LA_LOCAL_CHANNELS, days=max(1, round(hours / 24)),
+                                  per_video=700, max_videos=limit)
+        finally:
+            conn.close()
+    except Exception as e:  # noqa: BLE001
+        log(f"LA channel pool unavailable ({e})")
+        return []
+    return [{"text": f"{v['title']}. {v['text']}".strip(), "source": f"{v['channel']} (YouTube)",
+             "created_at": v.get("ts") or v["date"], "metadata": {"url": v["url"]} if v["url"] else {}}
+            for v in vids if v["text"]]
+
+
 def get_burbank_search(limit=30, hours=36):
     """Semantic search for recent Burbank-related content across all sources.
 
@@ -1017,8 +1039,11 @@ def main():
 
     news = get_local_news(hours=24, limit=50)
     search_results = get_burbank_search(limit=20)
+    la_channels = get_la_channel_news()   # ABC7 / KTLA / NBCLA / CBS LA / FOX 11 / KQED / ... YouTube pool
+    if la_channels:
+        log(f"LA channel pool: {len(la_channels)} videos")
 
-    all_items = news + [{"text": m.get("text", ""), "source": m.get("source", ""),
+    all_items = news + la_channels + [{"text": m.get("text", ""), "source": m.get("source", ""),
                           "created_at": m.get("created_at", ""), "metadata": m.get("metadata") or {}}
                          for m in search_results]
 

@@ -1507,6 +1507,10 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
         except Exception as e:
             log(f"[ideal-reader] skipped ({e})")
 
+    try:  # INFOWARS RULE (nova_channel_pools, 2026-10-19): every mention of it, expansion included, is labelled
+        body = __import__("nova_channel_pools").label_claims(body)
+    except Exception:  # noqa: BLE001
+        pass
     try:  # prepend the live backyard-weather dateline to the BODY (never the title)
         if show_time:
             from nova_weather_blurb import weather_dateline_line
@@ -2058,7 +2062,8 @@ def notify_slack(section: str, title: str, preview: str):
         "burbank-ops": ":satellite_antenna:", "nova": ":speech_balloon:", "after-dark": ":night_with_stars:",
         "pilot": ":movie_camera:", "tech": ":computer:", "cars": ":red_car:", "food": ":fork_and_knife:",
         "music": ":headphones:", "military": ":military_medal:", "screen": ":popcorn:", "science": ":telescope:",
-        "mystery": ":candle:", "crime": ":flashlight:", "workshop": ":hammer:", "travel": ":world_map:", "watches": ":watch:",
+        "mystery": ":candle:", "crime": ":flashlight:", "workshop": ":hammer:", "travel": ":world_map:",
+        "history": ":classical_building:", "faith": ":dove_of_peace:", "watches": ":watch:",
         "digests": ":newspaper:", "security": ":shield:", "meta": ":bar_chart:",
         "art": ":art:",
     }
@@ -2151,16 +2156,60 @@ ESSAY-SPECIFIC RULES:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def topic_opinion(state: dict) -> tuple[str, list[dict]]:
-    """Fetch Google News headlines, pick one, recall related memories."""
+    """Fetch Google News headlines + the news/business channel pool (nova_channel_pools), pick one,
+    recall related memories. Pool videos on the topic lead the grounding; InfoWars is never a topic
+    and only ever reaches the writer as a labelled UNVERIFIED CLAIM (Jordan 2026-10-19)."""
     headlines = _fetch_google_news()
+    pool = _opinion_pool()
+    pool_topics = []
+    try:
+        import nova_channel_pools as ncp
+        pool_topics = ncp.topic_candidates(pool)
+    except Exception as e:  # noqa: BLE001 — the pool is optional
+        log(f"opinion channel pool unavailable ({e})")
+    # interleave so the channel pool reaches the first 10 candidates alongside the wire headlines
+    mixed = [x for pair in zip(headlines, pool_topics) for x in pair] + headlines[len(pool_topics):] + \
+        pool_topics[len(headlines):]
     recent = [r["item"] for r in get_recent(state, "opinion", "topics")]
-    candidates = [h for h in headlines if h not in recent]
+    candidates = [h for h in mixed if h not in recent]
     if not candidates:
-        candidates = headlines[:10] if headlines else ["artificial intelligence trends"]
+        candidates = mixed[:10] if mixed else ["artificial intelligence trends"]
 
     topic = random.choice(candidates[:10])
     memories = recall_memories(topic, n=15)
-    return topic, memories
+    return topic, _pool_grounding(pool, topic) + memories
+
+
+OPINION_POOL_DAYS = 3
+
+
+def _opinion_pool() -> list[dict]:
+    """Recent videos from the news + business channel pools; [] on any failure (never sinks the piece)."""
+    try:
+        import psycopg2
+        import nova_channel_pools as ncp
+        conn = psycopg2.connect(_nova_dsn.pg_dsn("nova_memories"), connect_timeout=5)
+        try:
+            return ncp.fetch_pool(conn.cursor(), ncp.NOVA_NEWS_CHANNELS + ncp.NOVA_BUSINESS_CHANNELS,
+                                  days=OPINION_POOL_DAYS)
+        finally:
+            conn.close()
+    except Exception as e:  # noqa: BLE001
+        log(f"opinion channel pool unavailable ({e})")
+        return []
+
+
+def _pool_grounding(pool: list[dict], topic: str) -> list[dict]:
+    """Pool videos on this topic as memory dicts (source 'yt_channel_pool'); InfoWars ones only as
+    labelled claims (source 'claims_only')."""
+    try:
+        import nova_channel_pools as ncp
+        rel = ncp.related(pool, topic)
+        return ([{"text": ncp.as_line(it), "source": "yt_channel_pool"} for it in ncp.facts(rel)[:6]] +
+                [{"text": ncp.as_line(it, 300), "source": "claims_only"} for it in ncp.claims(rel)[:2]])
+    except Exception as e:  # noqa: BLE001
+        log(f"opinion channel pool unavailable ({e})")
+        return []
 
 
 def _fetch_google_news() -> list[str]:
@@ -2181,12 +2230,18 @@ def _fetch_google_news() -> list[str]:
 
 def generate_opinion(topic: str, memories: list[dict]) -> tuple[str, str]:
     """Generate an opinion piece. Returns (title, body)."""
-    memory_block = "\n".join(f"- {m.get('text', '')[:200]}" for m in memories[:15])
+    # channel-pool lines carry their [channel — title] attribution, so they get more room
+    memory_block = "\n".join(f"- {m.get('text', '')[:600 if m.get('source') in ('yt_channel_pool', 'claims_only') else 200]}"
+                             for m in memories[:15])
+    claims_line = ""
+    if any(m.get("source") == "claims_only" for m in memories[:15]):
+        import nova_channel_pools as ncp
+        claims_line = "\n- " + ncp.CLAIMS_RULE
     weekly_theme = _get_weekly_theme()
     theme_line = f"\nThis week's focus: {weekly_theme}. If the topic connects to this theme, lean into that angle." if weekly_theme else ""
 
     system = system_prompt(f"""
-FORMAT FOR THIS OPINION PIECE:
+FORMAT FOR THIS OPINION PIECE:{claims_line}
 - You have OPINIONS and you share them boldly. Pick ONE angle and go deep.
 - Structure: Punchy title + your take (one clear position) + 3 supporting observations + one action/implication.
 - Write 3000-4000 words. No hashtags. Be funny AND insightful.
@@ -2205,6 +2260,11 @@ real point and drive it home."""
     result = call_openrouter(system, user, max_tokens=8000)
     if not result or len(result) < 400:
         raise RuntimeError("Opinion generation failed")
+    try:   # INFOWARS RULE: any mention is labelled as an unverified claim
+        import nova_channel_pools as ncp
+        result = ncp.label_claims(result)
+    except ImportError:
+        pass
 
     title = _extract_title(result)
     return title, result
@@ -3133,6 +3193,8 @@ def run_profile(profile_name: str) -> int:
     body = re.sub(r'<!--IMGPROMPT:.+?-->\n*', '', body, flags=re.DOTALL)
 
     # ── Step 4b: Append full source attribution ──────────────────────────────
+    # Labelled claims-to-fact-check lines (InfoWars, nova_channel_pools) are never a source or grounding.
+    memories = [m for m in (memories or []) if not (isinstance(m, dict) and m.get("source") == "claims_only")]
     body = _append_attribution(body, memories, topic, profile_name)
 
     # ── Step 5: Publish to Hugo ───────────────────────────────────────────────

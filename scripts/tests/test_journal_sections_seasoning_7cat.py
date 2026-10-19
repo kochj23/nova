@@ -105,7 +105,8 @@ class TestRetry(unittest.TestCase):
 
 class TestUnit(unittest.TestCase):
     def test_sections_shape(self):
-        friends8 = {"music", "military", "screen", "science", "mystery", "crime", "workshop", "travel"}  # 2026-10-19
+        friends8 = {"music", "military", "screen", "science", "mystery", "crime", "workshop", "travel",  # 2026-10-19
+                    "history", "faith"}                                                                    # + second pass
         self.assertTrue(friends8 <= set(ns.LIVE_SECTIONS))
         self.assertEqual(set(ns.LIVE_SECTIONS) | friends8, LIVE | friends8)
         self.assertEqual(set(ns.SECTION_REDIRECTS) | set(ns.RETIRED_SECTIONS), RETIRED)

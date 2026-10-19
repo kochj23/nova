@@ -37,7 +37,8 @@ class TestUnit(unittest.TestCase):
             self.assertIsNone(ns.topic_section(t), t)
 
     def test_conditional_sources_need_a_war_topic(self):
-        self.assertIsNone(ns.topic_section("Trade routes of the Hanseatic League", ["world_history"] * 5))
+        # world_history without a war topic is general history now (History and Friends, 2026-10-19)
+        self.assertEqual(ns.topic_section("Trade routes of the Hanseatic League", ["world_history"] * 5), "history")
         self.assertEqual(ns.topic_section("The siege that ended a war", ["world_history"] * 5), "military")
         self.assertIsNone(ns.topic_section("Phishing kits", ["intelligence"] * 5))
 
@@ -45,6 +46,39 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(ns.topic_section("Wartime songs: the music of WWII", ["music"] * 4), "music")
         self.assertEqual(ns.topic_section("Military bands at the Battle of the Somme", ["military_history"] * 4),
                          "military")
+
+
+class TestHistoryFaith(unittest.TestCase):
+    """History and Friends / Faith and Friends join the router (Jordan 2026-10-19, second pass)."""
+
+    def test_clear_history(self):
+        self.assertEqual(ns.topic_section("The fall of the Roman Empire and the medieval world"), "history")
+        self.assertEqual(ns.topic_section("Why the Industrial Revolution started in Britain", ["history"] * 4), "history")
+
+    def test_military_history_stays_military(self):
+        self.assertEqual(ns.topic_section("The Battle of Hastings in medieval history"), "military")
+        self.assertEqual(ns.topic_section("The siege that ended a war", ["world_history"] * 5), "military")
+        self.assertEqual(ns.topic_section("Ancient empires and their armies"), "military")
+
+    def test_clear_faith(self):
+        self.assertEqual(ns.topic_section("What the Bhagavad Gita says about duty", ["hinduism"] * 4), "faith")
+        self.assertEqual(ns.topic_section("The Pope, the Vatican and the Catholic Church"), "faith")
+        self.assertEqual(ns.topic_section("A quiet essay", ["buddhism", "taoism", "shinto"]), "faith")
+
+    def test_figurative_history_and_faith_never_move(self):
+        for t in ("Git commit history and browser history", "Our tech evangelist found the holy grail",
+                  "The history of Unix", "Stock hits historic highs", "The gospel of growth hacking"):
+            self.assertIsNone(ns.topic_section(t), t)
+
+    def test_music_about_faith_goes_by_the_higher_score(self):
+        self.assertEqual(ns.topic_section("Hymns and the church choir", ["music"] * 3), "music")
+
+    def test_route_only_touches_nova(self):
+        t = "Buddhist monks and the sacred scriptures of Tibet"
+        self.assertEqual(ns.route_topic("nova", t), "faith")
+        self.assertEqual(ns.route_topic("tech", t), "tech")
+        self.assertIn("history", ns.LIVE_SECTIONS)
+        self.assertIn("faith", ns.LIVE_SECTIONS)
 
 
 class TestIntegration(unittest.TestCase):
@@ -95,7 +129,7 @@ class TestRetry(unittest.TestCase):
 class TestFunctional(unittest.TestCase):
     def test_scores_shape(self):
         s = ns.topic_scores("jazz and the army", ["jazz", "jazz", "jazz"])
-        self.assertEqual(set(s), {"music", "military"})
+        self.assertEqual(set(s), {"music", "military", "history", "faith"})
         self.assertGreater(s["music"], s["military"])
 
 

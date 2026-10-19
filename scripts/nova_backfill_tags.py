@@ -98,7 +98,7 @@ def main():
     # Live sections + the art archive (2026-10-19: dreams retired; essays/synthesis/research/opinions -> nova;
     # operations/local -> burbank-ops; tech-today -> tech).
     categories = ["burbank-ops", "nova", "tech", "cars", "food", "music", "military", "screen", "science", "mystery",
-                  "crime", "workshop", "travel", "watches", "after-dark",
+                  "crime", "workshop", "travel", "history", "faith", "watches", "after-dark",
                   "art", "digests", "security", "pilot"]
     updated = 0
     skipped = 0

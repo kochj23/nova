@@ -36,7 +36,7 @@ LOG_FILE     = Path.home() / ".openclaw/logs/journal_stats_poller.log"
 # essays+synthesis+research+opinions -> nova (Nova and Friends); tech-today -> tech.
 from nova_sections import SECTION_REDIRECTS as _REDIR  # noqa: E402
 SECTIONS = ["burbank-ops", "nova", "after-dark", "tech", "cars", "food", "music", "military", "screen", "science", "mystery",
-            "crime", "workshop", "travel", "watches",
+            "crime", "workshop", "travel", "history", "faith", "watches",
             "digests", "security"]
 
 # Section → (scheduler task id, cron hour, cron minute) — the section's main daily-ish generator.
@@ -55,6 +55,8 @@ SECTION_SCHEDULES = {
     "crime":       ("crime_and_friends",     7, 45),
     "workshop":    ("workshop_and_friends",  7, 50),
     "travel":      ("travel_and_friends",    7, 55),
+    "history":     ("history_and_friends",   8,  0),
+    "faith":       ("faith_and_friends",     8,  5),
     "tech":        ("tech_and_friends",      7, 10),
     "digests":     ("journal_digest",       21, 15),
     "security":    ("journal_security",      9,  0),

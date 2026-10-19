@@ -126,6 +126,15 @@ def gather_brief(days=7, limit=45, per_source=12):
                 break
         if picked:
             by_source[source] = picked
+    # The news + business channel pool (nova_channel_pools, Jordan 2026-10-19): one more per-pool fetch
+    # in the same "[outlet] text" shape. InfoWars rows come back flagged claim=True — never counted as
+    # an item, never grounding, only shown to the writer as a labelled UNVERIFIED CLAIM.
+    try:
+        picked = _pool_items(conn, days, per_source, seen)
+        if picked:
+            by_source["yt_channel_pool"] = picked
+    except Exception as e:  # noqa: BLE001 — the pool is optional
+        log(f"channel pool unavailable ({e})")
     conn.close()
     # Round-robin the per-source pools so every source is folded in fairly.
     items, idx = [], 0
@@ -139,8 +148,58 @@ def gather_brief(days=7, limit=45, per_source=12):
     return items
 
 
+POOL_PER_CHANNEL = 3     # no single podcast crowds the channel pool
+
+
+def _pool_items(conn, days, per_source, seen):
+    """Political excerpts from the news/business channel pool, newest first, deduped against `seen`."""
+    import html
+    import nova_channel_pools as ncp
+    keys = tuple(sorted({ncp.norm(c) for c in ncp.NOVA_NEWS_CHANNELS + ncp.NOVA_BUSINESS_CHANNELS}))
+    with conn.cursor() as cur:
+        cur.execute(f"""SELECT '[' || coalesce(metadata->>'channel', metadata->>'show') || '] ' ||
+                               regexp_replace(left(text,240), E'[\\n\\r]+',' ','g')
+                        FROM memories
+                        WHERE metadata->>'pipeline' = %s
+                          AND created_at > now() - interval '{int(days)} days'
+                          AND coalesce(metadata->>'privacy', 'public') NOT IN ('private', 'local-only')
+                          AND {ncp.NORM_SQL} IN %s
+                          AND length(text) > 90
+                          AND text ~* %s
+                        ORDER BY created_at DESC LIMIT %s""",
+                    ("yt_subs_audio", keys, POL_KEYWORDS, per_source * 40))
+        rows = cur.fetchall()
+    picked, n_claims, per_outlet = [], 0, {}
+    for (snippet,) in rows:
+        snippet = html.unescape((snippet or "").strip())
+        m = re.match(r'\[([^\]]{2,60})\]\s*(.+)', snippet)
+        if not m:
+            continue
+        outlet, headline = m.group(1).strip(), _political_excerpt(m.group(2).strip())
+        key = re.sub(r'[^a-z0-9]', '', headline.lower())[:60]
+        if not key or key in seen or len(headline) < 15:
+            continue
+        claim = ncp.is_claims_only(outlet)
+        if (claim and n_claims >= 2) or per_outlet.get(outlet, 0) >= POOL_PER_CHANNEL:
+            continue
+        per_outlet[outlet] = per_outlet.get(outlet, 0) + 1
+        seen.add(key)
+        picked.append({"outlet": outlet, "headline": headline, **({"claim": True} if claim else {})})
+        n_claims += claim
+        if len(picked) - n_claims >= per_source:
+            break
+    return picked
+
+
+def fact_items(items):
+    """Items that count as grounding (never an InfoWars claim)."""
+    return [it for it in items if not it.get("claim")]
+
+
 def build_source_block(items):
-    return "\n".join(f"- [{it['outlet']}] {it['headline']}" for it in items)
+    import nova_channel_pools as ncp
+    return "\n".join(f"- {ncp.UNVERIFIED_LABEL}: [{it['outlet']}] {it['headline']}" if it.get("claim")
+                     else f"- [{it['outlet']}] {it['headline']}" for it in items)
 
 
 VOICE = (
@@ -158,6 +217,14 @@ def _season(section, topic):
         return nova_lexicon.safe_seasoning(section, topic)
     except Exception:  # noqa: BLE001
         return ""
+
+
+def _claims_rule():
+    try:
+        import nova_channel_pools as ncp
+        return ncp.CLAIMS_RULE
+    except ImportError:
+        return "Never treat InfoWars as a factual source; call anything from it an unverified claim."
 
 
 def generate_article(brief_block, n_items):
@@ -183,7 +250,8 @@ def generate_article(brief_block, n_items):
         "invented news.\n"
         "5. AMERICAN UNITS ONLY — Little Mister is American. Use Fahrenheit, miles, feet, pounds, "
         "gallons; never Celsius/kilometers/kilograms/liters. Convert any metric in a source before "
-        "you write it (e.g. '3,000 km' -> 'about 1,900 miles'). No metric unit reaches the page.\n\n"
+        "you write it (e.g. '3,000 km' -> 'about 1,900 miles'). No metric unit reaches the page.\n"
+        "6. INFOWARS: " + _claims_rule() + "\n\n"
         "FORMAT: Markdown body only (no front matter). Open with a one-line italic note that "
         "this is an opinion column written from a liberal Democrat's view, built from feeds "
         "Nova ingested this week. Then 3-5 '## ' sections, each anchored on one or two real "
@@ -233,7 +301,7 @@ def generate_title(article):
 def verify_grounded(article, items):
     """The draft must actually reference the real outlets — cheap anti-hallucination gate.
     Requires >= 2 distinct source outlets to appear in the text."""
-    outlets = {it["outlet"].lower() for it in items}
+    outlets = {it["outlet"].lower() for it in items if not it.get("claim")}   # InfoWars never grounds
     hits = sum(1 for o in outlets if o and o.lower() in article.lower())
     return hits >= 2
 
@@ -311,13 +379,20 @@ def main(argv=None):
     argv = argv if argv is not None else sys.argv[1:]
     dry = "--dry-run" in argv
     items = gather_brief()
-    log(f"gathered {len(items)} real political headlines from this week's ingest")
-    if len(items) < MIN_BRIEF_ITEMS:
-        log(f"ABORT: only {len(items)} items (<{MIN_BRIEF_ITEMS}) — week too thin, refusing to fabricate.")
-        _log_action("skipped: thin week", f"{len(items)} items")
+    n_facts = len(fact_items(items))
+    log(f"gathered {n_facts} real political headlines from this week's ingest"
+        + (f" (+{len(items) - n_facts} labelled unverified claims)" if len(items) > n_facts else ""))
+    if n_facts < MIN_BRIEF_ITEMS:
+        log(f"ABORT: only {n_facts} items (<{MIN_BRIEF_ITEMS}) — week too thin, refusing to fabricate.")
+        _log_action("skipped: thin week", f"{n_facts} items")
         return 0
     block = build_source_block(items)
-    article = generate_article(block, len(items))
+    article = generate_article(block, n_facts)
+    try:   # INFOWARS RULE: any mention is labelled as an unverified claim
+        import nova_channel_pools as ncp
+        article = ncp.label_claims(article)
+    except ImportError:
+        pass
     log(f"article generated: {len(article)} chars")
     if len(article) < MIN_ARTICLE_CHARS:
         log("ABORT: article too short — LLM likely failed. Not publishing.")

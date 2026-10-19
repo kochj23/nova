@@ -123,6 +123,8 @@ MOTIF = {
     "crime": "a detective's desk with case files under a single lamp",
     "workshop": "a woodworking bench with hand tools and fresh shavings",
     "travel": "an open road at dusk with a folded map on the dashboard",
+    "history": "an old atlas open beside marble busts in a quiet museum hall",
+    "faith": "a candle, an open old book and soft light through a temple window",
     "tech": "circuit boards, newspapers and glowing screens on a desk",
     "digests": "neatly stacked daily reports and a coffee cup at dawn",
     "security": "a lighthouse sweeping its beam over a dark network of lights",

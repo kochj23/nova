@@ -41,13 +41,15 @@ class Cur:
     """Answers by query shape: the channel query gets videos, the article query gets articles,
     the recipe-memory queries get recipe pages / chunks."""
 
-    def __init__(self, videos, arts, recipes=(), history=(), lore=()):
+    def __init__(self, videos, arts, recipes=(), history=(), lore=(), scripture=()):
         self.videos, self.arts, self.recipes, self.calls, self._r = videos, arts, list(recipes), [], []
-        self.history, self.lore = list(history), list(lore)
+        self.history, self.lore, self.scripture = list(history), list(lore), list(scripture)
 
     def execute(self, sql, params=None):
         self.calls.append((sql, params))
-        if "on_this_day" in sql:
+        if "scripture_library" in sql:
+            self._r = [] if "md5(" in sql else self.scripture
+        elif "on_this_day" in sql:
             self._r = self.history
         elif "esoteric_library" in sql:
             self._r = ([(md["url"], md.get("title"), src) for _, _, md, src in self.lore] if "GROUP BY" in sql
@@ -69,10 +71,10 @@ RULES = {"rules": "HOUSE-RULE-SENTINEL: pick the smokiest, spiciest fit.", "priv
 
 
 def run_main(argv=("--subject", "cars"), videos=None, arts=None, llm=None, publish=True, recipes=(), rules=RULES,
-             history=(), lore=()):
+             history=(), lore=(), scripture=()):
     videos = [vrow("a rear wing that lifts the nose", "v1")] if videos is None else videos
     arts = [arow("new kernel release", "https://a/1")] if arts is None else arts
-    cur = Cur(videos, arts, recipes, history, lore)
+    cur = Cur(videos, arts, recipes, history, lore, scripture)
     conn = MagicMock(); conn.cursor.return_value = cur
     nj = MagicMock()
     nj.today_str.return_value = "2026-10-19"
@@ -168,7 +170,8 @@ class TestUnit(unittest.TestCase):
             self.assertIn(m.norm(c), tech)
         for c in ("AMain Hobbies", "1:10 Rod Shop", "TeamAssociatedRC", "Hotrods & Homestead", "CarAudioFabrication"):
             self.assertIn(m.norm(c), cars)
-        self.assertNotIn(m.norm("Parkflyers RC"), cars | tech)
+        self.assertIn(m.norm("Parkflyers RC"), cars)          # Jordan 2026-10-19 second pass: RC planes -> Cars
+        self.assertIn(m.norm("BocaBola"), tech)
 
     def test_tech_feed_filter_drops_space_and_forum(self):
         ex = m.TECH_FEED_EXCLUDE
@@ -264,7 +267,7 @@ class TestFrame(unittest.TestCase):
     def test_module_shape(self):
         for n in ("main", "fetch", "source_list", "norm", "load_food_rules", "private_hit", "fetch_recipes"):
             self.assertTrue(callable(getattr(m, n)))
-        self.assertEqual(set(m.SUBJECTS), {"cars", "tech", "food", *NEW})
+        self.assertEqual(set(m.SUBJECTS), {"cars", "tech", "food", *NEW, *NEW2})
         self.assertEqual(set(m.FEATURES), set(m.SUBJECTS))
 
     def test_watches_script_untouched_by_the_sibling(self):
@@ -550,7 +553,11 @@ NEW = ("music", "military", "screen", "science", "mystery", "crime", "workshop",
 LISTS = {"cars": m.CARS_CHANNELS, "tech": m.TECH_CHANNELS, "food": m.FOOD_CHANNELS, "music": m.MUSIC_CHANNELS,
          "military": m.MILITARY_CHANNELS, "screen": m.SCREEN_CHANNELS, "science": m.SCIENCE_CHANNELS,
          "mystery": m.MYSTERY_CHANNELS, "crime": m.CRIME_CHANNELS, "workshop": m.WORKSHOP_CHANNELS,
-         "travel": m.TRAVEL_CHANNELS}
+         "travel": m.TRAVEL_CHANNELS, "history": m.HISTORY_CHANNELS, "faith": m.FAITH_CHANNELS}
+NEW2 = ("history", "faith")
+import nova_channel_pools as ncp  # noqa: E402
+# Every channel belongs to exactly one subject OR non-Friends pool (Jordan 2026-10-19).
+OWNERS = {**LISTS, **{f"pool:{k}": v for k, v in ncp.POOLS.items()}}
 SAMPLE = {"music": "Rick Beato", "military": "Forgotten Weapons", "screen": "RedLetterMedia", "science": "PBS Space Time",
           "mystery": "Wendigoon", "crime": "Kitboga", "workshop": "Blacktail Studio", "travel": "Peter Santenello"}
 HEADINGS = {"music": "🎧 Track of the Day", "military": "📜 This Day in Military History",
@@ -571,7 +578,7 @@ def lrow(text, url, title, source, **md):
 class TestNewSectionRouting(unittest.TestCase):
     def test_every_list_disjoint_from_every_other(self):
         seen = {}
-        for subj, chans in LISTS.items():
+        for subj, chans in OWNERS.items():
             for c in chans:
                 k = m.norm(c)
                 self.assertNotIn(k, seen, f"{c} in both {seen.get(k)} and {subj}")
@@ -637,9 +644,12 @@ class TestNewSectionRouting(unittest.TestCase):
         if not row:
             self.skipTest("no subscription cache")
         subs = {m.norm(r[2] if isinstance(r, list) else r) for r in row[0]}
-        for subj in NEW:
-            missing = [c for c in LISTS[subj] if m.norm(c) not in subs]
+        legacy = {m.norm(c) for c in ("Supercharged Sib", "Made with Layers", "Tony's Hyper Tinkering Shop")}
+        for subj, chans in OWNERS.items():   # (three older aliases kept for downloaded episodes' show names)
+            missing = [c for c in chans if m.norm(c) not in subs and m.norm(c) not in legacy]
             self.assertEqual(missing, [], subj)
+        missing = [c for c in m.UNASSIGNED_CHANNELS if m.norm(c) not in subs]
+        self.assertEqual(missing, [])
 
 
 class TestNewSectionTopBlocks(unittest.TestCase):
@@ -776,6 +786,173 @@ class TestNewSectionTopBlocks(unittest.TestCase):
             self.assertIn(subj, nova_lexicon.FLAVOR_SECTIONS, subj)
             name = m.SUBJECTS[subj]["name"]
             self.assertEqual(nova_series.assign_series(subj, f"{name}: Some Day", []), name)
+
+
+# ── History and Friends / Faith and Friends (Jordan 2026-10-19, second pass) ───────────────────
+SAMPLE2 = {"history": "OverSimplified", "faith": "Ascension Presents"}
+HEADINGS2 = {"history": "🏛️ This Day in History", "faith": "🕯️ Verse of the Day"}
+KJV = "https://www.gutenberg.org/cache/epub/10/pg10.txt"
+PSALM = ("[Psalms 23:1-4 (KJV)] 1 The LORD is my shepherd; I shall not want. 2 He maketh me to lie down in green "
+         "pastures: he leadeth me beside the still waters. 3 He restoreth my soul: he leadeth me in the paths of "
+         "righteousness for his name's sake. 4 Yea, though I walk through the valley of the shadow of death, I will "
+         "fear no evil: for thou art with me; thy rod and thy staff they comfort me.")
+PSALM_MD = {"url": KJV, "book": "Psalms", "chapter": 23, "verses": "1-4", "type": "scripture",
+            "translation": "King James Version"}
+DHP = ("[Dhammapada — Chapter 1, The Twin Verses (F. Max Müller 1881, passage 1/3)] All that we are is the result "
+       "of what we have thought: it is founded on our thoughts, it is made up of our thoughts.")
+DHP_MD = {"url": "https://sacred-texts.com/bud/sbe10/sbe1003.htm", "work": "Dhammapada", "type": "scripture",
+          "section": "Chapter 1, The Twin Verses", "tradition": "Buddhism"}
+
+
+def srow(text, md, source):
+    return (text, md, source)
+
+
+def verse_block(quote, cite, extra=""):
+    return (f"> {quote}\n\n— {cite}\n\nA quiet morning thought, tied to [Ascension Presents — T]({YT1}). "
+            + "reflect " * 40 + extra)
+
+
+class TestHistoryFaith(unittest.TestCase):
+    def test_lists_jordans_channels_and_style_health_stay_unassigned(self):
+        for n in ("OverSimplified", "Who Do You Think You Are?", "Well There's Your Problem Podcast", "RealLifeLore"):
+            self.assertIn(m.norm(n), {m.norm(c) for c in m.HISTORY_CHANNELS})
+        for n in ("Godsplaining | Catholic Podcast", "The Pope Leo's Path", "DeepBeliever"):
+            self.assertIn(m.norm(n), {m.norm(c) for c in m.FAITH_CHANNELS})
+        owned = {m.norm(c) for chans in OWNERS.values() for c in chans}
+        for n in m.UNASSIGNED_CHANNELS:
+            self.assertNotIn(m.norm(n), owned, n)
+        for subj, names in {"military": ("Ukraine News NowUA", "Professor Gerdes Explains 🇺🇦", "Shawn Ryan Show"),
+                            "screen": ("The Onion", "Jomboy Media", "R2-D2 SPEAKS! The REAL hero of STAR WARS"),
+                            "music": ("djvlad", "Letters Live", "The Streets"),
+                            "cars": ("GarageInsiderTV. com", "RR&BD Driving School", "Quick Shift"),
+                            "tech": ("styropyro", "Williston Audio Labs", "BocaBola")}.items():
+            for n in names:
+                self.assertIn(m.norm(n), {m.norm(c) for c in LISTS[subj]}, (subj, n))
+
+    def test_each_queries_its_own_channels_and_publishes_to_its_section(self):
+        for subj in NEW2:
+            rc, nj, cur = run_main(["--subject", subj], videos=[vrow("x", "v1", chan=SAMPLE2[subj])])
+            self.assertEqual(rc, 0, subj)
+            self.assertEqual(set(cur.calls[0][1][1]), {m.norm(c) for c in LISTS[subj]}, subj)
+            a = nj.publish_hugo.call_args.args
+            self.assertTrue(a[0].startswith(m.SUBJECTS[subj]["name"] + ": "), a[0])
+            self.assertEqual(a[2], subj)
+            self.assertEqual(nj.git_push.call_args.args[0], subj)
+
+    def test_headings_match_homepage_kinds_series_and_seasoning(self):
+        import nova_lexicon
+        import nova_sections
+        import nova_series
+        for subj in NEW2:
+            self.assertEqual(m.FEATURES[subj][0], HEADINGS2[subj])
+            self.assertEqual(nova_series.TOP_BLOCK_KINDS[subj], HEADINGS2[subj])
+            self.assertIn(subj, nova_lexicon.FLAVOR_SECTIONS)
+            self.assertIn(subj, nova_sections.LIVE_SECTIONS)
+            name = m.SUBJECTS[subj]["name"]
+            self.assertEqual(nova_series.assign_series(subj, f"{name}: Some Day", []), name)
+
+    def test_history_block_grounds_in_general_history_notes(self):
+        seen = []
+        notes = [hrow("The museum opened its doors on October 19, 1781, to great crowds. More.", title="Museum")]
+        text = f"On this day a museum opened — [Museum]({WIKI}). " + "history " * 40
+        with patch.object(m.nj, "today_str", return_value="2026-10-19"):
+            rc, nj, cur = run_main(["--subject", "history"], videos=[vrow("x", "v1", chan="OverSimplified")],
+                                   history=notes, llm=block_llm(text, seen))
+        self.assertEqual(rc, 0)
+        sql, params = next(c for c in cur.calls if "on_this_day" in c[0])
+        self.assertEqual(params[0], ["world_history", "history"])
+        self.assertIs(params[1], False)          # no military_doctrine manuals for general history
+        system, user = next(x for x in seen if "very TOP" in x[0])
+        self.assertIn("THIS DAY IN HISTORY", user)
+        self.assertIn("October 19", system)
+        body = published_body(nj)
+        self.assertTrue(body.startswith("## 🏛️ This Day in History"))
+        self.assertIn("### This Day in History", body)
+
+    def test_history_prefers_non_military_events(self):
+        rows = [hrow("The army crossed the river on 19 October 1805. Then peace.", url="https://w/army"),
+                hrow("A great library opened on October 19, 1840, in the city.", url="https://w/library"),
+                hrow("JP 3-01, Joint Doctrine, 19 October 1999. Army.", url="https://w/manual")]
+        with patch.object(m.nj, "today_str", return_value="2026-10-19"):
+            got = m.fetch_history(Cur([], [], history=rows), today="2026-10-19", military=False)
+        self.assertEqual([g["url"] for g in got], ["https://w/library", "https://w/army"])
+
+    def test_faith_verse_verified_cited_and_listed(self):
+        seen = []
+        block = verse_block("The LORD is my shepherd; I shall not want.", "Psalms 23:1 (KJV)")
+        rc, nj, cur = run_main(["--subject", "faith"], videos=[vrow("trust and the shepherd", "v1", chan="Ascension Presents",
+                                                                     title="The Good Shepherd")],
+                               scripture=[srow(PSALM, PSALM_MD, "bible"), srow(DHP, DHP_MD, "buddhism")],
+                               llm=block_llm(block, seen))
+        self.assertEqual(rc, 0)
+        body = published_body(nj)
+        self.assertTrue(body.startswith("## 🕯️ Verse of the Day"), body[:80])
+        self.assertIn("### Scripture", body)
+        self.assertIn("Psalms 23:1-4 (KJV)", body.split("## Sources")[1])
+        system, user = next(x for x in seen if "very TOP" in x[0])
+        self.assertIn("SCRIPTURE LIBRARY", user)
+        self.assertIn("CITE AS: Psalms 23:1-4 (KJV)", user)
+        self.assertIn("never mocking believers", system)
+        sql = next(c[0] for c in cur.calls if "scripture_library" in c[0])
+        self.assertIn("metadata->>'type' IN ('scripture', 'philosophy')", sql)
+
+    def test_faith_invented_or_misattributed_scripture_is_never_published(self):
+        cases = {"invented": verse_block("Blessed are the debuggers, for they shall ship on time.", "Psalms 23:1 (KJV)"),
+                 "wrong verse": verse_block("The LORD is my shepherd; I shall not want.", "Psalms 23:4 (KJV)"),
+                 "uncited": verse_block("The LORD is my shepherd; I shall not want.", "an old song"),
+                 "paraphrase": verse_block("The Lord is my shepherd, so I lack nothing at all.", "Psalms 23:1 (KJV)"),
+                 "no quote": "Psalms 23:1 is lovely — [Ascension Presents — T](" + YT1 + "). " + "reflect " * 40}
+        for name, block in cases.items():
+            rc, nj, _ = run_main(["--subject", "faith"], videos=[vrow("x", "v1", chan="Ascension Presents")],
+                                 scripture=[srow(PSALM, PSALM_MD, "bible")], llm=block_llm(block))
+            self.assertEqual(rc, 0, name)
+            self.assertTrue(published_body(nj).startswith("## News"), name)
+
+    def test_verse_ok_unit(self):
+        items = [{"_source": "bible", "_md": PSALM_MD, "text": PSALM, "title": "Psalms 23:1-4 (KJV)"},
+                 {"_source": "buddhism", "_md": DHP_MD, "text": DHP, "title": "Dhammapada — Chapter 1"}]
+        self.assertTrue(m.verse_ok("> he leadeth me beside the still waters.\n\nPsalms 23:2 (KJV)", items)[0])
+        self.assertTrue(m.verse_ok("> Yea, though I walk through the valley of the shadow of death\n\nPsalms 23:3-4", items)[0])
+        self.assertTrue(m.verse_ok("> All that we are is the result of what we have thought\n\n— Dhammapada, ch. 1", items)[0])
+        self.assertFalse(m.verse_ok("> All that we are is the result of what we have thought\n\n— the Buddha", items)[0])
+        self.assertFalse(m.verse_ok("> he leadeth me beside the still waters.\n\nPsalms 23:4 (KJV)", items)[0])
+        self.assertEqual(m._bible_verses(PSALM)[2][:22], "He maketh me to lie do")
+
+    def test_fetch_scripture_caps_per_tradition_and_labels(self):
+        rows = [srow(PSALM.replace("1-4", f"1-{i}"), {**PSALM_MD, "verses": f"1-{i}"}, "bible") for i in range(5, 9)] + \
+               [srow("[Nietzsche — The Joyful Wisdom §1] a shepherd of thought " * 3,
+                     {"url": "https://www.gutenberg.org/ebooks/52881", "work": "The Joyful Wisdom", "type": "philosophy",
+                      "tradition": "19th-century German philosophy"}, "nontheism")]
+        vids = [{"title": "The Good Shepherd and the still waters", "text": "shepherd shepherd", "channel": "c",
+                 "url": "u", "date": "d"}]
+        got = m.fetch_scripture(Cur([], [], scripture=rows), vids, today="2026-10-19")
+        self.assertEqual(sum(g["_source"] == "bible" for g in got), m.SCRIPTURE_PER_SOURCE)
+        nt = next(g for g in got if g["_source"] == "nontheism")
+        self.assertIn("philosophy, not scripture", nt["channel"])
+        self.assertTrue(all(g["title"] for g in got))
+
+    def test_faith_tone_reaches_issue_and_block(self):
+        seen = []
+        run_main(["--subject", "faith"], videos=[vrow("x", "v1", chan="Sacred Logic")],
+                 scripture=[srow(PSALM, PSALM_MD, "bible")], llm=block_llm("NONE", seen))
+        self.assertTrue(seen)
+        for system, _ in seen:
+            self.assertIn("never ranking religions", system)
+
+    def test_history_gets_the_stance_only_when_the_war_comes_up(self):
+        for text, want in (("the fall of Rome", False), ("how Russia's invasion of Ukraine began", True)):
+            seen = []
+            run_main(["--subject", "history"], videos=[vrow(text, "v1", chan="RealLifeLore")],
+                     llm=block_llm(good_block(), seen))
+            self.assertEqual(any(m.MILITARY_STANCE in sy for sy, _ in seen), want, text)
+
+    def test_scripture_fetch_fast_on_big_input(self):
+        rows = [srow(PSALM, PSALM_MD, "bible")] * 400
+        vids = [{"title": "shepherd " * 50, "text": "waters " * 5000, "channel": "c", "url": "u", "date": "d"}]
+        t0 = time.time()
+        m.fetch_scripture(Cur([], [], scripture=rows), vids, today="2026-10-19")
+        self.assertLess(time.time() - t0, 3.0)
 
 
 if __name__ == "__main__":
