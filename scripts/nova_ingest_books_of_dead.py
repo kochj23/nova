@@ -39,6 +39,9 @@ CACHE = Path("/Volumes/Data/books_of_the_dead_cache")
 NOTES_FILE = CACHE / "notes" / "notes.json"
 IA = "https://archive.org/"
 nis.CACHE = CACHE / "st"          # keep our Wayback cache apart from the Eastern-scripture agent's
+# The shared front-matter filter matches "contents" anywhere, which drops Mercer's "Texts of Miscellaneous Contents"
+# chapters; anchor it to whole front-matter titles for this corpus.
+nis.SKIP_TITLE = re.compile(r"(?i)^(title page|contents|index|bibliography|abbreviations|errata|list of .*)$")
 
 PD_OLD = "Public domain (published before 1931; US)"
 PD_1927 = ("Public domain in the US (published 1927; US term expired 2023-01-01). Note: Evans-Wentz d. 1965, "
@@ -240,7 +243,8 @@ def units(work: dict):
             if re.search(r"(?i)^(title page|contents|index|bibliography|abbreviations|list of)", title):
                 continue
             yield path.rsplit("/", 1)[-1].replace(".htm", ""), title, text, {
-                "type": work.get("type", SCRIPTURE), "order": k, "url": nis.ST + path,
+                "type": COMMENTARY if re.search(r"(?i)^(preface|introduction|foreword)", title) else work.get("type", SCRIPTURE),
+                "order": k, "url": nis.ST + path,
                 "via": "web.archive.org snapshot of sacred-texts.com"}
         return
     if work["kind"] == "note":
