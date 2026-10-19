@@ -2,6 +2,12 @@ from __future__ import annotations
 """
 nova_image_utils.py — Shared image generation with retry logic, backend health checks, and model rotation.
 
+LOCAL ONLY (2026-10-19, Jordan: "move away from cloud based images"): every Nova image is
+rendered by ComfyUI on the Studio's M3 Ultra (FLUX.1 dev BF16). There is NO cloud image
+fallback any more — a busy ComfyUI is queued behind and waited out, an unreachable one is
+retried with backoff, and if it is truly down generate_image() returns None: the article
+publishes without a cover and nova_fix_missing_images.py backfills it locally later.
+
 Used by: nova_daily_essay.py, nova_after_dark.py, nova_research_paper.py,
          nova_art_corner.py, nova_tech_today.py, nova_fix_missing_images.py
 
@@ -13,6 +19,7 @@ import os
 import random
 import socket
 import subprocess
+import sys
 import time
 import urllib.parse
 import urllib.request
@@ -22,18 +29,24 @@ from pathlib import Path
 
 GENERATE_IMAGE_SH = Path.home() / ".openclaw/scripts/generate_image.sh"
 SWARMUI_URL = "http://192.168.1.6:7801"
-MAX_RETRIES = 3     # standing rule: image gen gets 3 tries, 15 s apart, after a backend health check
+MAX_RETRIES = 3     # attempts when ComfyUI is unreachable / errors (backoff 15 s, 30 s); never resubmits a slow job
 RETRY_DELAY = 15
-TIMEOUT = 600   # 2026-10-01: FLUX on MPS needs more than 300s; covers use the Hyper SDXL model anyway
+TIMEOUT = 1200      # max seconds generate_image() waits in total (queue + render) — a busy queue is waited
+                    # out, not failed over. Also capped by the calling scheduler task's remaining time.
+                    # Callers may lower it (monthly_wrap / weekly_summary set 240).
+TASK_RESERVE_S = 180    # leave this much of the scheduler task's timeout for publish + git push
+MIN_ATTEMPT_S = 60      # don't start an attempt with less budget than this (FLUX dev warm ~60-110 s)
 
 # ── ComfyUI location (2026-10-06) ─────────────────────────────────────────────
 # The Studio's ComfyUI binds 127.0.0.1 + 192.168.1.6 (LAN only, see ~/bin/start-comfyui.sh).
-# Hosts where that address is local (the Studio) keep the generate_image.sh path; every
-# other host (nova-core .2, standby .5) talks to it over the LAN with the Python client below.
+# Every host — the Studio included (2026-10-19) — talks to it with the queue-aware Python
+# client below; generate_image.sh stays as Nova's command-line tool and for the dream/essay
+# scripts that shell out to it.
 # Override order: env NOVA_COMFYUI_URL > service_config(image_gen, comfyui).url > default.
 COMFYUI_DEFAULT_URL = "http://192.168.1.6:8188"
-REMOTE_GEN_TIMEOUT = 300        # per image once executing: FLUX dev ~57 s warm; a COLD load (~14 min
-                                # after a ComfyUI restart) overruns it -> that one cover goes to OpenRouter
+COMFYUI_LAUNCHD_LABEL = "com.jordankoch.comfyui"   # Studio LaunchAgent; soft-kicked when unreachable
+REMOTE_GEN_TIMEOUT = 900        # per image once executing: FLUX dev ~60-110 s warm; a COLD load after a
+                                # ComfyUI restart is ~14 min from /Volumes/Data and must be allowed to finish
 REMOTE_HEALTH_TIMEOUT = 3       # /system_stats probe before committing to the LAN path
 REMOTE_POLL_S = 3
 REMOTE_MAX_POLL_ERRORS = 5      # consecutive /history failures => ComfyUI went away
@@ -41,54 +54,8 @@ import nova_dsn as _nova_dsn  # noqa: E402
 _PG_DSN = _nova_dsn.pg_dsn("nova_ops", "connect_timeout=3")
 _comfyui_url_cache = None
 
-# ── OpenRouter Image Models (primary — no PII in prompts) ─────────────────────
-# Matched by mood/quality tier. All support text→image generation.
-OPENROUTER_MODELS = {
-    "fast": {
-        "id": "google/gemini-2.5-flash-image",
-        "name": "Gemini 2.5 Flash Image",
-        "best_for": "thumbnails, covers, quick generation",
-        "modalities": ["image", "text"],
-    },
-    "balanced": {
-        "id": "google/gemini-3.1-flash-image-preview",
-        "name": "Gemini 3.1 Flash Image",
-        "best_for": "daily content, good quality at low cost",
-        "modalities": ["image", "text"],
-    },
-    "quality": {
-        "id": "openai/gpt-5-image-mini",
-        "name": "GPT-5 Image Mini",
-        "best_for": "essays, detailed compositions, prompt adherence",
-        "modalities": ["image", "text"],
-    },
-    "premium": {
-        "id": "black-forest-labs/flux.2-pro",
-        "name": "FLUX.2 Pro",
-        "best_for": "art corner hero pieces, maximum photorealism",
-        "modalities": ["image"],
-    },
-    "cinematic": {
-        "id": "google/gemini-3-pro-image-preview",
-        "name": "Gemini 3 Pro Image",
-        "best_for": "after dark, dreams, dramatic moody scenes",
-        "modalities": ["image", "text"],
-    },
-    "artistic": {
-        "id": "recraft/recraft-v4.1-pro",
-        "name": "Recraft V4.1 Pro",
-        "best_for": "stylized art, illustrations, oil painting, watercolor",
-        "modalities": ["image"],
-    },
-    "flux_fast": {
-        "id": "black-forest-labs/flux.2-klein-4b",
-        "name": "FLUX.2 Klein 4B",
-        "best_for": "fast high-quality generation, versatile",
-        "modalities": ["image"],
-    },
-}
-
-# Map journal sections to preferred OpenRouter model tier
+# Section -> legacy cloud tier names. NOT used for generation since 2026-10-19 (local only);
+# kept because other scripts/tests import it. Every cover renders on FLUX.1 dev.
 SECTION_MODEL_MAP = {
     "art": "premium",
     "dreams": "cinematic",
@@ -104,15 +71,18 @@ SECTION_MODEL_MAP = {
     "default": "quality",
 }
 
-# Quality suffix appended to all image prompts for maximum fidelity
-IMAGE_QUALITY_SUFFIX = (
-    " Ultra-high resolution, 8K UHD, extraordinary detail and depth. "
-    "Rich textures, volumetric lighting, ray-traced global illumination. "
-    "Professional photography quality, masterful composition, tack-sharp focus. "
-    "Cinematic color grading with deep blacks and luminous highlights."
-)
-
-OPENROUTER_IMAGE_URL = "https://openrouter.ai/api/v1/chat/completions"
+# ── Local quality settings (2026-10-19) ──────────────────────────────────────
+# Covers render on FLUX.1 dev BF16 at >= ~1.2 MP (1280x960 for the 4:3 default), 24 steps,
+# FluxGuidance 3.5, euler/simple. Benchmarked on the M3 Ultra: 1024x768@20 ~55-70 s,
+# 1280x960@24 ~110 s warm. Publish resizes to 1200 px wide, so a native 1280 render beats an
+# upscaler pass (none installed) and costs ~1 GPU-hour/day at 30-40 covers.
+COVER_WIDTH = 1280
+COVER_HEIGHT = 960
+FLUX_MIN_PIXELS = 1280 * 960    # FLUX requests smaller than this are scaled up (aspect kept, /64)
+FLUX_GUIDANCE = 3.5
+# Style-neutral fidelity suffix for FLUX (T5 follows plain descriptive language well).
+IMAGE_QUALITY_SUFFIX = (" Masterful composition, intricate fine detail, tack-sharp focus, rich natural "
+                        "color and lighting, high dynamic range. No text, no lettering, no watermark.")
 
 # Available models with their optimal settings
 # NOTE: FP8 models (flux1-dev-fp8, flux1-schnell-fp8, ZImage FP8Mix) are BROKEN on macOS MPS
@@ -148,7 +118,7 @@ MODELS = {
         "file": "flux1-dev.safetensors",
         "name": "FLUX.1 dev (BF16 — MPS compatible, top quality)",
         "best_for": "top quality, best prompt adherence",
-        "optimal_steps": 20,
+        "optimal_steps": 24,
         "max_steps": 50,
         "requires_t5": True,
     },
@@ -233,23 +203,24 @@ def get_random_model() -> str:
 
 
 def _model_available_via_api(model_file: str) -> bool:
-    """Check if a model file is available in SwarmUI via the API (works even when /Volumes/Data is TCC-restricted)."""
-    try:
-        session_resp = urllib.request.urlopen(
-            urllib.request.Request(f"{SWARMUI_URL}/API/GetNewSession",
-                data=b'{}', headers={"Content-Type": "application/json"}), timeout=5)
-        session_id = json.loads(session_resp.read())["session_id"]
-        req = urllib.request.Request(
-            f"{SWARMUI_URL}/API/ListModels",
-            data=json.dumps({"session_id": session_id, "path": "", "depth": 2, "subtype": "Stable-Diffusion"}).encode(),
-            headers={"Content-Type": "application/json"})
-        resp = urllib.request.urlopen(req, timeout=10)
-        files = json.loads(resp.read()).get("files", [])
-        available = {f.get("name", "") for f in files}
-        return model_file in available
-    except Exception:
-        # If API unreachable, assume available (generate_image will handle the error)
-        return True
+    """Is model_file loadable by the ComfyUI we render on? Asks ComfyUI's /models listing
+    (diffusion_models + checkpoints; cached per process). SwarmUI is no longer consulted —
+    ComfyUI runs standalone (com.jordankoch.comfyui) and a SwarmUI outage must not block it.
+    Unreachable -> assume available (generation reports the real error)."""
+    global _comfy_models_cache
+    if _comfy_models_cache is None:
+        base = comfyui_url()
+        names = set()
+        try:
+            for folder in ("diffusion_models", "checkpoints"):
+                names.update(_comfy_json(f"{base}/models/{folder}", timeout=5) or [])
+        except Exception:
+            return True
+        _comfy_models_cache = names
+    return model_file in _comfy_models_cache
+
+
+_comfy_models_cache = None
 
 
 # ── Image appearance safety policy ───────────────────────────────────────────
@@ -303,47 +274,88 @@ def apply_image_safety(prompt: str) -> str:
     return cleaned.rstrip() + _SAFETY_SUFFIX
 
 
-def generate_image(prompt: str, width: int = 1024, height: int = 768, steps: int = 12,
+def generate_image(prompt: str, width: int = COVER_WIDTH, height: int = COVER_HEIGHT, steps: int = 12,
                     model: str = None, section: str = "default") -> str | None:
-    """Generate an image. Local ComfyUI (SwarmUI) primary, OpenRouter fallback.
+    """Generate an image on the Studio's ComfyUI. LOCAL ONLY — no cloud fallback.
 
     Args:
         prompt: Image generation prompt (no PII — creative/descriptive only)
-        width: Image width (default 1024)
-        height: Image height (default 768)
-        steps: Generation steps (only used for local fallback)
-        model: Local model key from MODELS dict (only for local fallback)
-        section: Journal section name for mood-matching ("art", "dreams", "after-dark", etc.)
+        width/height: requested size (FLUX renders are scaled up to >= FLUX_MIN_PIXELS)
+        steps: sampler steps; the default 12 means "the model's optimal" (FLUX dev: 24)
+        model: model key from MODELS (None = FLUX.1 dev; Art Corner rotates)
+        section: journal section (logging; "art" selects the rotation)
+
+    A busy ComfyUI is queued behind (single submission, waited out within the budget);
+    unreachable / errored attempts are retried with backoff. Returns the PNG path, or None
+    when no image could be made in time — the caller publishes without a cover and
+    nova_fix_missing_images.py backfills it locally.
     """
     # ── SAFETY: every generated image goes through here, so enforce the appearance
     # policy centrally rather than trusting ~40 individual prompt strings. Harmless for
     # people-free scenes (server rooms, landscapes); decisive when a person is depicted.
+    if prompt and IMAGE_QUALITY_SUFFIX.strip() not in prompt:
+        prompt = prompt.rstrip() + IMAGE_QUALITY_SUFFIX
     prompt = apply_image_safety(prompt)
 
-    # ── Primary: SwarmUI/ComfyUI on the Studio's GPU (2026-10-01, Jordan: the 80-core
-    # M3 Ultra is idle and the cloud path ran dry on 2026-07-17; local keeps the images
-    # private and free). On the Studio itself that is generate_image.sh; on nova-core and
-    # the standby (2026-10-06) the same workflow is queued over the LAN. OpenRouter is
-    # the fallback only when ComfyUI is unreachable or errors, never because it is busy.
     t0 = time.monotonic()
     base = comfyui_url()
-    if comfyui_is_local(base):
-        backend = "comfyui-local"
-        result = _local_comfyui_generate(prompt, width, height, steps, model, section)
-    else:
-        backend = "comfyui-remote"
-        result = _remote_comfyui_generate(prompt, width, height, steps, model, section, base)
-    if result:
-        _log(f"backend={backend} ({base}) produced {Path(result).name} in {time.monotonic() - t0:.0f}s")
-        return result
+    deadline = t0 + _wait_budget()
+    for attempt in range(1, MAX_RETRIES + 1):
+        left = deadline - time.monotonic()
+        if left < MIN_ATTEMPT_S:
+            _log(f"image budget exhausted ({left:.0f}s left) before attempt {attempt}")
+            break
+        result = _comfyui_generate(prompt, width, height, steps, model, section, base, budget=left)
+        if result:
+            _log(f"backend=comfyui ({base}) produced {Path(result).name} in "
+                 f"{time.monotonic() - t0:.0f}s (attempt {attempt})")
+            return result
+        if attempt < MAX_RETRIES:
+            delay = min(RETRY_DELAY * 2 ** (attempt - 1), max(0.0, deadline - time.monotonic() - MIN_ATTEMPT_S))
+            if delay <= 0:
+                break
+            _log(f"attempt {attempt} produced no image — retrying in {delay:.0f}s")
+            time.sleep(delay)
+    _log(f"no local image after {time.monotonic() - t0:.0f}s — publish without a cover; "
+         f"nova_fix_missing_images.py will backfill it (no cloud fallback)")
+    return None
 
-    _log(f"{backend} failed — falling back to OpenRouter...")
-    result = _openrouter_generate(prompt, section)
-    if result:
-        _log(f"backend=openrouter produced {Path(result).name} in {time.monotonic() - t0:.0f}s")
-    else:
-        _log(f"no backend produced an image ({time.monotonic() - t0:.0f}s)")
-    return result
+
+def _wait_budget() -> float:
+    """Seconds generate_image() may spend: TIMEOUT, capped by the scheduler task's remaining
+    time (via nova_journal._task_time_left when the caller imported nova_journal) minus
+    TASK_RESERVE_S, so waiting on a busy GPU never gets the whole article killed."""
+    budget = float(TIMEOUT)
+    nj = sys.modules.get("nova_journal")
+    if nj is not None and hasattr(nj, "_task_time_left"):
+        try:
+            left = nj._task_time_left()
+            if left is not None:
+                budget = min(budget, left - TASK_RESERVE_S)
+        except Exception:
+            pass
+    return max(0.0, budget)
+
+
+def _flux_size(width: int, height: int) -> tuple[int, int]:
+    """Scale a FLUX request up to >= FLUX_MIN_PIXELS (aspect kept, multiples of 64)."""
+    w, h = int(width), int(height)
+    if w * h >= FLUX_MIN_PIXELS:
+        return w, h
+    k = (FLUX_MIN_PIXELS / float(w * h)) ** 0.5
+    return int(round(w * k / 64.0)) * 64, int(round(h * k / 64.0)) * 64
+
+
+def _kick_local_comfyui(base: str) -> None:
+    """Studio only: ask launchd to start ComfyUI if it isn't running (no-op when it is)."""
+    if sys.platform != "darwin" or not comfyui_is_local(base):
+        return
+    try:
+        subprocess.run(["launchctl", "kickstart", f"gui/{os.getuid()}/{COMFYUI_LAUNCHD_LABEL}"],
+                       capture_output=True, timeout=10)
+        _log(f"ComfyUI unreachable — kickstarted {COMFYUI_LAUNCHD_LABEL}")
+    except Exception as e:
+        _log(f"ComfyUI kickstart failed: {e}")
 
 
 def comfyui_url() -> str:
@@ -405,7 +417,7 @@ def comfy_workflow(prompt: str, model_file: str, width: int, height: int, steps:
             "5": {"class_type": "EmptySD3LatentImage", "inputs": {"width": int(width), "height": int(height), "batch_size": 1}},
             "6": {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["11", 0]}},
             "7": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["11", 0]}},
-            "13": {"class_type": "FluxGuidance", "inputs": {"conditioning": ["6", 0], "guidance": 3.5}},
+            "13": {"class_type": "FluxGuidance", "inputs": {"conditioning": ["6", 0], "guidance": FLUX_GUIDANCE}},
             "8": {"class_type": "KSampler", "inputs": {
                 "model": ["4", 0], "positive": ["13", 0], "negative": ["7", 0], "latent_image": ["5", 0],
                 "seed": seed, "steps": int(steps), "cfg": 1.0,
@@ -469,41 +481,45 @@ def _comfy_withdraw(base: str, prompt_id: str, running: bool) -> None:
     saves nothing and throws the load away — letting it finish leaves the model warm
     (~57 s per cover) for the next caller."""
     if running:
-        _log(f"Remote ComfyUI: leaving running job {prompt_id} to finish (keeps the model warm)")
+        _log(f"ComfyUI: leaving running job {prompt_id} to finish (keeps the model warm)")
         return
     try:
         _comfy_json(f"{base}/queue", {"delete": [prompt_id]}, timeout=5)
     except Exception as e:
-        _log(f"Remote ComfyUI: queue delete of {prompt_id} failed: {e}")
+        _log(f"ComfyUI: queue delete of {prompt_id} failed: {e}")
 
 
-def _remote_comfyui_generate(prompt: str, width: int = 1024, height: int = 768, steps: int = 12,
-                             model: str = None, section: str = "default",
-                             base: str | None = None) -> str | None:
-    """Queue one image on the Studio's ComfyUI over the LAN and wait for it.
+def _comfyui_generate(prompt: str, width: int = COVER_WIDTH, height: int = COVER_HEIGHT, steps: int = 12,
+                      model: str = None, section: str = "default",
+                      base: str | None = None, budget: float | None = None) -> str | None:
+    """Queue one image on the Studio's ComfyUI (local or over the LAN) and wait for it.
 
-    Queue-aware: ComfyUI runs one job at a time, so a busy queue is waited out (within the
-    caller's TIMEOUT budget) instead of being treated as a failure. Once our job starts
-    executing it gets min(REMOTE_GEN_TIMEOUT, TIMEOUT). Single submission, no resubmits —
-    retrying a slow job would only flood the Studio's queue. Returns None (=> OpenRouter)
-    when ComfyUI is unreachable, rejects the graph, errors, or the budget runs out."""
+    Queue-aware: ComfyUI runs one job at a time, so a busy queue is waited out (within
+    `budget`, default TIMEOUT) instead of being treated as a failure. Once our job starts
+    executing it gets min(REMOTE_GEN_TIMEOUT, budget). Single submission, no resubmits —
+    retrying a slow job would only flood the Studio's queue. Returns None when ComfyUI is
+    unreachable, rejects the graph, errors, or the budget runs out (generate_image retries
+    the first three with backoff)."""
     base = (base or comfyui_url()).rstrip("/")
     try:
         _comfy_json(f"{base}/system_stats", timeout=REMOTE_HEALTH_TIMEOUT)
     except Exception as e:
-        _log(f"Remote ComfyUI {base} unreachable: {e}")
+        _log(f"ComfyUI {base} unreachable: {e}")
+        _kick_local_comfyui(base)
         return None
 
     model_info, model_file, actual_steps = _pick_model(model, section, steps)
+    if model_file.startswith("flux"):
+        width, height = _flux_size(width, height)
     try:
         q = _comfy_json(f"{base}/queue", timeout=5) or {}
         ahead = len(q.get("queue_running", [])) + len(q.get("queue_pending", []))
     except Exception:
         ahead = "?"
-    budget = TIMEOUT
-    gen_cap = min(REMOTE_GEN_TIMEOUT, TIMEOUT)
-    _log(f"Remote ComfyUI {base}: {model_info['name']} ({model_file}), {actual_steps} steps, "
-         f"{ahead} job(s) ahead, budget {budget}s (gen cap {gen_cap}s)")
+    budget = float(TIMEOUT if budget is None else budget)
+    gen_cap = min(REMOTE_GEN_TIMEOUT, budget)
+    _log(f"ComfyUI {base}: {model_info['name']} ({model_file}), {width}x{height}, {actual_steps} steps, "
+         f"{ahead} job(s) ahead, budget {budget:.0f}s (gen cap {gen_cap:.0f}s)")
 
     t0 = time.monotonic()
     try:
@@ -517,11 +533,11 @@ def _remote_comfyui_generate(prompt: str, width: int = 1024, height: int = 768, 
                 detail = f" — {e.read()[:300]}"
         except Exception:
             pass
-        _log(f"Remote ComfyUI submit failed: {e}{detail}")
+        _log(f"ComfyUI submit failed: {e}{detail}")
         return None
     prompt_id = resp.get("prompt_id")
     if not prompt_id:
-        _log(f"Remote ComfyUI: no prompt_id returned ({str(resp)[:200]})")
+        _log(f"ComfyUI: no prompt_id returned ({str(resp)[:200]})")
         return None
 
     started = None
@@ -530,7 +546,7 @@ def _remote_comfyui_generate(prompt: str, width: int = 1024, height: int = 768, 
         now = time.monotonic()
         if now - t0 > budget or (started is not None and now - started > gen_cap):
             phase = "generating" if started is not None else "queued"
-            _log(f"Remote ComfyUI: timed out after {now - t0:.0f}s ({phase}), job {prompt_id}")
+            _log(f"ComfyUI: timed out after {now - t0:.0f}s ({phase}), job {prompt_id}")
             _comfy_withdraw(base, prompt_id, running=started is not None)
             return None
         time.sleep(REMOTE_POLL_S)
@@ -546,18 +562,18 @@ def _remote_comfyui_generate(prompt: str, width: int = 1024, height: int = 768, 
                             for m in status.get("messages", [])
                             if isinstance(m, list) and len(m) > 1 and m[0] == "execution_error"
                             and isinstance(m[1], dict)]
-                    _log(f"Remote ComfyUI job {prompt_id} failed: {'; '.join(msgs) or state}")
+                    _log(f"ComfyUI job {prompt_id} failed: {'; '.join(msgs) or state}")
                     return None
             elif started is None:
                 q = _comfy_json(f"{base}/queue", timeout=5) or {}
                 if any(len(it) > 1 and it[1] == prompt_id for it in q.get("queue_running", [])):
                     started = time.monotonic()
-                    _log(f"Remote ComfyUI: job started after {started - t0:.0f}s in queue")
+                    _log(f"ComfyUI: job started after {started - t0:.0f}s in queue")
             errors = 0
         except Exception as e:
             errors += 1
             if errors >= REMOTE_MAX_POLL_ERRORS:
-                _log(f"Remote ComfyUI: lost contact ({e}) after {errors} polls")
+                _log(f"ComfyUI: lost contact ({e}) after {errors} polls")
                 return None
 
 
@@ -572,166 +588,15 @@ def _comfy_download(base: str, job: dict, started, t0: float) -> str | None:
                 with urllib.request.urlopen(f"{base}/view?{qs}", timeout=30) as r:
                     data = r.read()
             except Exception as e:
-                _log(f"Remote ComfyUI: download of {fname} failed: {e}")
+                _log(f"ComfyUI: download of {fname} failed: {e}")
                 return None
             if not data:
-                _log(f"Remote ComfyUI: empty image {fname}")
+                _log(f"ComfyUI: empty image {fname}")
                 return None
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(data)
             gen = f", gen {time.monotonic() - started:.0f}s" if started is not None else ""
-            _log(f"Remote ComfyUI generated {dest.name} (total {time.monotonic() - t0:.0f}s{gen})")
+            _log(f"ComfyUI generated {dest.name} (total {time.monotonic() - t0:.0f}s{gen})")
             return str(dest)
-    _log("Remote ComfyUI: job succeeded but produced no image")
-    return None
-
-
-def _openrouter_generate(prompt: str, section: str = "default") -> str | None:
-    """Generate image via OpenRouter API with mood-matched model selection."""
-    import nova_config
-    import base64
-
-    try:
-        api_key = nova_config.openrouter_api_key()
-        if not api_key:
-            _log("OpenRouter: no API key available")
-            return None
-
-        tier = SECTION_MODEL_MAP.get(section, "balanced")
-        model_info = OPENROUTER_MODELS[tier]
-        model_id = model_info["id"]
-        modalities = model_info.get("modalities", ["image", "text"])
-        _log(f"OpenRouter: using {model_info['name']} ({tier} tier) for section={section}")
-
-        enhanced_prompt = prompt.strip() + IMAGE_QUALITY_SUFFIX
-
-        payload = json.dumps({
-            "model": model_id,
-            "modalities": modalities,
-            # Cap the token reservation: without max_tokens OpenRouter reserves
-            # ~59K tokens of headroom per image request and 402s whenever the
-            # credit balance dips below that, even though an image only needs
-            # ~8K. Found 2026-09-14 after a day of coverless articles.
-            "max_tokens": 8000,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": f"Generate an image: {enhanced_prompt}"
-                }
-            ],
-        }).encode()
-
-        req = urllib.request.Request(
-            OPENROUTER_IMAGE_URL,
-            data=payload,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://nova.digitalnoise.net",
-                "X-Title": "Nova Journal Art",
-            },
-        )
-
-        with urllib.request.urlopen(req, timeout=180) as resp:
-            data = json.loads(resp.read())
-
-        choices = data.get("choices", [])
-        if not choices:
-            _log("OpenRouter: no choices in response")
-            return None
-
-        message = choices[0].get("message", {})
-
-        # OpenRouter returns images in message.images[] array
-        images = message.get("images", [])
-        for img in images:
-            img_url = ""
-            if isinstance(img, dict):
-                img_url = img.get("image_url", {}).get("url", "") or img.get("url", "")
-            elif isinstance(img, str):
-                img_url = img
-
-            if img_url.startswith("data:image"):
-                b64 = img_url.split(",", 1)[1]
-                output_path = Path.home() / ".openclaw/workspace" / f"or_{int(time.time())}.png"
-                output_path.write_bytes(base64.b64decode(b64))
-                _log(f"OpenRouter: saved base64 image → {output_path.name}")
-                return str(output_path)
-            elif img_url.startswith("http"):
-                output_path = Path.home() / ".openclaw/workspace" / f"or_{int(time.time())}.png"
-                urllib.request.urlretrieve(img_url, str(output_path))
-                _log(f"OpenRouter: downloaded image → {output_path.name}")
-                return str(output_path)
-
-        # Fallback: check content array (some models use this format)
-        content = message.get("content", "")
-        if isinstance(content, list):
-            for part in content:
-                if isinstance(part, dict) and part.get("type") == "image_url":
-                    img_url = part.get("image_url", {}).get("url", "")
-                    if img_url.startswith("data:image"):
-                        b64 = img_url.split(",", 1)[1]
-                        output_path = Path.home() / ".openclaw/workspace" / f"or_{int(time.time())}.png"
-                        output_path.write_bytes(base64.b64decode(b64))
-                        _log(f"OpenRouter: saved content image → {output_path.name}")
-                        return str(output_path)
-
-        _log(f"OpenRouter: no image found in response (keys: {list(message.keys())})")
-        return None
-
-    except Exception as e:
-        # Surface the HTTP body — a bare "HTTP Error 402" hides the actual
-        # remedy (credit balance) and cost a day of debugging by log-reading.
-        # Duck-typed: HTTPError has .read(). (Importing urllib.error here made
-        # `urllib` function-local and broke the try block — UnboundLocalError.)
-        detail = ""
-        try:
-            if hasattr(e, "read"):
-                detail = f" — {e.read()[:200]}"
-        except Exception:
-            pass
-        _log(f"OpenRouter image generation failed: {e}{detail}")
-        return None
-
-
-def _local_comfyui_generate(prompt: str, width: int = 1024, height: int = 768,
-                             steps: int = 12, model: str = None, section: str = "default") -> str | None:
-    """Studio path: generate via generate_image.sh against the local ComfyUI/SwarmUI."""
-    if not ensure_backend():
-        _log("Local fallback: SwarmUI not available")
-        return None
-
-    model_info, model_file, actual_steps = _pick_model(model, section, steps)
-    _log(f"Local fallback: {model_info['name']} ({model_file}), {actual_steps} steps")
-
-    for attempt in range(MAX_RETRIES):
-        try:
-            result = subprocess.run(
-                [str(GENERATE_IMAGE_SH), prompt, str(width), str(height), str(actual_steps), model_file],
-                capture_output=True, text=True, timeout=TIMEOUT,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                image_path = None
-                for line in result.stdout.strip().split("\n"):
-                    if line.startswith("Workspace copy: "):
-                        image_path = line.replace("Workspace copy: ", "").strip()
-                        break
-                if not image_path:
-                    for line in reversed(result.stdout.strip().split("\n")):
-                        if not line.startswith("Open with:") and "/" in line:
-                            image_path = line.strip()
-                            break
-                if image_path and Path(image_path).exists():
-                    _log(f"Local generated (attempt {attempt + 1}): {Path(image_path).name}")
-                    return image_path
-            _log(f"Local attempt {attempt + 1} failed (exit {result.returncode})")
-        except subprocess.TimeoutExpired:
-            _log(f"Local attempt {attempt + 1} timed out ({TIMEOUT}s)")
-        except Exception as e:
-            _log(f"Local attempt {attempt + 1} error: {e}")
-
-        if attempt < MAX_RETRIES - 1:
-            time.sleep(RETRY_DELAY)
-
-    _log("Local ComfyUI fallback also failed")
+    _log("ComfyUI: job succeeded but produced no image")
     return None

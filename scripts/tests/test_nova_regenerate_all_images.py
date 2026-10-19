@@ -31,10 +31,10 @@ def _load():
 
 
 ri = _load()
-# module-level stubs: never the real nova-journal tree, never OpenRouter, never sleep
+# module-level stubs: never the real nova-journal tree, never the real ComfyUI, never sleep
 _SAFE = Path(tempfile.mkdtemp(prefix="regen-safe-"))
 ri.HUGO_ROOT, ri.IMAGES_ROOT, ri.CONTENT_ROOT = _SAFE, _SAFE / "static/images", _SAFE / "content"
-ri._openrouter_generate = MagicMock(return_value=None)
+ri.generate_image = MagicMock(return_value=None)
 ri.time = types.SimpleNamespace(sleep=MagicMock())
 
 
@@ -64,24 +64,37 @@ class TestSecurity(unittest.TestCase):
     def test_no_hardcoded_credentials(self):
         pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", re.I)
         self.assertIsNone(pat.search(SRC))
-        self.assertIn("from nova_image_utils import _openrouter_generate", SRC)   # key handled by the shared util
+        self.assertIn("from nova_image_utils import generate_image", SRC)        # local ComfyUI via the shared util
+        self.assertNotIn("openrouter", SRC.lower())                               # no cloud images (2026-10-19)
 
     def test_dry_run_overwrites_nothing(self):
         root = _tree({"2026-01-01-clocks.md": POST}, ["2026-01-01-clocks.png"])
-        ri._openrouter_generate.reset_mock()
+        ri.generate_image.reset_mock()
         with patch.object(sys, "argv", ["x", "--dry-run"]):
             _quiet(ri.main)
-        ri._openrouter_generate.assert_not_called()
+        ri.generate_image.assert_not_called()
         self.assertEqual((root / "static/images/essays/2026-01-01-clocks.png").read_bytes(), b"OLD")
 
     def test_only_existing_png_targets_touched(self):
         root = _tree({}, ["a.png"])
         (root / "static/images/essays/keep.jpg").write_bytes(b"JPG")
         gen = Path(tempfile.mkdtemp()) / "new.png"; gen.write_bytes(b"NEW")
-        with patch.object(ri, "_openrouter_generate", return_value=str(gen)):
+        with patch.object(ri, "generate_image", return_value=str(gen)):
             _quiet(ri.regenerate_section, "essays")
         self.assertEqual((root / "static/images/essays/keep.jpg").read_bytes(), b"JPG")
         self.assertEqual(sorted(p.name for p in (root / "static/images/essays").iterdir()), ["a.png", "keep.jpg"])
+
+
+    def test_webp_target_is_encoded_not_copied(self):
+        dest = Path(tempfile.mkdtemp()) / "c.webp"
+        src = Path(tempfile.mkdtemp()) / "n.png"; src.write_bytes(b"PNG")
+        def fake(cmd, **kw):
+            Path(cmd[cmd.index("-o") + 1]).write_bytes(b"WEBP")
+            return subprocess.CompletedProcess(cmd, 0)
+        with patch.object(ri.subprocess, "run", side_effect=fake) as run:
+            self.assertTrue(ri._install(str(src), dest))
+        self.assertEqual(run.call_args[0][0][0], "cwebp")
+        self.assertEqual(dest.read_bytes(), b"WEBP")
 
 
 class TestPerformance(unittest.TestCase):
@@ -96,11 +109,11 @@ class TestPerformance(unittest.TestCase):
 
 class TestRetry(unittest.TestCase):
     def test_generation_failure_counts_and_keeps_old_image(self):
-        # RETRY GAP: regenerate_section/_openrouter_generate — one attempt per image; a failure is counted,
+        # RETRY GAP: regenerate_section/generate_image — one attempt per image; a failure is counted,
         # the original image is left in place, and the run continues to the next image
         root = _tree({}, ["a.png", "b.png"])
         gen = Path(tempfile.mkdtemp()) / "g.png"; gen.write_bytes(b"NEW")
-        with patch.object(ri, "_openrouter_generate", side_effect=[None, str(gen)]) as g:
+        with patch.object(ri, "generate_image", side_effect=[None, str(gen)]) as g:
             (ok, bad), out = _quiet(ri.regenerate_section, "essays")
         self.assertEqual((ok, bad, g.call_count), (1, 1, 2))
         self.assertEqual((root / "static/images/essays/a.png").read_bytes(), b"OLD")
@@ -133,9 +146,9 @@ class TestUnit(unittest.TestCase):
 class TestIntegration(unittest.TestCase):
     def test_post_metadata_feeds_section_prompt(self):
         _tree({"2026-01-01-clocks.md": POST}, ["2026-01-01-clocks.png"])
-        with patch.object(ri, "_openrouter_generate", return_value=None) as g:
+        with patch.object(ri, "generate_image", return_value=None) as g:
             _quiet(ri.regenerate_section, "essays")
-        prompt, section = g.call_args[0]
+        prompt, section = g.call_args[0][0], g.call_args[1]["section"]
         self.assertEqual(section, "essays")
         self.assertIn("Topic: On Clocks. Time, measured", prompt)
         self.assertTrue(set(ri.SECTIONS) <= set(ri.SECTION_PROMPT_STYLE))
@@ -146,12 +159,12 @@ class TestFunctional(unittest.TestCase):
         root = _tree({"2026-01-01-clocks.md": POST}, ["2026-01-01-clocks.png"])
         gen = Path(tempfile.mkdtemp()) / "out.png"; gen.write_bytes(b"FRESH")
         ri.time.sleep.reset_mock()
-        with patch.object(ri, "_openrouter_generate", return_value=str(gen)), patch.object(sys, "argv", ["x"]):
+        with patch.object(ri, "generate_image", return_value=str(gen)), patch.object(sys, "argv", ["x"]):
             _, out = _quiet(ri.main)
         self.assertEqual((root / "static/images/essays/2026-01-01-clocks.png").read_bytes(), b"FRESH")
         self.assertFalse(gen.exists())                          # temp generator output cleaned up
         self.assertIn("COMPLETE: 1 succeeded, 0 failed", out)
-        self.assertEqual(ri.time.sleep.call_count, 1)           # rate limit between generations
+        self.assertEqual(ri.time.sleep.call_count, 1)           # GPU breather between generations
 
 
 class TestFrame(unittest.TestCase):

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Tests for nova_image_utils.py — the 7 house categories (Security, Performance, Retry, Unit,
 Integration, Functional, Frame). Written by Jordan Koch (via Claude)."""
-import base64
 import importlib.util
 import io
 import json
@@ -29,7 +28,6 @@ def _load():
 
 iu = _load()
 iu._comfyui_url_cache = "http://127.0.0.1:8188"   # Studio path, no PG lookup (LAN path: test_nova_image_utils_remote.py)
-PNG = base64.b64encode(b"\x89PNG fake").decode()
 
 
 def _quiet():
@@ -62,14 +60,10 @@ class TestSecurity(unittest.TestCase):
         self.assertIsNone(pat.search(SRC))
         self.assertNotRegex(SRC, r"sk-or-[A-Za-z0-9]")
 
-    def test_openrouter_key_comes_from_config_and_rides_in_header(self):
-        with _Home(), _quiet(), mock.patch("nova_config.openrouter_api_key", return_value="sk-test"), \
-                mock.patch.object(iu.urllib.request, "urlopen",
-                                  return_value=_ctx({"choices": [{"message": {"images": []}}]})) as uo:
-            iu._openrouter_generate("a lighthouse")
-        req = uo.call_args[0][0]
-        self.assertEqual(req.headers["Authorization"], "Bearer sk-test")
-        self.assertNotIn("sk-test", req.data.decode())
+    def test_no_cloud_image_path_remains(self):
+        # 2026-10-19 (Jordan): images are LOCAL only — no OpenRouter/cloud endpoint, key or call.
+        for needle in ("openrouter.ai", "_openrouter_generate", "openrouter_api_key", "Authorization"):
+            self.assertNotIn(needle, SRC)
 
     def test_safety_policy_rewrites_youth_and_undress_cues(self):
         out = iu.apply_image_safety("a young girl in a bikini with little kids")
@@ -79,6 +73,19 @@ class TestSecurity(unittest.TestCase):
         self.assertEqual(iu.apply_image_safety(out), out)     # idempotent
         self.assertEqual(iu.apply_image_safety(""), "")
 
+    def test_generate_image_submits_safe_prompt_with_quality_suffix(self):
+        with _quiet(), mock.patch.object(iu, "_comfyui_generate", return_value="/tmp/x.png") as gen:
+            iu.generate_image("a young girl on a beach")
+        sent = gen.call_args[0][0]
+        self.assertIn(iu._SAFETY_SENTINEL, sent)
+        self.assertIn(iu.IMAGE_QUALITY_SUFFIX.strip(), sent)
+        self.assertNotRegex(sent.lower(), r"\bgirl\b")
+
+    def test_sdxl_graph_keeps_explicit_content_negative_prompt(self):
+        wf = iu.comfy_workflow("p", "Juggernaut_X_RunDiffusion_Hyper.safetensors", 512, 512, 8, seed=1)
+        for word in ("nudity", "nsfw", "explicit", "sexual content"):
+            self.assertIn(word, wf["7"]["inputs"]["text"])
+
 
 class TestPerformance(unittest.TestCase):
     def test_safety_pass_10k_prompts(self):
@@ -87,71 +94,111 @@ class TestPerformance(unittest.TestCase):
             iu.apply_image_safety(f"server rack number {i} glowing at dusk")
         self.assertLess(time.perf_counter() - t0, 3.0)
 
+    def test_down_comfyui_fails_fast_without_real_waiting(self):
+        with _quiet(), mock.patch.object(iu, "_comfyui_generate", return_value=None) as gen, \
+                mock.patch.object(iu.time, "sleep") as sl:
+            t0 = time.perf_counter()
+            self.assertIsNone(iu.generate_image("p"))
+        self.assertLess(time.perf_counter() - t0, 1.0)
+        self.assertEqual(gen.call_count, iu.MAX_RETRIES)
+        self.assertEqual(sl.call_count, iu.MAX_RETRIES - 1)
+
 
 class TestRetry(unittest.TestCase):
-    def test_local_retries_with_delay_then_succeeds(self):
-        with tempfile.NamedTemporaryFile(suffix=".png") as img, _quiet(), \
-                mock.patch.object(iu, "ensure_backend", return_value=True), \
-                mock.patch.object(iu, "_model_available_via_api", return_value=True), \
-                mock.patch.object(iu.subprocess, "run", side_effect=[
-                    mock.Mock(returncode=1, stdout=""),
-                    mock.Mock(returncode=0, stdout=f"Workspace copy: {img.name}\nOpen with: x")]) as run, \
+    def test_unreachable_then_success_backs_off_once(self):
+        with _quiet(), mock.patch.object(iu, "_comfyui_generate", side_effect=[None, "/tmp/ok.png"]) as gen, \
                 mock.patch.object(iu.time, "sleep") as sl:
-            self.assertEqual(iu._local_comfyui_generate("p"), img.name)
-        self.assertEqual(run.call_count, 2)
+            self.assertEqual(iu.generate_image("p"), "/tmp/ok.png")
+        self.assertEqual(gen.call_count, 2)
         sl.assert_called_once_with(iu.RETRY_DELAY)
 
-    def test_local_exhausts_retries_then_openrouter_fallback(self):
-        with _quiet(), mock.patch.object(iu, "ensure_backend", return_value=True), \
-                mock.patch.object(iu, "_model_available_via_api", return_value=True), \
-                mock.patch.object(iu.subprocess, "run",
-                                  side_effect=subprocess.TimeoutExpired("x", 1)) as run, \
-                mock.patch.object(iu.time, "sleep"), \
-                mock.patch.object(iu, "_openrouter_generate", return_value="/tmp/or.png") as orr:
-            self.assertEqual(iu.generate_image("p", section="art"), "/tmp/or.png")
-        self.assertEqual(run.call_count, iu.MAX_RETRIES)
-        self.assertIn(iu._SAFETY_SENTINEL, orr.call_args[0][0])   # fallback also gets the safe prompt
+    def test_exhausted_retries_back_off_exponentially_and_return_none(self):
+        with _quiet() as out, mock.patch.object(iu, "_comfyui_generate", return_value=None), \
+                mock.patch.object(iu.time, "sleep") as sl:
+            self.assertIsNone(iu.generate_image("p", section="art"))
+            log = out.getvalue()
+        self.assertEqual([c.args[0] for c in sl.call_args_list],
+                         [iu.RETRY_DELAY * 2 ** k for k in range(iu.MAX_RETRIES - 1)])
+        self.assertIn("nova_fix_missing_images.py will backfill", log)
 
-    def test_backend_down_and_openrouter_error_fail_open(self):
-        with _quiet(), mock.patch.object(iu.urllib.request, "urlopen", side_effect=OSError("down")), \
-                mock.patch("nova_config.openrouter_api_key", return_value="k"), \
-                mock.patch.object(iu.subprocess, "run") as run:
-            self.assertFalse(iu.ensure_backend())
+    def test_no_attempt_when_budget_is_too_small(self):
+        with _quiet(), mock.patch.object(iu, "_wait_budget", return_value=iu.MIN_ATTEMPT_S - 1), \
+                mock.patch.object(iu, "_comfyui_generate") as gen:
             self.assertIsNone(iu.generate_image("p"))
-            self.assertTrue(iu._model_available_via_api("x"))     # unknown -> assume available
-        run.assert_not_called()
+        gen.assert_not_called()
+
+    def test_budget_respects_the_scheduler_task_time_left(self):
+        fake_nj = mock.Mock(_task_time_left=mock.Mock(return_value=400))
+        with mock.patch.dict(sys.modules, {"nova_journal": fake_nj}):
+            self.assertEqual(iu._wait_budget(), 400 - iu.TASK_RESERVE_S)
+        fake_nj._task_time_left.return_value = None                       # manual run
+        with mock.patch.dict(sys.modules, {"nova_journal": fake_nj}):
+            self.assertEqual(iu._wait_budget(), float(iu.TIMEOUT))
+        fake_nj._task_time_left.return_value = 10                         # nearly out of time
+        with mock.patch.dict(sys.modules, {"nova_journal": fake_nj}):
+            self.assertEqual(iu._wait_budget(), 0.0)
 
 
 class TestUnit(unittest.TestCase):
     def test_rotation_and_model_tables_consistent(self):
         self.assertTrue(set(iu.ART_MODEL_ROTATION.values()) <= set(iu.MODELS))
         self.assertIn(iu.get_model_for_today(), iu.MODELS)
-        self.assertTrue(set(iu.SECTION_MODEL_MAP.values()) <= set(iu.OPENROUTER_MODELS))
-        self.assertIn(iu.DEFAULT_MODEL, iu.MODELS)
+        self.assertEqual(iu.DEFAULT_MODEL, "flux_dev")
+        self.assertGreaterEqual(iu.MODELS["flux_dev"]["optimal_steps"], 20)
+        self.assertLessEqual(iu.MODELS["flux_dev"]["optimal_steps"], 28)
 
     def test_random_model_falls_back_to_default(self):
         with mock.patch.object(iu, "_model_available_via_api", return_value=False):
             self.assertEqual(iu.get_random_model(), iu.DEFAULT_MODEL)
 
-    def test_openrouter_no_key_returns_none(self):
-        with _quiet(), mock.patch("nova_config.openrouter_api_key", return_value=""), \
-                mock.patch.object(iu.urllib.request, "urlopen") as uo:
-            self.assertIsNone(iu._openrouter_generate("p"))
-        uo.assert_not_called()
+    def test_flux_size_scales_up_small_requests_only(self):
+        self.assertEqual(iu._flux_size(1024, 768), (1280, 960))
+        w, h = iu._flux_size(1024, 1024)
+        self.assertEqual((w % 64, h % 64, w), (0, 0, h))
+        self.assertGreaterEqual(w * h, iu.FLUX_MIN_PIXELS * 0.95)
+        self.assertEqual(iu._flux_size(1600, 1200), (1600, 1200))
+
+    def test_flux_guidance_wired_into_graph(self):
+        wf = iu.comfy_workflow("p", "flux1-dev.safetensors", 1280, 960, 24, seed=3)
+        self.assertEqual(wf["13"]["inputs"]["guidance"], iu.FLUX_GUIDANCE)
+        self.assertEqual(wf["8"]["inputs"]["cfg"], 1.0)
 
 
 class TestIntegration(unittest.TestCase):
-    def test_local_passes_model_file_and_optimal_steps_to_shell_script(self):
-        with tempfile.NamedTemporaryFile(suffix=".png") as img, _quiet(), \
-                mock.patch.object(iu, "ensure_backend", return_value=True), \
-                mock.patch.object(iu, "_model_available_via_api", return_value=False), \
-                mock.patch.object(iu.subprocess, "run",
-                                  return_value=mock.Mock(returncode=0, stdout=f"junk\n{img.name}\n")) as run:
-            self.assertEqual(iu._local_comfyui_generate("p", model="longcat"), img.name)
+    def setUp(self):
+        iu._comfy_models_cache = None
+
+    def tearDown(self):
+        iu._comfy_models_cache = None
+
+    def test_model_availability_comes_from_comfyui_and_is_cached(self):
+        seen = []
+
+        def uo(req, timeout=None):
+            url = req.full_url if hasattr(req, "full_url") else req
+            seen.append(url)
+            return _ctx(["flux1-dev.safetensors"] if url.endswith("/diffusion_models") else ["juggernaut.safetensors"])
+        with mock.patch.object(iu.urllib.request, "urlopen", side_effect=uo):
+            self.assertTrue(iu._model_available_via_api("flux1-dev.safetensors"))
+            self.assertTrue(iu._model_available_via_api("juggernaut.safetensors"))
+            self.assertFalse(iu._model_available_via_api("ZImage/fp8.safetensors"))
+        self.assertEqual(len(seen), 2)                                    # cached after first call
+        self.assertTrue(all("7801" not in u for u in seen))               # SwarmUI no longer consulted
+
+    def test_model_availability_unreachable_assumes_available(self):
+        with mock.patch.object(iu.urllib.request, "urlopen", side_effect=OSError("down")):
+            self.assertTrue(iu._model_available_via_api("x"))
+        self.assertIsNone(iu._comfy_models_cache)
+
+    def test_unreachable_local_comfyui_is_kickstarted(self):
+        with _quiet(), mock.patch.object(iu.urllib.request, "urlopen", side_effect=OSError("refused")), \
+                mock.patch.object(iu.sys, "platform", "darwin"), \
+                mock.patch.object(iu.subprocess, "run") as run:
+            self.assertIsNone(iu._comfyui_generate("p", base="http://127.0.0.1:8188"))
         argv = run.call_args[0][0]
-        self.assertEqual(argv[0], str(iu.GENERATE_IMAGE_SH))
-        d = iu.MODELS[iu.DEFAULT_MODEL]                      # unavailable model -> default
-        self.assertEqual(argv[-2:], [str(d["optimal_steps"]), d["file"]])
+        self.assertEqual(argv[:2], ["launchctl", "kickstart"])
+        self.assertTrue(argv[2].endswith("/" + iu.COMFYUI_LAUNCHD_LABEL))
+        self.assertNotIn("-k", argv)                                       # never kills a running one
 
     def test_ensure_backend_restarts_idle_backends(self):
         calls = []
@@ -170,25 +217,20 @@ class TestIntegration(unittest.TestCase):
 
 
 class TestFunctional(unittest.TestCase):
-    def test_openrouter_saves_base64_image_under_workspace(self):
-        payload = {"choices": [{"message": {"images": [{"image_url": {"url": f"data:image/png;base64,{PNG}"}}]}}]}
-        with _Home() as home, _quiet(), mock.patch("nova_config.openrouter_api_key", return_value="k"), \
-                mock.patch.object(iu.urllib.request, "urlopen", return_value=_ctx(payload)) as uo:
-            out = iu._openrouter_generate("a quiet rack", section="dreams")
-            self.assertTrue(out.startswith(str(home / ".openclaw/workspace")))
-            self.assertEqual(Path(out).read_bytes(), b"\x89PNG fake")
-        body = json.loads(uo.call_args[0][0].data)
-        self.assertEqual(body["model"], iu.OPENROUTER_MODELS["cinematic"]["id"])
-        self.assertEqual(body["max_tokens"], 8000)
+    def test_comfyui_down_publishes_without_cover_and_never_calls_out(self):
+        urls = []
 
-    def test_openrouter_content_array_and_empty_choices(self):
-        payload = {"choices": [{"message": {"content": [{"type": "image_url",
-                                                          "image_url": {"url": f"data:image/png;base64,{PNG}"}}]}}]}
-        with _Home(), _quiet(), mock.patch("nova_config.openrouter_api_key", return_value="k"):
-            with mock.patch.object(iu.urllib.request, "urlopen", return_value=_ctx(payload)):
-                self.assertTrue(Path(iu._openrouter_generate("p")).exists())
-            with mock.patch.object(iu.urllib.request, "urlopen", return_value=_ctx({"choices": []})):
-                self.assertIsNone(iu._openrouter_generate("p"))
+        def uo(req, timeout=None):
+            urls.append(req.full_url if hasattr(req, "full_url") else req)
+            raise OSError("refused")
+        with _quiet() as out, mock.patch.dict(os.environ, {"NOVA_COMFYUI_URL": "http://192.0.2.10:8188"}), \
+                mock.patch.object(iu.urllib.request, "urlopen", side_effect=uo), \
+                mock.patch.object(iu.time, "sleep"), mock.patch.object(iu.subprocess, "run") as run:
+            self.assertIsNone(iu.generate_image("a quiet rack", section="burbank-ops"))
+            log = out.getvalue()
+        self.assertTrue(urls and all(u.startswith("http://192.0.2.10:8188/") for u in urls))
+        run.assert_not_called()                                           # not local -> no kickstart
+        self.assertIn("no cloud fallback", log)
 
 
 class TestFrame(unittest.TestCase):

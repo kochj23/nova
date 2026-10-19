@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for nova_image_utils.py (LAN ComfyUI backend selection, 2026-10-06) — the 7 house
+"""Tests for nova_image_utils.py (ComfyUI client, LAN 2026-10-06; LOCAL ONLY 2026-10-19) — the 7 house
 categories (Security, Performance, Retry, Unit, Integration, Functional, Frame).
 Written by Jordan Koch (via Claude)."""
 import importlib.util
@@ -152,7 +152,7 @@ class TestPerformance(unittest.TestCase):
         fc = FakeComfy([{}], queue_pending=[[1, "pid-1"]])
         with _Env(), mock.patch.object(iu.urllib.request, "urlopen", side_effect=fc), \
                 mock.patch.object(iu.time, "monotonic", side_effect=lambda: next(clock)):
-            self.assertIsNone(iu._remote_comfyui_generate("p", base=BASE))
+            self.assertIsNone(iu._comfyui_generate("p", base=BASE))
         self.assertLess(fc.paths().count("/queue"), 40)
 
 
@@ -160,17 +160,17 @@ class TestRetry(unittest.TestCase):
     def test_transient_poll_errors_are_tolerated(self):
         fc = FakeComfy([{}, DONE], queue_running=[[1, "pid-1"]], fail_paths={"/history/": 2})
         with _Env(), mock.patch.object(iu.urllib.request, "urlopen", side_effect=fc):
-            out = iu._remote_comfyui_generate("p", base=BASE)
+            out = iu._comfyui_generate("p", base=BASE)
         self.assertTrue(out and Path(out).name.startswith("comfy_"))
         self.assertGreaterEqual(fc.paths().count("/history/pid-1"), 3)   # 2 failures + success
         self.assertEqual(fc.paths().count("/prompt"), 1)                 # never resubmitted
 
     def test_lost_contact_gives_up_after_max_poll_errors(self):
-        # RETRY GAP: _remote_comfyui_generate submits once by design (no flooding); polls
-        # tolerate REMOTE_MAX_POLL_ERRORS consecutive failures, then fail open to OpenRouter.
+        # _comfyui_generate submits once by design (no flooding); polls tolerate
+        # REMOTE_MAX_POLL_ERRORS consecutive failures, then return None (generate_image retries).
         fc = FakeComfy([{}], fail_paths={"/history/": 99})
         with _Env(), mock.patch.object(iu.urllib.request, "urlopen", side_effect=fc):
-            self.assertIsNone(iu._remote_comfyui_generate("p", base=BASE))
+            self.assertIsNone(iu._comfyui_generate("p", base=BASE))
         self.assertEqual(fc.paths().count("/history/pid-1"), iu.REMOTE_MAX_POLL_ERRORS)
 
 
@@ -214,23 +214,20 @@ class TestUnit(unittest.TestCase):
 
 
 class TestIntegration(unittest.TestCase):
-    def test_non_studio_host_routes_to_lan_comfyui_then_openrouter(self):
-        with _Env() as e, mock.patch.object(iu, "_remote_comfyui_generate", return_value=None) as rem, \
-                mock.patch.object(iu, "_local_comfyui_generate") as loc, \
-                mock.patch.object(iu, "_openrouter_generate", return_value="/tmp/or.png") as orr:
-            self.assertEqual(iu.generate_image("a young girl"), "/tmp/or.png")
-        loc.assert_not_called()
-        self.assertEqual(rem.call_args[0][-1], BASE)
-        self.assertIn(iu._SAFETY_SENTINEL, rem.call_args[0][0])       # remote gets the safe prompt
-        self.assertIn("backend=openrouter", e.out.getvalue())
+    def test_every_host_uses_the_python_client_with_safe_prompt_and_budget(self):
+        for url in (BASE, "http://127.0.0.1:8188"):
+            with _Env(), mock.patch.dict(os.environ, {"NOVA_COMFYUI_URL": url}), \
+                    mock.patch.object(iu, "_comfyui_generate", return_value="/tmp/l.png") as gen:
+                self.assertEqual(iu.generate_image("a young girl"), "/tmp/l.png")
+            args, kw = gen.call_args
+            self.assertEqual(args[-1], url)
+            self.assertIn(iu._SAFETY_SENTINEL, args[0])                 # safe prompt reaches ComfyUI
+            self.assertLessEqual(kw["budget"], iu.TIMEOUT)
 
-    def test_studio_host_keeps_shell_path(self):
-        with _Env(), mock.patch.dict(os.environ, {"NOVA_COMFYUI_URL": "http://127.0.0.1:8188"}), \
-                mock.patch.object(iu, "_local_comfyui_generate", return_value="/tmp/l.png") as loc, \
-                mock.patch.object(iu, "_remote_comfyui_generate") as rem:
-            self.assertEqual(iu.generate_image("p"), "/tmp/l.png")
-        loc.assert_called_once()
-        rem.assert_not_called()
+    def test_no_cloud_fallback_exists(self):
+        self.assertFalse(hasattr(iu, "_openrouter_generate"))
+        self.assertFalse(hasattr(iu, "_local_comfyui_generate"))
+        self.assertNotIn("openrouter.ai", SRC)
 
     def test_generate_image_sh_uses_shared_workflow_and_comfy_url(self):
         self.assertIn("from nova_image_utils import comfy_workflow", SH)
@@ -241,32 +238,34 @@ class TestIntegration(unittest.TestCase):
 class TestFunctional(unittest.TestCase):
     def test_golden_path_queues_waits_and_saves(self):
         fc = FakeComfy([{}, {}, DONE], queue_running=[[1, "other"]], queue_pending=[[2, "pid-1"]])
-        with _Env() as e, mock.patch.object(iu.urllib.request, "urlopen", side_effect=fc), \
-                mock.patch.object(iu, "_openrouter_generate") as orr:
+        with _Env() as e, mock.patch.object(iu.urllib.request, "urlopen", side_effect=fc):
             out = iu.generate_image("a lighthouse")
             saved = Path(out).read_bytes() if out else b""
             log = e.out.getvalue()
-        orr.assert_not_called()
         self.assertEqual(saved, PNG)
         self.assertIn(".openclaw/workspace/comfy_", out)
         self.assertIn("2 job(s) ahead", log)
-        self.assertIn("backend=comfyui-remote", log)
-        sub = [d for p, d in fc.calls if p == "/prompt"][0]
-        self.assertEqual(sub["prompt"]["4"]["inputs"]["unet_name"], iu.MODELS[iu.DEFAULT_MODEL]["file"])
+        self.assertIn("backend=comfyui", log)
+        sub = [d for p, d in fc.calls if p == "/prompt"][0]["prompt"]
+        self.assertEqual(sub["4"]["inputs"]["unet_name"], iu.MODELS[iu.DEFAULT_MODEL]["file"])
+        self.assertEqual((sub["5"]["inputs"]["width"], sub["5"]["inputs"]["height"]),
+                         (iu.COVER_WIDTH, iu.COVER_HEIGHT))                 # quality defaults
+        self.assertEqual(sub["8"]["inputs"]["steps"], iu.MODELS["flux_dev"]["optimal_steps"])
 
-    def test_job_error_falls_back_to_openrouter(self):
+    def test_job_error_is_retried_then_publishes_without_cover(self):
         fc = FakeComfy([FAILED])
-        with _Env() as e, mock.patch.object(iu.urllib.request, "urlopen", side_effect=fc), \
-                mock.patch.object(iu, "_openrouter_generate", return_value="/tmp/or.png") as orr:
-            self.assertEqual(iu.generate_image("p"), "/tmp/or.png")
-        orr.assert_called_once()
-        self.assertIn("OOM", e.out.getvalue())
+        with _Env() as e, mock.patch.object(iu.urllib.request, "urlopen", side_effect=fc):
+            self.assertIsNone(iu.generate_image("p"))
+            log = e.out.getvalue()
+        self.assertEqual(fc.paths().count("/prompt"), iu.MAX_RETRIES)     # retried, never cloud
+        self.assertIn("OOM", log)
+        self.assertIn("no cloud fallback", log)
 
     def test_unreachable_skips_submit(self):
         def down(req, timeout=None):
             raise OSError("refused")
         with _Env(), mock.patch.object(iu.urllib.request, "urlopen", side_effect=down) as uo:
-            self.assertIsNone(iu._remote_comfyui_generate("p", base=BASE))
+            self.assertIsNone(iu._comfyui_generate("p", base=BASE))
         self.assertEqual(uo.call_count, 1)                               # health probe only
         self.assertEqual(uo.call_args.kwargs["timeout"], iu.REMOTE_HEALTH_TIMEOUT)
 
@@ -277,7 +276,7 @@ class TestFunctional(unittest.TestCase):
                            queue_pending=[] if running else [[1, "pid-1"]])
             with _Env(), mock.patch.object(iu.urllib.request, "urlopen", side_effect=fc), \
                     mock.patch.object(iu.time, "monotonic", side_effect=lambda: next(clock)):
-                self.assertIsNone(iu._remote_comfyui_generate("p", base=BASE))
+                self.assertIsNone(iu._comfyui_generate("p", base=BASE))
             deletes = [d for p, d in fc.calls if p == "/queue" and d]
             self.assertEqual(bool(deletes), expect_delete)
             self.assertNotIn("/interrupt", fc.paths())

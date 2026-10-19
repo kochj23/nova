@@ -257,26 +257,26 @@ class TestFleetCapacity(unittest.TestCase):
             self.assertEqual(urls[:2], ["http://192.168.1.125:11434", "http://192.168.1.5:11434"], name)
             self.assertNotIn("http://192.168.1.251:11434", urls, name)
 
-    def test_image_generation_is_local_first_with_cloud_fallback(self):
+    def test_image_generation_is_local_only(self):
+        # 2026-10-19 (Jordan): the cloud image fallback was removed — local ComfyUI or no image.
         import nova_image_utils as iu
         calls = []
-        with mock.patch.object(iu, "apply_image_safety", lambda p: p), \
-             mock.patch.object(iu, "_local_comfyui_generate", lambda *a, **k: calls.append("local") or "/tmp/x.png"), \
-             mock.patch.object(iu, "_openrouter_generate", lambda *a, **k: calls.append("cloud") or "/tmp/y.png"):
+        with mock.patch.object(iu, "apply_image_safety", lambda p: p), mock.patch.object(iu.time, "sleep"), \
+             mock.patch.object(iu, "_comfyui_generate", lambda *a, **k: calls.append("local") or "/tmp/x.png"):
             self.assertEqual(iu.generate_image("x", section="operations"), "/tmp/x.png")
         self.assertEqual(calls, ["local"])
         calls.clear()
-        with mock.patch.object(iu, "apply_image_safety", lambda p: p), \
-             mock.patch.object(iu, "_local_comfyui_generate", lambda *a, **k: calls.append("local") or None), \
-             mock.patch.object(iu, "_openrouter_generate", lambda *a, **k: calls.append("cloud") or "/tmp/y.png"):
-            self.assertEqual(iu.generate_image("x", section="operations"), "/tmp/y.png")
-        self.assertEqual(calls, ["local", "cloud"])
+        with mock.patch.object(iu, "apply_image_safety", lambda p: p), mock.patch.object(iu.time, "sleep"), \
+             mock.patch.object(iu, "_comfyui_generate", lambda *a, **k: calls.append("local") or None):
+            self.assertIsNone(iu.generate_image("x", section="operations"))
+        self.assertEqual(calls, ["local"] * iu.MAX_RETRIES)
+        self.assertFalse(hasattr(iu, "_openrouter_generate"))
 
     def test_covers_use_the_fast_model_and_art_keeps_its_rotation(self):
         src = _src("nova_image_utils.py")
         self.assertIn('elif section == "art":', src)
         self.assertIn("model_key = DEFAULT_MODEL", src)
-        self.assertIn("TIMEOUT = 600", src)
+        self.assertIn("TIMEOUT = 1200", src)
         self.assertIn('COMFY_URL="${COMFY_URL:-http://192.168.1.6:8188}"', _src("generate_image.sh"))
 
     def test_lan_bound_services_no_longer_pin_loopback(self):

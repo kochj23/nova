@@ -34,7 +34,6 @@ IMAGES_DIR = HUGO_ROOT / "static/images/local"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_local_burbank.log"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 ARTICLE_MODEL = "anthropic/claude-haiku-4.5"
-IMAGE_MODEL = "openai/gpt-5-image"
 PG_DSN = "dbname=nova_memories user=kochj host=pg-primary.digitalnoise.net"
 import nova_dsn as _nova_dsn  # noqa: E402
 NOVA_OPS_DSN = _nova_dsn.pg_dsn("nova_ops")

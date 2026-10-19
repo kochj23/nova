@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-nova_regenerate_all_images.py — Replace all journal images with OpenRouter-generated ones.
+nova_regenerate_all_images.py — Replace all journal images with locally generated ones.
 
 Reads each post's frontmatter (title, description, tags) to build a prompt,
-generates a new image via OpenRouter with the section-matched model, and
-replaces the existing file in static/images/.
+generates a new image LOCALLY (nova_image_utils.generate_image -> ComfyUI FLUX.1 dev on
+the Studio; no cloud images since 2026-10-19), and replaces the existing file in
+static/images/ (converted to WebP when the target is .webp).
 
 Written by Jordan Koch.
 """
@@ -17,7 +18,8 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from nova_image_utils import _openrouter_generate, SECTION_MODEL_MAP
+import subprocess  # noqa: E402
+from nova_image_utils import generate_image  # noqa: E402
 
 HUGO_ROOT = (Path.home() / "nova-journal")
 IMAGES_ROOT = HUGO_ROOT / "static/images"
@@ -139,11 +141,8 @@ def regenerate_section(section: str, dry_run: bool = False) -> tuple[int, int]:
 
         print(f"  Generating: {title}...", end=" ", flush=True)
 
-        result = _openrouter_generate(prompt, section)
-        if result and Path(result).exists():
-            # Replace the existing image
-            import shutil
-            shutil.copy2(result, img_path)
+        result = generate_image(prompt, section=section)
+        if result and Path(result).exists() and _install(result, img_path):
             Path(result).unlink(missing_ok=True)
             size_kb = img_path.stat().st_size // 1024
             print(f"✓ ({size_kb}KB)")
@@ -152,10 +151,22 @@ def regenerate_section(section: str, dry_run: bool = False) -> tuple[int, int]:
             print("✗ FAILED")
             failed += 1
 
-        # Rate limit — be gentle with the API
+        # Shared GPU — leave a gap for Whisper/Ollama between renders
         time.sleep(2)
 
     return success, failed
+
+
+def _install(src: str, dest: Path) -> bool:
+    """Put the rendered PNG at dest — WebP-encoded when dest is .webp (a PNG under a .webp
+    name breaks the deploy's image pipeline)."""
+    import shutil
+    if dest.suffix.lower() != ".webp" or src.lower().endswith(".webp"):
+        shutil.copy2(src, dest)
+        return True
+    r = subprocess.run(["cwebp", "-q", "86", "-resize", "1200", "0", src, "-o", str(dest)],
+                       capture_output=True, timeout=60)
+    return r.returncode == 0 and dest.exists() and dest.stat().st_size > 0
 
 
 def main():

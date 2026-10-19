@@ -165,7 +165,7 @@ class TestIntegration(_Env):
     def test_image_goes_through_shared_helper(self):
         with mock.patch.object(rt, "call_llm", return_value="a goose"), \
                 mock.patch("nova_image_utils.generate_image", return_value="/x/img.png") as gi:
-            self.assertEqual(rt.generate_image_openrouter("art"), Path("/x/img.png"))
+            self.assertEqual(rt.generate_image_local("art"), Path("/x/img.png"))
         self.assertEqual(gi.call_args[1]["section"], "rando_top10_weird")
 
 
@@ -174,7 +174,7 @@ class TestFunctional(_Env):
         with mock.patch.object(rt, "get_memory_stats", return_value={"total": total, "sources": {"reddit": total}}), \
                 mock.patch.object(rt, "get_recent_memories", return_value=mems if mems is not None else _mems(20)), \
                 mock.patch.object(rt, "call_llm", side_effect=[ARTICLE, "The Goose Knows", "goose prompt"]), \
-                mock.patch.object(rt, "generate_image_openrouter", return_value=None):
+                mock.patch.object(rt, "generate_image_local", return_value=None):
             rt.main()
 
     def test_golden_path_writes_pushes_and_posts(self):

@@ -7,7 +7,7 @@ MVP of the video pipeline (gap #2). Content → voice → stills → captions �
      condense to a punchy ~120-150 word first-person script in Nova's voice.
   2. VOICE: macOS `say` (voice configurable; swap to the XTTS clone later by
      replacing tts()). aiff -> wav, measure duration.
-  3. STILLS: generate N images (nova_image_utils, OpenRouter path) from per-beat
+  3. STILLS: generate N images (nova_image_utils, local ComfyUI) from per-beat
      prompts the LLM writes.
   4. CAPTIONS: render each beat's caption to a transparent PNG with PIL (this
      ffmpeg build has no libass/drawtext, so we overlay PNGs).

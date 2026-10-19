@@ -122,7 +122,7 @@ def main():
     print(f"=== capstone: {TITLE} ===")
     print(f"body: {len(BODY)} chars")
 
-    # Cover image — OpenRouter FLUX primary, local ComfyUI fallback.
+    # Cover image — local ComfyUI FLUX.1 dev only (no cloud images since 2026-10-19).
     image_path = None
     try:
         image_path = generate_image(IMAGE_PROMPT, section=SECTION)

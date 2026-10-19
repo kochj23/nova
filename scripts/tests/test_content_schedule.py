@@ -215,9 +215,9 @@ def _image_utils():
 
 
 class TestRetryLogicUsesEnsureBackend:
-    """Content scripts delegate to nova_image_utils.generate_image, which checks the
-    SwarmUI backend, retries the local ComfyUI path MAX_RETRIES times and only then
-    falls back to OpenRouter."""
+    """Content scripts delegate to nova_image_utils.generate_image, which health-checks the
+    Studio's ComfyUI and retries it MAX_RETRIES times with backoff. LOCAL ONLY since
+    2026-10-19 — there is no cloud fallback; no image means "publish, backfill later"."""
 
     def test_journal_delegates_to_image_utils(self):
         content = (SCRIPTS_DIR / "nova_journal.py").read_text()
@@ -248,58 +248,26 @@ class TestRetryLogicUsesEnsureBackend:
     def test_image_utils_retries_local_backend(self):
         iu = _image_utils()
         content = (SCRIPTS_DIR / "nova_image_utils.py").read_text()
-        assert "for attempt in range(MAX_RETRIES):" in content
+        assert "for attempt in range(1, MAX_RETRIES + 1):" in content
         assert iu.MAX_RETRIES >= 2, "local ComfyUI must get at least one retry"
         assert iu.RETRY_DELAY > 0
 
     @patch("nova_image_utils.time.sleep")
-    @patch("nova_image_utils._openrouter_generate", return_value=None)
-    @patch("nova_image_utils._model_available_via_api", return_value=True)
-    @patch("nova_image_utils.ensure_backend", return_value=True)
-    @patch("nova_image_utils.subprocess.run")
-    def test_ensure_backend_called_before_generation(
-        self, mock_run, mock_ensure, mock_avail, mock_openrouter, mock_sleep
-    ):
-        """ensure_backend gates the local path; every local attempt is used before
-        falling back to OpenRouter exactly once."""
+    @patch("nova_image_utils._comfyui_generate", return_value=None)
+    def test_every_attempt_used_then_none_without_cloud(self, mock_gen, mock_sleep):
+        """ComfyUI unreachable/erroring: MAX_RETRIES attempts with backoff, then None."""
         iu = _image_utils()
-        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="")
-
-        result = iu.generate_image("test prompt")
-
-        assert result is None
-        mock_ensure.assert_called_once()
-        assert mock_run.call_count == iu.MAX_RETRIES
+        assert iu.generate_image("test prompt") is None
+        assert mock_gen.call_count == iu.MAX_RETRIES
         assert mock_sleep.call_count == iu.MAX_RETRIES - 1
-        mock_openrouter.assert_called_once()
+        assert not hasattr(iu, "_openrouter_generate")
 
-    @patch("nova_image_utils._openrouter_generate", return_value=None)
-    @patch("nova_image_utils.ensure_backend", return_value=False)
-    @patch("nova_image_utils.subprocess.run")
-    def test_generate_image_returns_none_when_backend_down(
-        self, mock_run, mock_ensure, mock_openrouter
-    ):
-        """SwarmUI down: no local attempts, OpenRouter fallback tried once, None if
-        that fails too."""
+    @patch("nova_image_utils._comfyui_generate", return_value="/tmp/local.png")
+    def test_local_success_first_attempt(self, mock_gen):
         iu = _image_utils()
-        result = iu.generate_image("test prompt")
-        assert result is None
-        mock_run.assert_not_called()
-        mock_openrouter.assert_called_once()
-
-    @patch("nova_image_utils._openrouter_generate", return_value="/tmp/or.png")
-    @patch("nova_image_utils.ensure_backend", return_value=False)
-    def test_openrouter_fallback_when_backend_down(self, mock_ensure, mock_openrouter):
-        iu = _image_utils()
-        assert iu.generate_image("test prompt", section="after-dark") == "/tmp/or.png"
-        assert mock_openrouter.call_args.args[1] == "after-dark"
-
-    @patch("nova_image_utils._openrouter_generate")
-    @patch("nova_image_utils._local_comfyui_generate", return_value="/tmp/local.png")
-    def test_local_success_skips_openrouter(self, mock_local, mock_openrouter):
-        iu = _image_utils()
-        assert iu.generate_image("test prompt") == "/tmp/local.png"
-        mock_openrouter.assert_not_called()
+        assert iu.generate_image("test prompt", section="after-dark") == "/tmp/local.png"
+        mock_gen.assert_called_once()
+        assert mock_gen.call_args.args[5] == "after-dark"
 
 
 # ── Test: After Dark humor boost ────────────────────────────────────────────

@@ -1367,3 +1367,11 @@ tasks:
     schedule: cron 45 17 * * *
     timeout: 900
     overlap: skip
+
+  fix_missing_images:                # 2026-10-19 (Jordan: covers LOCAL only, OpenRouter retired for images). Backfills any journal post that published without a cover (or with a missing/0-byte one) on the Studio's ComfyUI FLUX.1 dev; explicit-path commit under the journal push lock. Big Brother also runs it hourly with a 540 s budget, but BB died 2026-10-16 (EX_CONFIG) and no cover was backfilled for 3 days — this keeps it scheduler-owned. flock = single instance.
+    script: nova_fix_missing_images.py
+    args: ["--limit", "12", "--budget", "1700"]
+    schedule: every 3h
+    timeout: 1800
+    overlap: skip
+    gpu_heavy: true

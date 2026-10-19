@@ -70,7 +70,6 @@ IMAGES_DIR = HUGO_ROOT / "static/images/operations"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_rando_top10.log"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 ARTICLE_MODEL = "anthropic/claude-haiku-4.5"
-IMAGE_MODEL = "openai/gpt-5-image"
 PG_DSN = "dbname=nova_memories user=kochj host=pg-primary.digitalnoise.net"
 HOURS_WINDOW = 12
 TOP_N = 10
@@ -219,7 +218,7 @@ def generate_title(article_preview: str) -> str:
 # nova_image_utils.generate_image already does this correctly with a working
 # ComfyUI fallback -- same shared helper the other article generators use.
 
-def generate_image_openrouter(article_preview: str) -> Path | None:
+def generate_image_local(article_preview: str) -> Path | None:
     prompt_system = "Based on this article about weird AI memories, generate a single short image prompt (max 80 words) for an illustration. The image should be surreal, funny, and capture the chaos of the article. Output ONLY the prompt, nothing else."
     img_prompt = call_llm(prompt_system, article_preview[:2000], max_tokens=100).strip()
     log(f"Image prompt: {img_prompt[:100]}...")
@@ -334,7 +333,7 @@ def main():
     title = generate_title(article)
     log(f"Title: {title}")
 
-    img_path = generate_image_openrouter(article)
+    img_path = generate_image_local(article)
 
     publish(title, article, img_path)
     log("Top 10 Weirdest Memories complete")
