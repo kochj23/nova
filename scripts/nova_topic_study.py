@@ -345,9 +345,10 @@ def remember(text: str, metadata: dict) -> str | None:
     return None
 
 
-def article_url(section: str, title: str) -> str:
+def article_url(section: str, title: str, day: str | None = None) -> str:
+    """The live URL: Hugo keeps the date-prefixed filename as the slug (publish_hugo's dated posts)."""
     slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60]
-    return f"https://nova.digitalnoise.net/{section}/{slug}/"
+    return f"https://nova.digitalnoise.net/{section}/{day or date.today().isoformat()}-{slug}/"
 
 
 # ─────────────────────────── run ───────────────────────────

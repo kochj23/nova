@@ -189,9 +189,8 @@ def _title_of(text: str) -> str:
 
 
 def article_url(path: Path) -> str:
-    """Hugo permalink: /<section>/<filename without its date prefix>/."""
-    stem = re.sub(r"^\d{4}-\d{2}-\d{2}-", "", path.stem)
-    return f"https://nova.digitalnoise.net/{path.parent.name}/{stem}/"
+    """Hugo permalink: /<section>/<filename stem>/ (the date prefix stays in the URL)."""
+    return f"https://nova.digitalnoise.net/{path.parent.name}/{path.stem}/"
 
 
 def article_index(root: Path | None = None) -> dict:

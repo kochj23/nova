@@ -107,7 +107,7 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(nc.strip_front_matter(t), "Body")
 
     def test_article_url(self):
-        self.assertEqual(nc.article_url(Path("/c/opinions/2026-10-01-a-b.md")), "https://nova.digitalnoise.net/opinions/a-b/")
+        self.assertEqual(nc.article_url(Path("/c/opinions/2026-10-01-a-b.md")), "https://nova.digitalnoise.net/opinions/2026-10-01-a-b/")
 
     def test_render_record_links_both(self):
         it = {"topic": "t", "earlier_quote": "e", "later_quote": "l", "which_stands": "later",
@@ -139,7 +139,7 @@ class TestIntegration(unittest.TestCase):
         (root / "content/opinions/2026-10-01-hello-world.md").write_text('---\ntitle: "💬 Hello World"\n---\n\nBody')
         with patch.object(nc, "_pg", side_effect=RuntimeError("offline")):
             idx = nc.article_index(root)
-        self.assertEqual(idx["hello world"]["url"], "https://nova.digitalnoise.net/opinions/hello-world/")
+        self.assertEqual(idx["hello world"]["url"], "https://nova.digitalnoise.net/opinions/2026-10-01-hello-world/")
         self.assertEqual(idx["hello world"]["date"], "2026-10-01")
 
 
