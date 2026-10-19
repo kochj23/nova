@@ -49,8 +49,8 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "anthropic/claude-haiku-4.5"
 
 JOURNAL_DIR = (Path.home() / "nova-journal")
-CONTENT_DIR = JOURNAL_DIR / "content/tech-today"
-IMAGES_DIR = JOURNAL_DIR / "static/images/tech-today"
+CONTENT_DIR = JOURNAL_DIR / "content/tech"   # Tech Today -> Tech and Friends (2026-10-19)
+IMAGES_DIR = JOURNAL_DIR / "static/images/tech"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_tech_today.log"
 STATE_FILE = Path.home() / ".openclaw/workspace/state/tech_today_state.json"
 
@@ -413,7 +413,7 @@ def publish_to_hugo(article: str, topic_data: dict, image_path: str | None) -> s
         dest = IMAGES_DIR / img_filename
         import shutil
         shutil.copy2(image_path, dest)
-        cover_ref = f"/images/tech-today/{img_filename}"
+        cover_ref = f"/images/tech/{img_filename}"
         log(f"Image copied to {dest}")
 
     # Build frontmatter
@@ -457,7 +457,7 @@ def publish_to_hugo(article: str, topic_data: dict, image_path: str | None) -> s
 title: "{title}"
 date: {iso_date}
 draft: false
-categories: ["tech-today"]
+categories: ["tech"]
 tags: {tags_str}
 description: "{description}"
 """
@@ -485,7 +485,7 @@ def post_to_slack(title: str, topic: str, word_count: int):
         f"Topic: {topic}\n"
         f"Title: {title}\n"
         f"Words: ~{word_count}\n\n"
-        f"Published to nova.digitalnoise.net/tech-today/"
+        f"Published to nova.digitalnoise.net/tech/"
     )
     notify(
         "Tech Today published",

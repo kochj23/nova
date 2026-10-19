@@ -2359,7 +2359,8 @@ JOURNAL_SECTIONS = {
     "opinions":   ("daily_opinion",  26),
     # after-dark RETIRED 2026-07-30 — removed so BB stops flagging it stale AND, more
     # importantly, never backfill-regenerates the content we just retired.
-    "tech-today": ("tech_today",     26),
+    # tech-today RETIRED 2026-10-19 -> Tech and Friends (tech). The Friends sections skip
+    # news-less days by design, so they are not staleness-backfilled (same as watches).
     "research":   ("research_paper", 50),
     "digests":    ("daily_digest",   26),
 }

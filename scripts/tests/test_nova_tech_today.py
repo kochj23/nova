@@ -29,8 +29,8 @@ def _load():
     mod.LOG_FILE = TMP / "tech.log"
     mod.STATE_FILE = TMP / "state.json"
     mod.JOURNAL_DIR = TMP / "nova-journal"
-    mod.CONTENT_DIR = mod.JOURNAL_DIR / "content/tech-today"
-    mod.IMAGES_DIR = mod.JOURNAL_DIR / "static/images/tech-today"
+    mod.CONTENT_DIR = mod.JOURNAL_DIR / "content/tech"
+    mod.IMAGES_DIR = mod.JOURNAL_DIR / "static/images/tech"
     mod.notify = MagicMock()
     return mod
 

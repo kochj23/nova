@@ -75,7 +75,7 @@ class TestRetry(unittest.TestCase):
 
 class TestUnit(unittest.TestCase):
     def test_seeds_lead_and_n_respected(self):
-        tags = tx.extract_tags("Ops", ARTICLE, category="tech-today", n=5)
+        tags = tx.extract_tags("Ops", ARTICLE, category="tech", n=5)
         self.assertEqual(tags[:3], ["technology", "AI", "infrastructure"])
         self.assertEqual(len(tags), 5)
         self.assertIn("kubernetes", tags)

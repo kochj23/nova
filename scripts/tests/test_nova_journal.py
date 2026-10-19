@@ -329,6 +329,8 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(nj._topic_to_tags("a to be"), [])
         self.assertEqual(nj._canon_section("rando"), "operations")
         self.assertEqual(nj._canon_section("essays"), "essays")
+        self.assertEqual(nj._canon_section("tech-today"), "tech")   # Tech Today -> Tech and Friends
+        self.assertEqual(nj.PROFILES["tech-today"]["section"], "tech")
 
     def test_refusal_and_ai_topic_detectors(self):
         self.assertIsNone(nj._looks_like_refusal("A Real Title", BODY))
@@ -385,7 +387,7 @@ class TestUnit(unittest.TestCase):
 
 class TestSectionRemap(unittest.TestCase):
     def test_merged_sections_route_to_research(self):
-        self.assertEqual(nj.SECTION_REMAP, {"essays": "research", "synthesis": "research"})
+        self.assertEqual(nj.SECTION_REMAP, {"essays": "research", "synthesis": "research", "tech-today": "tech"})
 
 
 class TestIntegration(unittest.TestCase):

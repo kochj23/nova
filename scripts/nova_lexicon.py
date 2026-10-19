@@ -34,7 +34,7 @@ DSN = _nova_dsn.pg_dsn("nova_ops")
 # Sections where a flourish is welcome. Breaking emergency posts are handled by an
 # explicit opt-out at the system_prompt layer (flavor=False), never seasoned.
 FLAVOR_SECTIONS = {"operations", "essays", "opinions", "rando", "after-dark",
-                   "meta", "synthesis", "digests", "digest", "tech-today", "dreams",
+                   "meta", "synthesis", "digests", "digest", "tech-today", "tech", "cars", "watches", "dreams",
                    "art", "research", "security", "local", "news", "weird", "fishbowl"}
 
 # ── CONLANGS ──────────────────────────────────────────────────────────────────

@@ -32,7 +32,7 @@ CONTENT_DIR  = (Path.home() / "nova-journal" / "content")
 REPO         = "kochj23/nova-journal"
 LOG_FILE     = Path.home() / ".openclaw/logs/journal_stats_poller.log"
 
-SECTIONS = ["dreams", "essays", "opinions", "after-dark", "tech-today", "research", "digests"]
+SECTIONS = ["dreams", "essays", "opinions", "after-dark", "tech", "cars", "watches", "research", "digests"]
 
 # Section → (scheduler task id, cron hour, cron minute)
 SECTION_SCHEDULES = {
@@ -40,7 +40,9 @@ SECTION_SCHEDULES = {
     "essays":     ("daily_essay",      9,  0),
     "opinions":   ("daily_opinion",   12,  0),
     "after-dark": ("after_dark",      20,  0),
-    "tech-today": ("tech_today",      23, 30),
+    "watches":    ("watches_and_friends", 7, 0),
+    "cars":       ("cars_and_friends",    7, 5),
+    "tech":       ("tech_and_friends",    7, 10),
     "research":   ("research_paper",  23, 50),
     "digests":    ("daily_digest",    17,  0),
 }

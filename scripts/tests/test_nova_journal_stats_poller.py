@@ -234,7 +234,7 @@ class TestUnit(unittest.TestCase):
     def test_schedule_panel_sorted_by_fire_time(self):
         panel = jp.build_schedule_panel()
         self.assertEqual([p["fires_at"] for p in panel], sorted(p["fires_at"] for p in panel))
-        self.assertEqual(panel[0]["section"], "essays")
+        self.assertEqual(panel[0]["section"], "watches")   # 07:00 Friends sections fire first (2026-10-19)
         self.assertEqual(len(panel), len(jp.SECTION_SCHEDULES))
 
 
@@ -281,11 +281,11 @@ class TestFunctional(unittest.TestCase):
             jp.main()
         stats = json.loads(jp.STATS_FILE.read_text())
         self.assertEqual(stats["traffic"]["total_count"], 40)
-        self.assertEqual(stats["section_views"], {"dreams": 5, "essays": 12, "opinions": 0, "after-dark": 0, "tech-today": 0, "research": 0, "digests": 0})
+        self.assertEqual(stats["section_views"], {"dreams": 5, "essays": 12, "opinions": 0, "after-dark": 0, "tech": 0, "cars": 0, "watches": 0, "research": 0, "digests": 0})
         self.assertEqual(stats["totals"], {"posts": 2, "posts_this_week": 2, "words_this_week": 40})
         self.assertEqual(stats["recent_deploys"][0]["id"], 7)
         self.assertEqual(stats["referrers"][0]["referrer"], "google.com")
-        self.assertEqual(len(stats["schedule"]), 7)
+        self.assertEqual(len(stats["schedule"]), 9)
         self.assertIn(_iso(1), stats["traffic_history"])
         self.assertTrue(jp.HISTORY_FILE.exists())
         self.assertIn("Stats written: 2 posts, 40 total views, 1 deploys", out.getvalue())

@@ -356,7 +356,7 @@ async def main():
             "---",
             f'title: "The Great Memory Migration of {datetime.now().strftime("%B %Y")}"',
             f'date: {datetime.now().strftime("%Y-%m-%dT%H:%M:%S")}',
-            'categories: ["tech-today"]',
+            'categories: ["operations"]',   # housekeeping is ops (tech-today retired 2026-10-19)
             'tags: ["infrastructure", "vectors", "housekeeping", "self-improvement"]',
             "---",
             "",

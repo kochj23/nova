@@ -1293,7 +1293,7 @@ def scrub_faces(body: str) -> str:
     return "\n".join(out) + tail
 
 
-SECTION_REMAP = {"essays": "research", "synthesis": "research"}
+SECTION_REMAP = {"essays": "research", "synthesis": "research", "tech-today": "tech"}   # tech-today: Tech and Friends 2026-10-19
 
 
 def publish_hugo(title: str, body: str, section: str, tags: list[str],

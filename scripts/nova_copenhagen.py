@@ -113,7 +113,7 @@ CLASSIFIERS = [
      "heartbeat flapping, correlates with the mem_headroom false criticals; node is reachable"),
     (r"cinc daily|packages cataloged|drift detected", "false",
      "CINC reachability runs over SSH-from-scheduler and flags the host it runs on; nodes are up"),
-    (r"journal/(research|tech-today|after-dark|essays?) stale|scheduled task .* is stale|task .* stale", "false",
+    (r"journal/(research|tech-today|tech|cars|after-dark|essays?) stale|scheduled task .* is stale|task .* stale", "false",
      "task_sentinel flags removed tasks and mis-learned weekly-cron cadence"),
     # ── NOISE (informational / self-referential / already-resolved) ──
     (r"auto-resolved|capacity resolved|recovered:|healed|resolved after|:white_check_mark:", "noise",
