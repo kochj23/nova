@@ -499,9 +499,14 @@ def get_image_prompt(title: str, topic: str, section: str) -> str:
 # HUGO PUBLISHING
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Retired sections and where their writes go now. rando -> operations (Jordan, 2026-07-12);
+# tech-today -> tech (Tech Today replaced by Tech and Friends, Jordan 2026-10-19).
+SECTION_REDIRECTS = {"rando": "operations", "tech-today": "tech"}
+
+
 def _canon_section(section: str) -> str:
-    """rando is retired (Jordan, 2026-07-12): every write to it is redirected to operations."""
-    return "operations" if section == "rando" else section
+    """Retired sections are redirected (SECTION_REDIRECTS); everything else passes through."""
+    return SECTION_REDIRECTS.get(section, section)
 
 
 # ── Article length policy + grounded expansion (2026-10-06, per Jordan) ──────────
@@ -1288,6 +1293,9 @@ def scrub_faces(body: str) -> str:
     return "\n".join(out) + tail
 
 
+SECTION_REMAP = {"essays": "research", "synthesis": "research"}
+
+
 def publish_hugo(title: str, body: str, section: str, tags: list[str],
                  description: str, image_path: str | None = None, emoji: str = "",
                  stable_slug: str | None = None,
@@ -1314,6 +1322,8 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
     byline, noon front-matter time) for articles whose publish time would reveal when Jordan
     was home doing something (nova_game_report.py publishes minutes after a game ends).
     """
+    # Jordan 2026-10-19: Essays + Synthesis were merged into Research; one remap here covers every generator.
+    section = SECTION_REMAP.get(section, section)
     _razor_draft = body  # The Razor Blade: the first model draft, measured against what publishes
     # Central title fallback (2026-09-13): degenerate titles ("Abstract", "Let me…",
     # stray markdown) previously reached the site from generators lacking their own
@@ -1903,7 +1913,7 @@ def notify_slack(section: str, title: str, preview: str):
     section = _canon_section(section)
     section_emojis = {
         "essays": ":pencil:", "opinions": ":speech_balloon:", "after-dark": ":night_with_stars:",
-        "pilot": ":movie_camera:", "tech-today": ":computer:", "research": ":microscope:",
+        "pilot": ":movie_camera:", "tech": ":computer:", "cars": ":red_car:", "watches": ":watch:", "research": ":microscope:",
         "synthesis": ":thread:", "digests": ":newspaper:", "dreams": ":crescent_moon:",
         "art": ":art:",
     }
@@ -2962,13 +2972,13 @@ PROFILES = {
         "tags_base": ["screenplay", "tv"],
         "image_section": "pilot",
     },
-    "tech-today": {
-        "section": "tech-today",
+    "tech-today": {                      # profile key kept for the CLI; publishes to Tech and Friends
+        "section": "tech",
         "emoji": "\U0001f4bb",
         "topic_fn": topic_tech_today,
         "generate_fn": generate_tech_today,
         "tags_base": ["tech"],
-        "image_section": "tech-today",
+        "image_section": "tech",
     },
     "research": {
         "section": "research",
