@@ -252,7 +252,9 @@ def commit_and_push(paths: list[Path], fixed: int) -> str:
     """Commit exactly `paths` (never add -A, never stash, never force), under the fleet-wide
     journal push lock; pull --rebase then push. A push that can't land leaves the commit
     local for the journal's stranded-commit sweep. Returns pushed|committed|failed."""
-    rel = [str(Path(p).resolve().relative_to(JOURNAL_DIR.resolve())) for p in paths]
+    rel = [str(Path(p).resolve().relative_to(JOURNAL_DIR.resolve())) for p in paths if Path(p).exists()]
+    if not rel:
+        return "failed"
     lock = _acquire_push_lock()
     try:
         if _git(["add", "--", *rel], 30).returncode != 0:
@@ -352,8 +354,13 @@ def main(argv=None):
             log(f"budget nearly spent ({left:.0f}s left) — stopping; the rest wait for the next run")
             break
         log(f"Generating image for: [{post['section']}] {post['title'][:50]}")
-        image_path = generate_image_for_post(post, budget_s=left)
-        dest = add_image_to_post(post, image_path) if image_path else None
+        try:
+            image_path = generate_image_for_post(post, budget_s=left)
+            # The post may have been moved/merged by another agent while we rendered.
+            dest = add_image_to_post(post, image_path) if image_path and post["file"].exists() else None
+        except Exception as e:   # one bad post must never cost the batch its commit
+            log(f"  error on {post['file'].name}: {e}")
+            dest = None
         if dest:
             fixed += 1
             written += [dest, post["file"]]

@@ -130,6 +130,24 @@ class TestRetry(_Base):
         run.assert_not_called()
         self.assertIn("Failed: 1", self.bus.call_args.kwargs["body"])
 
+    def test_post_moved_mid_run_does_not_cost_the_batch_its_commit(self):
+        a = self.post("dreams", "a", "A")
+        b = self.post("dreams", "b", "B")
+        src = Path(self.tmp.name) / "g.webp"
+        src.write_bytes(b"i")
+        calls, run = _git()
+
+        def gen(post, budget_s=None):
+            if post["file"] == b:
+                b.unlink()                       # another agent moved it while we rendered
+            return str(src)
+        with patch.object(fm, "generate_image_for_post", side_effect=gen), \
+             patch.object(fm.subprocess, "run", side_effect=run):
+            fm.main([])
+        add = [c for c in calls if c[:2] == ["git", "add"]][0]
+        self.assertEqual(sorted(add[3:]), ["content/dreams/a.md", "static/images/dreams/a.webp"])
+        self.assertIn("Fixed: 1", self.bus.call_args.kwargs["body"])
+
     def test_second_instance_exits_without_work(self):
         self.post("dreams", "a", "A")
         held = fm._single_instance()
