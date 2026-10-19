@@ -9,29 +9,45 @@ The prompt-level loop (nova_growth_loop.py) changes what she is TOLD every turn.
   build   finetune_examples (nova_ops). Two kinds, mixed so growth never costs her her voice:
             practice — the local teacher (qwen3:30b-a3b) writes a realistic message where one earned practice or
                        one strong lesson-link matters, and the reply Nova gives when she lives it, in her voice;
-            replay   — her own real exchanges with Jordan (memories source 'conversation'), as she said them.
-          Each example gets a stable split (train / valid / test) from its hash.
+            replay   — her own real exchanges with Jordan (memories source 'conversation', gateway Slack turns, the
+                       chatroom), as she said them.
+          Duplicates (same normalised message or reply) are dropped BEFORE a split is assigned, and the split
+          (train / valid / test) is a stable hash of the normalised content, so a copy can never land in test while
+          its twin trains.
   train   mlx_lm LoRA on the bf16 Qwen3-8B weights (the base of the gateway's qwen3:8b), Studio GPU.
-  eval    held-out test prompts answered by the base and by base+adapter; the teacher judges each pair blind (order
-          randomised): 'practice' prompts on living the practice, 'replay' prompts on sounding like Nova.
-          Gate: practice win rate >= PRACTICE_GATE and voice win rate >= VOICE_GATE, else the adapter is discarded.
+  eval    (2026-10-19) a FROZEN, versioned benchmark (finetune_eval_set; a new version only via --rebuild-eval-set):
+          ~EVAL_TARGET curated practice + voice prompts, none of whose text appears in any training data, plus
+          CALIB_N calibration pairs (her real reply vs a stored bland help-desk rewrite). Base and base+adapter each
+          answer every prompt EVAL_SAMPLES times at the deployed temperature with the deployed chat system prompt.
+          A panel of JUDGES (two local models of different families + Claude Sonnet) scores every pair in both orders
+          on a per-trait rubric; a judge that picks the real reply < CALIB_MIN of the time on the calibration pairs is
+          discarded, and with fewer than 2 judges left the eval is VOID (not a failure). Per pair the panel verdict is
+          the judges' majority. Gate (passes_gate): practice win-rate 95% Wilson lower bound > 0.50 (confidently
+          better) AND voice win-rate Wilson upper bound >= 0.50 AND the voice rubric difference's bootstrap upper
+          bound >= 0 (voice not clearly worse). Anything else discards the adapter.
   deploy  fuse -> GGUF -> Q4_K_M -> ollama create nova-grown:<tag> on the Studio; service_config finetune/current records it.
           The gateway switch is NOVA_CHAT_MODEL=nova-grown:latest; rollback is unsetting it (qwen3:8b is untouched).
 
 Weekly via the Studio scheduler (`--weekly` = build + train + eval + deploy-if-passed). Every stage is resumable
-and logged to finetune_runs. --selftest runs the pure checks.
+and logged to finetune_runs. `--eval-only --adapter <dir>` re-scores an existing adapter on the frozen benchmark and
+deploys it if it passes. --selftest runs the pure checks.
 """
 
 import argparse
 import hashlib
 import json
+import math
 import os
 import random
 import re
+import signal
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 
@@ -46,10 +62,24 @@ OLLAMA_BIN = os.environ.get("NOVA_FT_OLLAMA_BIN", "/Volumes/Data/ollama/bin/olla
 MODEL_NAME = "nova-grown"
 MAX_PRACTICE = 400
 MAX_REPLAY = 600         # 2026-10-17: candidates; curate() keeps only genuine-voice ones
-PRACTICE_GATE = 0.55       # 2026-10-18 Jordan: a little easier (was 0.60)
-VOICE_GATE = 0.35          # 2026-10-18 Jordan: a little easier (was 0.45); ~15 voice rows, so 0.45 vs 0.37 is ~1 judgement
-EVAL_N = 40               # test prompts per kind
-VOICE_MIN = 4             # teacher voice audit (1-5) an example needs to be trained on or used as a reference
+# 2026-10-19: the point-estimate gates (PRACTICE_GATE 0.55 / VOICE_GATE 0.35, on ~15 voice rows) were replaced by the
+# confidence-interval gate in passes_gate(); see the module docstring.
+EVAL_TARGET = 60          # prompts per kind in a frozen benchmark version
+EVAL_SAMPLES = 2          # replies per prompt per model (halves sampling luck)
+GEN_TEMP = 0.4            # the gateway's ollama chat temperature (nova_gateway/router.py) — eval at the deployed one
+CALIB_N = 20              # calibration pairs: her real reply vs a stored bland rewrite
+CALIB_MIN = 0.90          # a judge must pick the real reply this often, or its votes are discarded
+JUDGES = tuple(os.environ.get("NOVA_FT_JUDGES", "qwen3:30b-a3b,gemma3:27b,claude:sonnet").split(","))
+TRAITS = {
+    "replay": {"warmth": "warm, on his side", "bite": "dry wit, a little bite or sarcasm",
+               "directness": "gets to the point and says what she thinks",
+               "prose": "plain prose: no lists, headers, emoji or help-desk filler",
+               "like_her": "sounds like Nova's persona and her real reply (when given)",
+               "honesty": "invents no facts, numbers or checks she could not know"},
+    "practice": {"lives": "acts on the principle (without naming it)", "helpful": "actually answers or does what was asked",
+                 "honest": "invents no facts, numbers or checks she could not know"},
+}
+VOICE_MIN = 4            # teacher voice audit (1-5) an example needs to be trained on or used as a reference
 REPLAY_SHARE = 0.45       # replay (her real voice) is at least this share of train; practice is subsampled to fit
 LR = os.environ.get("NOVA_FT_LR", "2e-5")
 
@@ -161,6 +191,31 @@ def norm_key(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()[:300]
 
 
+def content_key(user: str, reply: str) -> str:
+    """What an exchange's split is hashed from: its normalised content, so copies always share a split. Pure."""
+    return norm_key(user) + "|" + norm_key(reply)[:120]
+
+
+def text_keys(user: str, reply: str) -> set[str]:
+    """Normalised message and reply: two exchanges sharing either are duplicates (and, across splits, a leak). Pure."""
+    return {"u:" + norm_key(user), "r:" + norm_key(reply)}
+
+
+def pick_eval(cands: list[tuple], banned: set[str], n: int) -> list:
+    """(id, user, reply) candidates in preference order -> up to n ids none of whose normalised message or reply is in
+    `banned` (training text) or repeats an earlier pick. Pure."""
+    out, seen = [], set(banned)
+    for i, u, r in cands:
+        k = text_keys(u, r)
+        if k & seen:
+            continue
+        seen |= k
+        out.append(i)
+        if len(out) >= n:
+            break
+    return out
+
+
 def names_internal_part(ref: str | None, user: str, reply: str) -> bool:
     """A practice exchange that names her internal part (card_rack, spinnaker ...) teaches jargon, not behaviour. Pure."""
     key = (ref or "").split(":", 1)[-1].strip().lower()
@@ -253,19 +308,46 @@ def critique_ok(raw: str) -> bool:
 
 
 def judge_prompt(kind: str, context: str, user: str, a: str, b: str, persona: str = "") -> str:
+    """Rubric + verdict for one ordered pair. `context` is the principle (practice) or her real reply (voice; empty
+    for calibration pairs, where one of A/B IS her real reply)."""
     crit = ("Which reply better LIVES this principle (acts on it, not just mentions it), while staying honest and "
             f"helpful?\nPrinciple: {context}" if kind == "practice" else
-            "Which reply sounds more like Nova — the persona below, and the same voice, warmth, bite and directness "
-            "as this real reply of hers — while still answering well and honestly (inventing facts loses)?\n"
-            + (f"Nova's persona:\n{persona[:1800]}\n" if persona else "") + f"Her real reply: {context}")
-    return (f"Message to Nova:\n{user}\n\nReply A:\n{a}\n\nReply B:\n{b}\n\n{crit}\n"
-            'Output ONLY JSON: {"winner": "A" | "B" | "tie", "why": "<one sentence>"}')
+            "Which reply sounds more like Nova — the persona below"
+            + (", and the same voice, warmth, bite and directness as this real reply of hers" if context else "")
+            + " — while still answering well and honestly (inventing facts loses)?\n"
+            + (f"Nova's persona:\n{persona[:1800]}\n" if persona else "") + (f"Her real reply: {context}" if context else ""))
+    traits = TRAITS["practice" if kind == "practice" else "replay"]
+    rubric = "\n".join(f"- {t}: {d}" for t, d in traits.items())
+    shape = ", ".join(f'"{t}": n' for t in traits)
+    return (f"Message to Nova:\n{user}\n\nReply A:\n{a}\n\nReply B:\n{b}\n\n{crit}\n\n"
+            f"Score BOTH replies 1-5 on each trait (5 = best):\n{rubric}\n"
+            "Then pick the better reply overall ('tie' only if they are genuinely equal).\n"
+            f'Output ONLY JSON: {{"A": {{{shape}}}, "B": {{{shape}}}, "winner": "A" | "B" | "tie"}}')
 
 
 def parse_verdict(raw: str) -> str | None:
     t = re.sub(r"<think>.*?</think>", "", raw or "", flags=re.S)
     m = re.search(r'"winner"\s*:\s*"(A|B|tie)"', t, re.I)
     return m.group(1).upper().replace("TIE", "tie") if m else None
+
+
+def parse_judgement(raw: str, kind: str) -> tuple[str, float | None, float | None] | None:
+    """Judge output -> (winner, mean rubric of A, mean rubric of B); means are None when the scores are missing,
+    the whole thing None without a winner. Pure."""
+    w = parse_verdict(raw)
+    if not w:
+        return None
+    t = re.sub(r"<think>.*?</think>", "", raw or "", flags=re.S)
+    traits = TRAITS["practice" if kind == "practice" else "replay"]
+
+    def mean(o):
+        v = [min(5, max(1, int(o[k]))) for k in traits if isinstance(o, dict) and str(o.get(k, "")).strip().isdigit()]
+        return sum(v) / len(v) if v else None
+    try:
+        o = json.loads(t[t.find("{"):t.rfind("}") + 1])
+        return w, mean(o.get("A")), mean(o.get("B"))
+    except Exception:  # noqa: BLE001
+        return w, None, None
 
 
 def win_rate(results: list[str]) -> float:
@@ -275,8 +357,59 @@ def win_rate(results: list[str]) -> float:
     return (results.count("new") + 0.5 * results.count("tie")) / len(results)
 
 
-def passes_gate(practice_wr: float, voice_wr: float) -> bool:
-    return practice_wr >= PRACTICE_GATE and voice_wr >= VOICE_GATE
+def majority(votes: list[str | None]) -> str | None:
+    """Judge-panel verdicts for one pair -> the strict majority of those that voted, 'tie' when there is none,
+    None when nobody voted. Pure."""
+    v = [x for x in votes if x]
+    if not v:
+        return None
+    top, c = Counter(v).most_common(1)[0]
+    return top if c * 2 > len(v) else "tie"
+
+
+def calib_accuracy(picks: list[bool | None]) -> float:
+    """Calibration picks (True = chose her real reply; None = no answer, counted wrong) -> accuracy. Pure."""
+    return sum(1 for p in picks if p) / len(picks) if picks else 0.0
+
+
+def wilson(p: float, n: int, z: float = 1.96) -> tuple[float, float]:
+    """95% Wilson score interval for a rate p over n prompts. A per-prompt score averaged over samples (ties half)
+    has variance <= p(1-p), so this is conservative. Pure."""
+    if n <= 0:
+        return 0.0, 1.0
+    d = 1 + z * z / n
+    c = (p + z * z / (2 * n)) / d
+    h = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
+    return max(0.0, c - h), min(1.0, c + h)
+
+
+def bootstrap_ci(xs: list[float], iters: int = 2000, seed: int = 7) -> tuple[float, float, float] | None:
+    """(mean, 2.5%, 97.5%) percentile bootstrap of the mean, stable seed; None without data. Pure."""
+    if not xs:
+        return None
+    rng, n = random.Random(seed), len(xs)
+    means = sorted(sum(rng.choice(xs) for _ in range(n)) / n for _ in range(iters))
+    return sum(xs) / n, means[int(0.025 * iters)], means[int(0.975 * iters) - 1]
+
+
+def gate_failures(practice_ci: tuple, voice_ci: tuple, voice_diff_ci: tuple | None) -> list[str]:
+    """Why an adapter fails the gate ([] = pass): practice must be CONFIDENTLY better (Wilson lower bound > 0.50),
+    voice must not be CLEARLY worse (Wilson upper bound >= 0.50 and rubric-difference upper bound >= 0). Pure."""
+    why = []
+    if not practice_ci[0] > 0.5:
+        why.append(f"practice not confidently better (win-rate CI lower bound {practice_ci[0]:.2f} <= 0.50)")
+    if not voice_ci[1] >= 0.5:
+        why.append(f"voice clearly worse (win-rate CI upper bound {voice_ci[1]:.2f} < 0.50)")
+    if voice_diff_ci is None:
+        why.append("no voice rubric scores")
+    elif not voice_diff_ci[2] >= 0:
+        why.append(f"voice rubric clearly worse (difference CI upper bound {voice_diff_ci[2]:+.2f} < 0)")
+    return why
+
+
+def passes_gate(practice_ci: tuple, voice_ci: tuple, voice_diff_ci: tuple | None) -> bool:
+    """PASS = practice confidently better AND voice not clearly worse (see gate_failures). Pure."""
+    return not gate_failures(practice_ci, voice_ci, voice_diff_ci)
 
 
 # ── io ────────────────────────────────────────────────────────────────────────
@@ -293,6 +426,9 @@ def ensure_schema(oc):
     oc.execute("""CREATE TABLE IF NOT EXISTS finetune_examples (
         id serial PRIMARY KEY, key text UNIQUE NOT NULL, kind text NOT NULL, ref text, principle text,
         user_text text NOT NULL, reply text NOT NULL, split text NOT NULL, created_at timestamptz DEFAULT now())""")
+    oc.execute("""CREATE TABLE IF NOT EXISTS finetune_eval_set (
+        version int NOT NULL, kind text NOT NULL, example_id int NOT NULL REFERENCES finetune_examples(id),
+        bland text, created_at timestamptz DEFAULT now(), PRIMARY KEY (version, kind, example_id))""")
     oc.execute("""CREATE TABLE IF NOT EXISTS finetune_runs (
         tag text PRIMARY KEY, started_at timestamptz DEFAULT now(), stage text, n_train int, n_valid int,
         practice_wr real, voice_wr real, passed boolean, deployed text, notes jsonb DEFAULT '{}'::jsonb)""")
@@ -312,12 +448,63 @@ def chat(prompt: str, model: str = TEACHER, max_tokens: int = 900, temperature: 
         return ""
 
 
+def claude_call(prompt: str, model: str = "sonnet", timeout: int = 180) -> str:
+    """Claude via the Claude Code CLI (Max plan) — nova_claude_code's binary + OAuth env, but with no settings, hooks,
+    MCP servers or tools: a bare judgement takes ~3 s instead of ~60 s of session start-up. Own process group, killed
+    whole on timeout (nova_journal's wedge fix). Never raises; '' on any failure."""
+    try:
+        import nova_claude_code as cc
+        p = subprocess.Popen([cc.resolve_claude_bin(), "-p", "--model", model, "--setting-sources", "",
+                              "--strict-mcp-config", "--no-session-persistence", "--tools", ""],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                             env=cc.claude_env(), cwd=tempfile.gettempdir(), start_new_session=True)
+        try:
+            out, _ = p.communicate(prompt, timeout=timeout)
+            return out or ""
+        except subprocess.TimeoutExpired:
+            os.killpg(p.pid, signal.SIGKILL)
+            log(f"claude judge timed out after {timeout}s")
+            return ""
+    except Exception as e:  # noqa: BLE001
+        log(f"claude judge failed ({e})")
+        return ""
+
+
+def judge_call(judge: str, prompt: str) -> str:
+    """'claude:<model>' -> Claude Code; anything else is an Ollama model on the Studio."""
+    if judge.startswith("claude:"):
+        return claude_call(prompt, judge.split(":", 1)[1])
+    return chat(prompt, model=judge, max_tokens=500, temperature=0.0)
+
+
 def voice_text() -> str:
     try:
         import nova_voice
         return nova_voice.NOVA_VOICE_SHORT
     except Exception:  # noqa: BLE001
         return "Nova: dry, warm, direct, a little sarcastic; calls Jordan 'Little Mister'; never makes things up."
+
+
+def deployed_system_prompt(oc) -> str:
+    """The system prompt the gateway gives the chat model (and so nova-grown) on every turn:
+    nova_gateway.agent._system_prompt('chat', persona docs) with the same agent_docs query, minus the per-turn blocks
+    (self-model, practices, recent exchanges ...). Falls back to the persona alone."""
+    try:
+        from nova_gateway.agent import _PERSONA_DOCS, _system_prompt
+        oc.execute("""SELECT content FROM agent_docs WHERE (agent_id='all' AND doc_type = ANY(%s))
+                      OR (agent_id='chat' AND doc_type NOT IN ('services-launchd','scripts','data-platform','fleet-integrations'))
+                      ORDER BY CASE doc_type WHEN 'identity' THEN 0 WHEN 'soul' THEN 1 WHEN 'user' THEN 2
+                               WHEN 'nova-system-map' THEN 3 ELSE 9 END, doc_type""", (list(_PERSONA_DOCS),))
+        docs = "\n\n---\n\n".join(r[0] for r in oc.fetchall())
+        try:
+            from nova_live_docs import render
+            docs = render(docs)
+        except Exception:  # noqa: BLE001
+            pass
+        return _system_prompt("chat", docs)
+    except Exception as e:  # noqa: BLE001
+        log(f"deployed system prompt unavailable ({e}); using the persona alone")
+        return voice_text()
 
 
 def principles(oc) -> list[tuple[str, str, str]]:
@@ -336,9 +523,11 @@ def principles(oc) -> list[tuple[str, str, str]]:
 
 def build(oc, limit: int = MAX_PRACTICE, variants: int = 2) -> dict:
     ensure_schema(oc)
-    oc.execute("SELECT key FROM finetune_examples")
-    have = {r[0] for r in oc.fetchall()}
-    voice, made, rejected = voice_text(), {"practice": 0, "replay": 0}, 0
+    oc.execute("SELECT key, user_text, reply FROM finetune_examples")
+    rows = oc.fetchall()
+    have = {r[0] for r in rows}
+    seen = set().union(*(text_keys(u, r) for _, u, r in rows)) if rows else set()
+    voice, made, rejected, dupes = voice_text(), {"practice": 0, "replay": 0}, 0, 0
     # each principle is written in `variants` different scenes (key#v1...), so one lesson is learned as a behaviour
     # rather than memorised as one exchange; rejected keys are simply tried again next run
     todo = [(k if v == 0 else f"{k}#v{v}", r, p) for k, r, p in principles(oc)[:limit] for v in range(variants)]
@@ -349,10 +538,32 @@ def build(oc, limit: int = MAX_PRACTICE, variants: int = 2) -> dict:
         if not ex or invented(*ex) or not critique_ok(chat(critique_prompt(principle, *ex), max_tokens=400, temperature=0.0)):
             rejected += 1
             continue
+        if text_keys(*ex) & seen:      # 2026-10-19: dedupe BEFORE the split, so a copy never lands in test
+            dupes += 1
+            continue
+        seen |= text_keys(*ex)
         oc.execute("INSERT INTO finetune_examples (key, kind, ref, principle, user_text, reply, split) VALUES "
                    "(%s,'practice',%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
-                   (key, ref, principle[:600], ex[0], ex[1], split_for(key)))
+                   (key, ref, principle[:600], ex[0], ex[1], split_for(content_key(*ex))))
         made["practice"] += 1
+    for key, u, r in replay_candidates(oc):
+        if key in have or made["replay"] >= MAX_REPLAY:
+            continue
+        if text_keys(u, r) & seen:
+            dupes += 1
+            continue
+        seen |= text_keys(u, r)
+        oc.execute("INSERT INTO finetune_examples (key, kind, user_text, reply, split) VALUES "
+                   "(%s,'replay',%s,%s,%s) ON CONFLICT DO NOTHING", (key, u, r, split_for(content_key(u, r))))
+        made["replay"] += 1
+    log(f"build: +{made['practice']} practice ({rejected} rejected by the critique), +{made['replay']} replay, "
+        f"{dupes} duplicates skipped before split")
+    return made
+
+
+def replay_candidates(oc) -> list[tuple[str, str, str]]:
+    """(key, user, reply) for her real exchanges with Jordan: conversation memories, gateway Slack turns, and
+    (2026-10-19) the chatroom. Fails open per source."""
     cands = []
     try:
         import psycopg2
@@ -373,14 +584,18 @@ def build(oc, limit: int = MAX_PRACTICE, variants: int = 2) -> dict:
                 cands.append((f"replay:gw:{tid}", u, r.strip()[:2000]))
     except Exception as e:  # noqa: BLE001
         log(f"gateway replay not read ({e})")
-    for key, u, r in cands:
-        if key in have or made["replay"] >= MAX_REPLAY:
-            continue
-        oc.execute("INSERT INTO finetune_examples (key, kind, user_text, reply, split) VALUES "
-                   "(%s,'replay',%s,%s,%s) ON CONFLICT DO NOTHING", (key, u, r, split_for(key)))
-        made["replay"] += 1
-    log(f"build: +{made['practice']} practice ({rejected} rejected by the critique), +{made['replay']} replay")
-    return made
+    try:   # the chatroom (May-June 2026): Nova's message answering Jordan's latest one in the channel within 10 min
+        oc.execute("""SELECT n.id, j.message, n.message FROM chatroom_messages n JOIN LATERAL (
+                        SELECT message FROM chatroom_messages j WHERE j.sender IN ('Jordan','Jordan Koch')
+                        AND j.channel=n.channel AND j.id < n.id AND j.created_at > n.created_at - interval '10 minutes'
+                        ORDER BY j.id DESC LIMIT 1) j ON true WHERE n.sender='Nova' ORDER BY n.id""")
+        for nid, u, r in oc.fetchall():
+            u = clean_user(u)
+            if u and len((r or "").strip()) >= 40:
+                cands.append((f"replay:chat:{nid}", u, r.strip()[:2000]))
+    except Exception as e:  # noqa: BLE001
+        log(f"chatroom replay not read ({e})")
+    return cands
 
 
 def curate(oc, audit: bool = True) -> dict:
@@ -421,11 +636,18 @@ def curate(oc, audit: bool = True) -> dict:
 def export(oc, d: Path) -> dict:
     d.mkdir(parents=True, exist_ok=True)
     sysmsg = voice_text()
-    n = {}
+    exam = set()
+    for _, _, u, r, _, _ in eval_rows(oc):
+        exam |= text_keys(u, r)
+    n = {"leak_dropped": 0}
     for split in ("train", "valid", "test"):
         oc.execute("SELECT key, kind, user_text, reply FROM finetune_examples WHERE split=%s AND excluded IS NULL "
                    "ORDER BY id", (split,))
         rows = oc.fetchall()
+        if split != "test":   # never train (or pick checkpoints) on text the frozen benchmark asks about
+            kept = [r for r in rows if not (text_keys(r[2], r[3]) & exam)]
+            n["leak_dropped"] += len(rows) - len(kept)
+            rows = kept
         if split == "train":
             rows = balance(rows)
         with open(d / f"{split}.jsonl", "w") as f:
@@ -435,6 +657,116 @@ def export(oc, d: Path) -> dict:
                                                  {"role": "assistant", "content": r}]}) + "\n")
         n[split] = len(rows)
     return n
+
+
+def bland_prompt(user: str, reply: str) -> str:
+    return (f"MESSAGE: {user}\nREPLY: {reply}\n\nRewrite the REPLY the way a bland, generic customer-support assistant "
+            "would write it: the same facts and the same answer, but polite, neutral and corporate — no personality, "
+            "no humour, no opinions, no nicknames, no bite. About the same length.\n"
+            'Output ONLY JSON: {"reply": "<the rewrite>"}')
+
+
+def parse_bland(raw: str) -> str | None:
+    t = re.sub(r"<think>.*?</think>", "", raw or "", flags=re.S)
+    try:
+        s = str(json.loads(t[t.find("{"):t.rfind("}") + 1]).get("reply") or "").strip()
+    except Exception:  # noqa: BLE001
+        return None
+    return s if len(s) >= 20 else None
+
+
+def eval_version(oc) -> int | None:
+    try:
+        oc.execute("SELECT max(version) FROM finetune_eval_set")
+        row = oc.fetchone()
+        return row[0] if row else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def eval_rows(oc, version: int | None = None) -> list[tuple]:
+    """(kind, id, user, reply, principle, bland) of a frozen benchmark version (default: the newest); [] if none.
+    Membership is fixed by id: later curation never changes the exam."""
+    v = version or eval_version(oc)
+    if not v:
+        return []
+    oc.execute("SELECT s.kind, e.id, e.user_text, e.reply, coalesce(e.principle,''), s.bland FROM finetune_eval_set s "
+               "JOIN finetune_examples e ON e.id = s.example_id WHERE s.version=%s ORDER BY s.kind, e.id", (v,))
+    return oc.fetchall()
+
+
+def training_text(oc) -> set[str]:
+    """text_keys of everything any adapter trained on or will: curated train rows + every ROOT/*/data/train.jsonl."""
+    oc.execute("SELECT user_text, reply FROM finetune_examples WHERE split='train' AND excluded IS NULL")
+    keys = set()
+    for u, r in oc.fetchall():
+        keys |= text_keys(u, r)
+    for f in ROOT.glob("*/data/train.jsonl"):
+        for line in f.read_text().splitlines():
+            m = json.loads(line)["messages"]
+            keys |= text_keys(m[-2]["content"], m[-1]["content"])
+    return keys
+
+
+def top_up_replay(oc) -> int:
+    """Fresh real exchanges (not yet stored, unique by content, fit to judge her voice) go straight into the test
+    split and through curate() (incl. the teacher's voice audit). Returns how many were added."""
+    oc.execute("SELECT key, user_text, reply FROM finetune_examples")
+    rows, seen, added = oc.fetchall(), set(), 0
+    have = {k for k, _, _ in rows}
+    for _, u, r in rows:
+        seen |= text_keys(u, r)
+    for key, u, r in replay_candidates(oc):
+        if key in have or replay_ok(u, r) or text_keys(u, r) & seen:
+            continue
+        seen |= text_keys(u, r)
+        oc.execute("INSERT INTO finetune_examples (key, kind, user_text, reply, split) VALUES "
+                   "(%s,'replay',%s,%s,'test') ON CONFLICT DO NOTHING", (key, u, r))
+        added += 1
+    if added:
+        curate(oc)
+    log(f"eval set: topped up {added} fresh real exchanges into test")
+    return added
+
+
+def rebuild_eval_set(oc, target: int = EVAL_TARGET) -> dict:
+    """A NEW frozen benchmark version — deliberate only (--rebuild-eval-set). Curated (excluded IS NULL) rows, test
+    split first, then valid (never trained on; moved to test so they stay out of training), none sharing a normalised
+    message or reply with any training data or with each other; voice topped up from fresh real exchanges when short.
+    Plus CALIB_N calibration pairs whose bland rewrite is generated once, here, and stored."""
+    ensure_schema(oc)
+    banned = training_text(oc)
+    oc.execute("SELECT coalesce(max(version), 0) + 1 FROM finetune_eval_set")
+    v = oc.fetchone()[0]
+    sql = ("SELECT id, user_text, reply FROM finetune_examples WHERE kind=%s AND excluded IS NULL AND "
+           "split IN ('test','valid') ORDER BY (split='test') DESC, id")
+    out = {"version": v}
+    for kind in ("practice", "replay"):
+        oc.execute(sql, (kind,))
+        ids = pick_eval(oc.fetchall(), banned, target)
+        if len(ids) < target and kind == "replay":
+            out["replay_topped_up"] = top_up_replay(oc)
+            oc.execute(sql, (kind,))
+            ids = pick_eval(oc.fetchall(), banned, target)
+        if ids:
+            oc.execute("UPDATE finetune_examples SET split='test' WHERE id = ANY(%s) AND split <> 'test'", (ids,))
+        for i in ids:
+            oc.execute("INSERT INTO finetune_eval_set (version, kind, example_id) VALUES (%s,%s,%s)", (v, kind, i))
+        out[kind] = len(ids)
+    oc.execute("SELECT id, user_text, reply FROM finetune_examples WHERE kind='replay' AND excluded IS NULL AND "
+               "split='train' ORDER BY md5(key)")
+    n = 0
+    for i, u, r in oc.fetchall():
+        if n >= CALIB_N:
+            break
+        bland = parse_bland(chat(bland_prompt(u, r), max_tokens=600, temperature=0.0))
+        if bland and norm_key(bland) != norm_key(r):
+            oc.execute("INSERT INTO finetune_eval_set (version, kind, example_id, bland) VALUES (%s,'calibration',%s,%s)",
+                       (v, i, bland))
+            n += 1
+    out["calibration"] = n
+    log(f"eval set v{v}: {json.dumps(out)} (target {target} per kind)")
+    return out
 
 
 def base_path() -> str:
@@ -475,18 +807,28 @@ def best_checkpoint(train_log: str, saved: set[str]) -> int | None:
     return ok[0][1] if ok else None
 
 
-def _generate_all(prompts: list[str], adapter: Path | None) -> list[str]:
-    from mlx_lm import generate, load
+def _generate_all(prompts: list[str], adapter: Path | None, sysmsg: str, samples: int = EVAL_SAMPLES,
+                  seed: int = 7) -> list[list[str]]:
+    """`samples` replies per prompt, batched, sampled as deployed (gateway temperature GEN_TEMP; qwen3:8b's Modelfile
+    top_p 0.95 / top_k 20) -> [[reply, ...] per prompt]."""
+    import mlx.core as mx
+    from mlx_lm import batch_generate, load
     from mlx_lm.sample_utils import make_sampler
+    # MLX defaults let its buffer cache grow to ~the whole working set (464 GB here); uncapped, this eval hit 323 GB
+    # beside the llama-servers and wdog-panicked the Studio 2026-10-19. 8B bf16 + 32-seq KV fits well under 64 GB.
+    mx.set_memory_limit(64 << 30)
+    mx.set_cache_limit(4 << 30)
     model, tok = load(base_path(), adapter_path=str(adapter) if adapter else None)
-    sysmsg, outs = voice_text(), []
-    for p in prompts:
-        msgs = [{"role": "system", "content": sysmsg}, {"role": "user", "content": p}]
-        text = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True, enable_thinking=False)
-        outs.append(generate(model, tok, prompt=text, max_tokens=400, verbose=False,
-                             sampler=make_sampler(temp=0.7, top_p=0.8)).strip())
+    mx.random.seed(seed)
+    ids = [tok.encode(tok.apply_chat_template([{"role": "system", "content": sysmsg}, {"role": "user", "content": p}],
+                                              tokenize=False, add_generation_prompt=True, enable_thinking=False),
+                      add_special_tokens=False) for p in prompts]
+    texts = batch_generate(model, tok, [x for x in ids for _ in range(samples)], max_tokens=400,
+                           sampler=make_sampler(temp=GEN_TEMP, top_p=0.95, top_k=20)).texts
     del model
-    return outs
+    mx.clear_cache()
+    texts = [re.sub(r"<think>.*?</think>", "", t, flags=re.S).strip() for t in texts]
+    return [texts[k * samples:(k + 1) * samples] for k in range(len(prompts))]
 
 
 def consensus(v1: str | None, v2: str | None) -> str | None:
@@ -499,31 +841,114 @@ def consensus(v1: str | None, v2: str | None) -> str | None:
     return m1 if m1 == m2 else "tie"
 
 
-def evaluate(oc, adapter: Path, seed: int = 7) -> dict:
-    """2026-10-17: only curated (excluded IS NULL) test rows; each pair judged in BOTH orders (disagreement = tie);
-    the voice judge sees the persona as well as her real reply."""
-    res = {}
-    persona = voice_text()
+def judge_pair(judge: str, kind: str, ctx: str, user: str, base: str, new: str, persona: str) -> dict:
+    """One judge, both orders (1: A=base B=new; 2: A=new B=base) -> {'v': consensus verdict, 'diff': mean rubric
+    new-minus-base (None without scores), 'orders': (winner 1, winner 2)}."""
+    j1 = parse_judgement(judge_call(judge, judge_prompt(kind, ctx, user, base, new, persona)), kind)
+    j2 = parse_judgement(judge_call(judge, judge_prompt(kind, ctx, user, new, base, persona)), kind)
+    d = [x for x in ((j1[2] - j1[1]) if j1 and None not in j1[1:] else None,
+                     (j2[1] - j2[2]) if j2 and None not in j2[1:] else None) if x is not None]
+    return {"v": consensus(j1[0] if j1 else None, j2[0] if j2 else None), "diff": sum(d) / len(d) if d else None,
+            "orders": (j1[0] if j1 else None, j2[0] if j2 else None)}
+
+
+def panel(jobs: list[tuple], persona: str, judges) -> dict:
+    """Every judge on every (kind, ctx, user, base, new) job, judges in parallel (Ollama serves 2 at a time on the
+    Studio; Claude 4) -> {judge: [judge_pair result per job]}."""
+    def one(judge):
+        with ThreadPoolExecutor(4 if judge.startswith("claude:") else 2) as ex:
+            return list(ex.map(lambda j: judge_pair(judge, *j, persona), jobs))
+    with ThreadPoolExecutor(max(1, len(judges))) as ex:
+        return dict(zip(judges, ex.map(one, judges)))
+
+
+def calibrate(calib: list[tuple], persona: str, judges) -> dict:
+    """(user, her real reply, stored bland rewrite) pairs -> {judge: share of single-order judgements that picked her
+    real reply}. Persona only, no reference reply (one side IS the reference)."""
+    res = panel([("replay", "", u, bland, real) for u, real, bland in calib], persona, judges)
+    return {j: calib_accuracy([p for x in res[j] for p in (x["orders"][0] == "B", x["orders"][1] == "A")])
+            for j in judges}
+
+
+_SIDE1, _SIDE2 = {"A": "base", "B": "new", "tie": "tie"}, {"A": "new", "B": "base", "tie": "tie"}
+
+
+def summarise(keys: list[tuple[str, int]], res: dict, kept: list[str]) -> dict:
+    """Per-job results of the kept judges -> per-kind stats. keys[x] = (kind, prompt index) of job x. A job's panel
+    verdict is the judges' majority and its rubric difference their mean; per prompt both are averaged over its
+    samples; the win rate (ties half) gets a Wilson CI over prompts, the rubric difference a bootstrap CI. Pure."""
+    per, agree, steady = {}, {j: [0, 0] for j in kept}, {j: [0, 0] for j in kept}
+    for x, key in enumerate(keys):
+        v = majority([res[j][x]["v"] for j in kept])
+        diffs = [res[j][x]["diff"] for j in kept if res[j][x]["diff"] is not None]
+        vs, ds = per.setdefault(key, ([], []))
+        if v:
+            vs.append(v)
+        if diffs:
+            ds.append(sum(diffs) / len(diffs))
+        for j in kept:
+            o, jv = res[j][x]["orders"], res[j][x]["v"]
+            if jv and v:
+                agree[j][0] += jv == v
+                agree[j][1] += 1
+            if o[0] and o[1]:
+                steady[j][0] += _SIDE1[o[0]] == _SIDE2[o[1]]
+                steady[j][1] += 1
+    out = {}
     for kind in ("practice", "replay"):
-        oc.execute("SELECT user_text, reply, coalesce(principle,'') FROM finetune_examples WHERE split='test' AND "
-                   "kind=%s AND excluded IS NULL ORDER BY id DESC LIMIT %s", (kind, EVAL_N))
-        rows = oc.fetchall()
-        if not rows:
-            res[kind] = []
-            continue
-        prompts = [u for u, _, _ in rows]
-        base, new = _generate_all(prompts, None), _generate_all(prompts, adapter)
-        verdicts = []
-        for (u, ref_reply, principle), b, n in zip(rows, base, new):
-            ctx = principle if kind == "practice" else ref_reply
-            v1 = parse_verdict(chat(judge_prompt(kind, ctx, u, b, n, persona), max_tokens=200, temperature=0.0))
-            v2 = parse_verdict(chat(judge_prompt(kind, ctx, u, n, b, persona), max_tokens=200, temperature=0.0))
-            v = consensus(v1, v2)
-            if v is not None:
-                verdicts.append(v)
-        res[kind] = verdicts
-    return {"practice_wr": win_rate(res["practice"]), "voice_wr": win_rate(res["replay"]),
-            "n": {k: len(v) for k, v in res.items()}}
+        scores = [win_rate(vs) for (k, _), (vs, _) in per.items() if k == kind and vs]
+        diffs = [sum(ds) / len(ds) for (k, _), (_, ds) in per.items() if k == kind and ds]
+        wr = sum(scores) / len(scores) if scores else 0.0
+        out[kind] = {"n": len(scores), "wr": wr, "wr_ci": wilson(wr, len(scores)), "diff_ci": bootstrap_ci(diffs),
+                     "n_pairs": sum(len(vs) for (k, _), (vs, _) in per.items() if k == kind)}
+    out["agreement_with_panel"] = {j: round(a / b, 3) if b else None for j, (a, b) in agree.items()}
+    out["order_consistency"] = {j: round(a / b, 3) if b else None for j, (a, b) in steady.items()}
+    return out
+
+
+def evaluate(oc, adapter: Path, detail: Path | None = None, judges=JUDGES) -> dict:
+    """2026-10-19: the frozen benchmark (newest finetune_eval_set version), judge calibration every run, EVAL_SAMPLES
+    replies per prompt per model with the deployed system prompt, a judge panel with majority vote, CIs. Returns
+    {'void': why, ...} when there is no exam or fewer than 2 judges pass calibration — void is not a failure."""
+    t0 = time.time()
+    v = eval_version(oc)
+    rows = eval_rows(oc, v)
+    exam = [r for r in rows if r[0] in ("practice", "replay")]
+    calib = [(u, r, b) for k, _, u, r, _, b in rows if k == "calibration"]
+    if not exam:
+        return {"void": "no frozen eval set (run --rebuild-eval-set)", "runtime_s": 0}
+    persona = voice_text()
+    acc = calibrate(calib, persona, judges)
+    kept = [j for j in judges if acc[j] >= CALIB_MIN]
+    for j in judges:
+        log(f"eval calibration: {j} picked her real reply {acc[j]:.0%} of {2 * len(calib)} -> "
+            f"{'kept' if j in kept else f'DISCARDED (< {CALIB_MIN:.0%})'}")
+    info = {"version": v, "calibration": acc, "kept": kept, "n_calib": len(calib), "samples": EVAL_SAMPLES,
+            "temp": GEN_TEMP, "adapter": str(adapter)}
+    if len(kept) < 2:
+        return {**info, "void": f"only {len(kept)} judge(s) passed calibration (need 2)",
+                "runtime_s": int(time.time() - t0)}
+    sysmsg = deployed_system_prompt(oc)
+    info["system_prompt_sha"] = hashlib.sha256(sysmsg.encode()).hexdigest()[:12]
+    log(f"eval: v{v}, {len(exam)} prompts x {EVAL_SAMPLES} samples, system prompt {len(sysmsg)} chars "
+        f"({info['system_prompt_sha']}), temp {GEN_TEMP}")
+    prompts = [u for _, _, u, _, _, _ in exam]
+    base, new = _generate_all(prompts, None, sysmsg), _generate_all(prompts, adapter, sysmsg)
+    log(f"eval: generated in {int(time.time() - t0)}s; judging")
+    jobs, keys = [], []
+    for i, (kind, _, u, ref, principle, _) in enumerate(exam):
+        for s in range(EVAL_SAMPLES):
+            jobs.append((kind, principle if kind == "practice" else ref, u, base[i][s], new[i][s]))
+            keys.append((kind, i))
+    res = panel(jobs, persona, kept)
+    st = summarise(keys, res, kept)
+    out = {**info, "practice_wr": st["practice"]["wr"], "voice_wr": st["replay"]["wr"],
+           "n": {k: st[k]["n"] for k in ("practice", "replay")}, "stats": st, "runtime_s": int(time.time() - t0)}
+    if detail:
+        detail.parent.mkdir(parents=True, exist_ok=True)
+        detail.write_text(json.dumps({"summary": out, "exam_ids": [r[1] for r in exam], "jobs": jobs, "keys": keys,
+                                      "results": res}, indent=1))
+    return out
 
 
 CONVERT_PY = os.environ.get("NOVA_FT_CONVERT_PY", "/Volumes/Data/tools/llama.cpp-convert/venv/bin/python")
@@ -579,13 +1004,26 @@ def run(stages: list[str], tag: str, adapter_override: str | None = None):
             return 1
         train(tag, data, n["train"])
     if "eval" in stages:
-        r = evaluate(oc, adapter)
-        ok = passes_gate(r["practice_wr"], r["voice_wr"])
-        r["eval_method"] = ("2026-10-17: curated test rows only; both judge orders, disagreement=tie; voice judge "
-                            "sees persona + real reply" + (f"; adapter {adapter}" if adapter_override else ""))
-        record(oc, tag, stage="eval", practice_wr=r["practice_wr"], voice_wr=r["voice_wr"], passed=ok, notes=r)
-        log(f"eval: practice {r['practice_wr']:.0%} voice {r['voice_wr']:.0%} n={r['n']} -> {'PASS' if ok else 'FAIL'}")
-        if not ok:
+        r = evaluate(oc, adapter, detail=ROOT / tag / "eval.json")
+        r["eval_method"] = ("2026-10-19: frozen benchmark; calibrated judge panel, both orders, majority vote; "
+                            f"{EVAL_SAMPLES} samples/prompt at temp {GEN_TEMP} with the deployed system prompt; "
+                            "gate = practice Wilson lo > .5, voice Wilson hi >= .5, voice rubric diff hi >= 0")
+        if r.get("void"):
+            record(oc, tag, stage="eval", passed=None, notes=r)
+            log(f"eval VOID (not a failure): {r['void']}; calibration {r.get('calibration')}")
+            return 0
+        st = r["stats"]
+        why = gate_failures(st["practice"]["wr_ci"], st["replay"]["wr_ci"], st["replay"]["diff_ci"])
+        r["gate_failures"] = why
+        record(oc, tag, stage="eval", practice_wr=r["practice_wr"], voice_wr=r["voice_wr"], passed=not why, notes=r)
+        for kind in ("practice", "replay"):
+            s, d = st[kind], st[kind]["diff_ci"]
+            log(f"eval {kind}: win {s['wr']:.0%} (95% CI {s['wr_ci'][0]:.0%}-{s['wr_ci'][1]:.0%}), n={s['n']} prompts / "
+                f"{s['n_pairs']} pairs; rubric diff " + (f"{d[0]:+.2f} (CI {d[1]:+.2f}..{d[2]:+.2f})" if d else "n/a"))
+        log(f"eval judges: kept {r['kept']}; agreement with panel {st['agreement_with_panel']}; "
+            f"order consistency {st['order_consistency']}; runtime {r['runtime_s']}s")
+        log("eval -> " + ("PASS" if not why else "FAIL: " + "; ".join(why)))
+        if why:
             return 0
     if "deploy" in stages:
         oc.execute("SELECT passed FROM finetune_runs WHERE tag=%s", (tag,))
@@ -599,6 +1037,11 @@ def run(stages: list[str], tag: str, adapter_override: str | None = None):
                    "%s::jsonb,'nova_finetune') ON CONFLICT (service, key) DO UPDATE SET value=EXCLUDED.value, "
                    "updated_at=now(), updated_by=EXCLUDED.updated_by", (json.dumps({"model": name, "tag": tag}),))
         log(f"deployed {name} (+ {MODEL_NAME}:latest)")
+        hello = chat('Say hello to Little Mister in one short sentence. Output ONLY JSON: {"reply": "..."}',
+                     model=f"{MODEL_NAME}:latest", max_tokens=80, temperature=GEN_TEMP)
+        log(f"deploy check: {MODEL_NAME}:latest says {hello[:200]!r}" if hello else "deploy check: NO RESPONSE")
+        if not hello:
+            return 1
     return 0
 
 
@@ -643,7 +1086,15 @@ def selftest():
     logtxt = "Iter 1: Val loss 3.6\nIter 200: Val loss 1.547\nIter 300: Val loss 1.568\nIter 400: Val loss 1.686"
     assert best_checkpoint(logtxt, {"0000200_adapters.safetensors", "0000400_adapters.safetensors"}) == 200
     assert best_checkpoint(logtxt, {"0000400_adapters.safetensors"}) == 400 and best_checkpoint("", set()) is None
-    assert passes_gate(0.55, 0.35) and not passes_gate(0.7, 0.3) and not passes_gate(0.54, 0.9)
+    lo, hi = wilson(0.5, 60)
+    assert 0.37 < lo < 0.38 and 0.62 < hi < 0.63 and wilson(1.0, 10)[1] == 1.0 and wilson(0.0, 0) == (0.0, 1.0)
+    assert passes_gate(wilson(0.75, 60), wilson(0.45, 50), (0.0, -0.2, 0.1))       # confidently better, voice not worse
+    assert not passes_gate(wilson(0.6, 15), wilson(0.5, 15), (0.0, -0.2, 0.2))     # noisy: practice CI straddles .5
+    assert not passes_gate(wilson(0.8, 60), wilson(0.3, 60), (0.0, -0.2, 0.1))     # voice clearly worse
+    assert not passes_gate(wilson(0.8, 60), wilson(0.5, 60), (-0.5, -0.7, -0.3))   # voice rubric clearly worse
+    assert majority(["new", "new", "base"]) == "new" and majority(["new", "base", "tie"]) == "tie"
+    assert majority(["base", None]) == "base" and majority([None, None]) is None
+    assert pick_eval([(1, "Is the NAS ok?", "x"), (2, "is the nas OK", "y"), (3, "Q", "Z")], {"r:z"}, 5) == [1]
     print("selftest OK")
 
 
@@ -652,18 +1103,30 @@ def main(argv=None) -> int:
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--weekly", action="store_true", help="build + train + eval + deploy if the gate passes")
     ap.add_argument("--stages", default="", help="comma list of build,curate,train,eval,deploy")
-    ap.add_argument("--tag", default=date.today().strftime("%Y%m%d"))
+    ap.add_argument("--tag", help="run tag (default: today; with --eval-only <adapter run>-rescore)")
     ap.add_argument("--adapter", help="eval this adapter dir instead of the tag's own (re-scoring an old run)")
+    ap.add_argument("--eval-only", action="store_true",
+                    help="with --adapter: score it on the frozen benchmark and deploy it if it passes (no training)")
+    ap.add_argument("--rebuild-eval-set", action="store_true",
+                    help="deliberately create a NEW frozen benchmark version (every later eval uses it)")
     a = ap.parse_args(argv)
     if a.selftest:
         selftest()
         return 0
+    if a.rebuild_eval_set:
+        print(json.dumps(rebuild_eval_set(ops())))
+        if not (a.weekly or a.stages or a.eval_only):
+            return 0
+    if a.eval_only:
+        if not a.adapter:
+            ap.error("--eval-only needs --adapter <dir>")
+        return run(["eval", "deploy"], a.tag or f"{Path(a.adapter).resolve().parent.name}-rescore", a.adapter)
     stages = ["build", "train", "eval", "deploy"] if a.weekly else [s for s in a.stages.split(",") if s]
     if a.adapter and "deploy" in stages:
-        ap.error("--adapter is for re-scoring an old adapter; it never deploys")
+        ap.error("--adapter with --stages only re-scores; use --eval-only to deploy an old adapter that passes")
     if not stages:
-        ap.error("give --weekly or --stages")
-    return run(stages, a.tag, a.adapter)
+        ap.error("give --weekly, --stages, --eval-only or --rebuild-eval-set")
+    return run(stages, a.tag or date.today().strftime("%Y%m%d"), a.adapter)
 
 
 if __name__ == "__main__":
