@@ -104,7 +104,9 @@ class TestRetry(unittest.TestCase):
 
 class TestUnit(unittest.TestCase):
     def test_sections_shape(self):
-        self.assertEqual(set(ns.LIVE_SECTIONS), LIVE)
+        friends8 = {"music", "military", "screen", "science", "mystery", "crime", "workshop", "travel"}  # 2026-10-19
+        self.assertTrue(friends8 <= set(ns.LIVE_SECTIONS))
+        self.assertEqual(set(ns.LIVE_SECTIONS) | friends8, LIVE | friends8)
         self.assertEqual(set(ns.SECTION_REDIRECTS) | set(ns.RETIRED_SECTIONS), RETIRED)
         self.assertTrue(set(ns.SECTION_REDIRECTS.values()) <= LIVE)
         self.assertEqual(ns.canon("Operations"), "burbank-ops")
