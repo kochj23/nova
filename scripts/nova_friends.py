@@ -172,7 +172,7 @@ MYSTERY_CHANNELS = (
 CRIME_CHANNELS = (
     'Salvatore "Sammy The Bull" Gravano', "The Gangland History Podcast", "Rene Enriquez Uncensored",
     "Matthew Cox | Inside True Crime", "John Kiriakou", "Jason Hanson", "Kitboga", "Scammer Payback",
-    "PolicecamStory", "Street Files", "The Casual Criminalist", "JD Delay", "LegalEagle",
+    "PolicecamStory", "Street Files", "The Casual Criminalist", "JD Delay", "LegalEagle", "Insider", "Rap News & Street Politics",
 )
 WORKSHOP_CHANNELS = (
     "This Old House", "Blacktail Studio", "Foureyes Furniture", "The Old Furniture Guys", "Jesper Makes",
