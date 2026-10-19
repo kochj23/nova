@@ -1137,6 +1137,20 @@ tasks:
     overlap: skip
     group: llm
 
+  journal_digest_email:            # Jordan 2026-10-19: ONE email to Jordan (only) covering every section published today, a block per section; reads the live slim /index.json (portable). See agent_docs 'nova-journal-site'.
+    script: nova_journal_digest_email.py
+    schedule: cron 30 18 * * *
+    timeout: 300
+    overlap: skip
+
+  journal_digest_email_weekly:     # weekly per-section option: one email per section for the last 7 days (--section S for one). Flip enabled to turn it on.
+    script: nova_journal_digest_email.py
+    args: ["--weekly"]
+    schedule: cron 45 18 * * 0
+    timeout: 300
+    overlap: skip
+    enabled: false
+
   journal_pilot:
     enabled: false  # retired 2026-07-30 (Jordan)
     script: nova_journal.py

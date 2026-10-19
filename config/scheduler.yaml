@@ -99,6 +99,13 @@ tasks:
     timeout: 5400
     overlap: skip
 
+  journal_series:                    # 2026-10-19: nova_series.py --sweep — assigns `series:` (running stories: daily briefing, *and Friends*, Fishbowl, recaps, game reports) + the *and Friends* `top_block` front matter on clean committed articles in .6's ~/nova-journal, commits those paths, pull --rebase + push under the journal push lock. See agent_docs 'nova-journal-site'.
+    script: nova_series.py
+    args: ["--sweep"]
+    schedule: every 30m
+    timeout: 600
+    overlap: skip
+
   journal_stranded_push:             # 2026-10-15: push commits stranded in .6's OWN ~/nova-journal clone. nova_syslog_server is a LaunchDaemon (no login keychain), so its BREAKING articles commit but cannot push (gh creds live in the keychain). This runs in the user session where gh auth works. Distinct id from nova-core's article_watchdog_stranded (scheduler_runs is shared).
     script: nova_article_watchdog.py
     args: ["--stranded"]
