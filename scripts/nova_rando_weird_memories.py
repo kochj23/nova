@@ -257,7 +257,7 @@ def publish(title: str, body: str, image_path: Path | None):
 title: "{title.replace('"', '')}"
 date: {timestamp}
 draft: false
-categories: ["operations"]
+categories: ["burbank-ops"]
 tags: ["memories", "weird", "nightly", "ingest", "sarcasm"]
 description: "Nova's nightly audit of the 50 weirdest things shoved into her brain in the last 24 hours."
 """
@@ -280,7 +280,7 @@ description: "Nova's nightly audit of the 50 weirdest things shoved into her bra
     nova_config.post_both(
         f":brain: *Nightly Weird Memories posted*\n"
         f"  _{title}_\n"
-        f"  https://nova.digitalnoise.net/operations/{date}-{slug}/",
+        f"  https://nova.digitalnoise.net/burbank-ops/{date}-{slug}/",
         slack_channel="#nova-notifications"
     )
 

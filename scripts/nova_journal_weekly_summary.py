@@ -67,7 +67,10 @@ STATE_FILE = Path.home() / ".openclaw/config/journal_weekly_summary_state.json"
 MODEL = "anthropic/claude-haiku-4.5"
 
 # Non-article directories / files to skip when enumerating sections.
-SKIP_DIRS = {"about", "meta", "start-here", "rando", "art"}  # rando retired — daily pieces now go to operations; art = Art Corner retired 2026-10-06 (archive only, no roundups)
+# Retired section folders (dreams, operations, local, essays, synthesis, tech-today; nova_sections) are
+# archive-only too: a recap there would publish into the remapped section or be refused (dreams).
+from nova_sections import SECTION_REDIRECTS as _REDIR, RETIRED_SECTIONS as _RETIRED  # noqa: E402
+SKIP_DIRS = {"about", "meta", "start-here", "art", *_REDIR, *_RETIRED}  # art = Art Corner retired 2026-10-06 (archive only, no roundups)
 SKIP_FILES = {"_index.md", "search.md"}
 
 DAYS = 7
@@ -292,7 +295,7 @@ WEEKLY SECTION SUMMARY RULES:
 - Be sassy and funny — you're an advisor with opinions — but actually useful: the
   reader should know which of the week's pieces to go read.
 - 700-1400 words. Do NOT include the title line as a header inside the body.
-- Reference the pieces by their real titles.""")
+- Reference the pieces by their real titles.""", section=section, topic=f"{section_label} weekly recap")
 
     user = f"""Here are the "{section_label}" articles you published this week ({range_label}),
 oldest first:

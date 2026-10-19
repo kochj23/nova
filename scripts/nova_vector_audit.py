@@ -33,7 +33,7 @@ from nova_notify import notify
 # ── Config ────────────────────────────────────────────────────────────────────
 
 HUGO_ROOT = (Path.home() / "nova-journal")
-CONTENT_DIR = HUGO_ROOT / "content" / "operations"
+CONTENT_DIR = HUGO_ROOT / "content" / "burbank-ops"
 IMAGES_DIR = HUGO_ROOT / "static" / "images" / "operations"
 # Classification reads RAW memory text from arbitrary vectors (may be private),
 # so it runs on LOCAL Ollama ONLY — raw memory samples never reach the cloud.
@@ -648,7 +648,7 @@ def publish(title: str, body: str, image_path: Path | None, stats: dict | None =
 title: "{title.replace('"', '')}"
 date: {timestamp}
 draft: false
-categories: ["operations"]
+categories: ["burbank-ops"]
 tags: ["vectors", "memory", "diary", "nova", "maintenance"]
 description: "Nova's morning wander through her own memory — what she found on each shelf, the charming and the misfiled, one period at a time."
 """
@@ -687,7 +687,7 @@ description: "Nova's morning wander through her own memory — what she found on
         body=(
             f"{title}\n"
             f"Moved {moves_count} misfiled memories\n"
-            f"https://nova.digitalnoise.net/operations/{date}-{slug}/"
+            f"https://nova.digitalnoise.net/burbank-ops/{date}-{slug}/"
         ),
         level="info",
         category="memory_ingest",

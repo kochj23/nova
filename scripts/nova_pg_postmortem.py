@@ -33,9 +33,18 @@ import nova_journal as nj
 from nova_notify import notify
 
 HUGO_ROOT = (Path.home() / "nova-journal")
-CONTENT_DIR = HUGO_ROOT / "content" / "operations"   # rando retired -> operations
+CONTENT_DIR = HUGO_ROOT / "content" / "burbank-ops"   # Operations + Local -> Burbank and Ops (2026-10-19)
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "google/gemini-2.5-flash"
+
+
+def _season(section: str, topic: str) -> str:
+    """Sci-fi + faith seasoning (nova_lexicon.safe_seasoning) for this raw prompt; '' if unavailable."""
+    try:
+        import nova_lexicon
+        return nova_lexicon.safe_seasoning(section, topic)
+    except Exception:  # noqa: BLE001 — flavour never breaks publishing
+        return ""
 
 
 def get_openrouter_key() -> str:
@@ -114,7 +123,7 @@ def publish(title: str, body: str):
 title: "{title.replace('"', '')}"
 date: {timestamp}
 draft: false
-categories: ["operations"]
+categories: ["burbank-ops"]
 tags: ["postmortem", "postgresql", "infrastructure", "failure", "memory", "reliability"]
 description: "Nova's postmortem of the afternoon her memory's spine quietly died — and every sensor kept reporting to a database that wasn't there."
 ---
@@ -127,7 +136,7 @@ description: "Nova's postmortem of the afternoon her memory's spine quietly died
     # Hardened commit + push (PG advisory lock, rebase-on-reject, retry, alert-on-failure).
     nj.git_push("operations", title)
 
-    url = f"https://nova.digitalnoise.net/operations/{date}-{slug}/"
+    url = f"https://nova.digitalnoise.net/burbank-ops/{date}-{slug}/"
     try:
         notify(
             "Postmortem posted to /rando/",
@@ -140,7 +149,7 @@ description: "Nova's postmortem of the afternoon her memory's spine quietly died
 
 def main():
     print("Generating postmortem in Nova's voice...")
-    body = call_llm(SYSTEM, USER, max_tokens=4000).strip()
+    body = call_llm(SYSTEM + _season("burbank-ops", "postgresql database outage postmortem"), USER, max_tokens=4000).strip()
     print(f"Generated {len(body)} chars")
     title = generate_title(body)
     print(f"Title: {title}")

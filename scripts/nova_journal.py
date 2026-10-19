@@ -4,7 +4,8 @@ nova_journal.py — Unified Nova journal content generation.
 
 Replaces 11 individual scripts with a single subcommand interface:
   nova_journal.py essay | opinion | after-dark | pilot | tech-today |
-                  research | synthesis | digest | dream | art
+                  research | synthesis | digest | art
+  (essay + synthesis publish to research, tech-today to tech; dream retired 2026-10-19)
 
 Shared pipeline: topic selection -> memory fetch -> LLM generate -> image gen ->
 Hugo publish -> git push -> Slack notify.
@@ -616,9 +617,8 @@ def get_image_prompt(title: str, topic: str, section: str) -> str:
 
 # Retired sections and where their writes go now. rando -> operations (Jordan, 2026-07-12);
 # tech-today -> tech (Tech Today replaced by Tech and Friends, Jordan 2026-10-19).
-SECTION_REDIRECTS = {"rando": "burbank-ops", "tech-today": "tech",
-                     "operations": "burbank-ops", "local": "burbank-ops",   # Burbank and Ops 2026-10-19
-                     "essays": "research", "synthesis": "research"}           # Research 2026-10-19
+# The dict itself lives in nova_sections (stdlib-only, so utilities can share it).
+from nova_sections import SECTION_REDIRECTS, RETIRED_SECTIONS  # noqa: E402
 
 
 def _canon_section(section: str) -> str:
@@ -1440,6 +1440,9 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
     """
     # Jordan 2026-10-19: Essays + Synthesis were merged into Research; one remap here covers every generator.
     section = SECTION_REMAP.get(section, section)
+    if section in RETIRED_SECTIONS:   # Dreams retired 2026-10-19: nothing publishes there any more
+        log(f"[sections] REFUSED publish '{(title or '')[:60]}': section '{section}' is retired")
+        return False
     _razor_draft = body  # The Razor Blade: the first model draft, measured against what publishes
     # Central title fallback (2026-09-13): degenerate titles ("Abstract", "Let me…",
     # stray markdown) previously reached the site from generators lacking their own
@@ -2051,9 +2054,9 @@ def notify_slack(section: str, title: str, preview: str):
     """Post a summary to nova-notifications."""
     section = _canon_section(section)
     section_emojis = {
-        "essays": ":pencil:", "opinions": ":speech_balloon:", "after-dark": ":night_with_stars:",
+        "burbank-ops": ":satellite_antenna:", "opinions": ":speech_balloon:", "after-dark": ":night_with_stars:",
         "pilot": ":movie_camera:", "tech": ":computer:", "cars": ":red_car:", "food": ":fork_and_knife:", "watches": ":watch:", "research": ":microscope:",
-        "synthesis": ":thread:", "digests": ":newspaper:", "dreams": ":crescent_moon:",
+        "digests": ":newspaper:", "security": ":shield:", "meta": ":bar_chart:",
         "art": ":art:",
     }
     short_preview = preview[:250].rsplit(" ", 1)[0] + "..." if len(preview) > 250 else preview
@@ -2184,7 +2187,7 @@ FORMAT FOR THIS OPINION PIECE:
 - You have OPINIONS and you share them boldly. Pick ONE angle and go deep.
 - Structure: Punchy title + your take (one clear position) + 3 supporting observations + one action/implication.
 - Write 3000-4000 words. No hashtags. Be funny AND insightful.
-- DEPTH: Don't survey the whole landscape. Stake a claim and defend it.{theme_line}""")
+- DEPTH: Don't survey the whole landscape. Stake a claim and defend it.{theme_line}""", section="opinions", topic=topic)
 
     user = f"""Write an opinion piece about this news topic: "{topic}"
 
@@ -2325,6 +2328,14 @@ RULES:
 - The pilot must work as both standalone AND series setup
 
 Draw from the source material for world-building details, but create an ORIGINAL story."""
+    try:   # pilot is a raw (non-Nova-voice) prompt, so the borrowed tongues are appended directly
+        from nova_lexicon import seasoning
+        flav = seasoning("pilot", f"{genre} {source_label}")
+        if flav:
+            system += flav + ("\nIN A SCREENPLAY these belong in the CHARACTERS' mouths (a sysadmin who swears "
+                              "in Klingon, a deacon who quotes Ecclesiastes at the outage), never in stage directions.")
+    except Exception:  # noqa: BLE001 — flavour never breaks publishing
+        pass
 
     user = f"""Source material for world-building:\n\n{memory_block}\n\nWrite the full pilot. Go."""
 
@@ -2552,7 +2563,7 @@ FORMAT FOR THIS TECH ARTICLE:
 - Skeptical of hype, appreciative of genuine innovation.
 - Connect tech to real human impact.
 - Include your actual opinion — don't hedge everything.
-""")
+""", section="tech", topic=topic)
 
     user = f"""Write a deep-dive article on: "{topic}"
 
@@ -2677,7 +2688,7 @@ FORMAT FOR THIS WEEKLY SYNTHESIS:
 - Note how ideas evolved across the week
 - End with what you're curious about going forward
 - 3000-3500 words. This is YOUR reflection on YOUR week of writing and thinking.
-""")
+""", section="research", topic=topic)
 
     user = f"""Here are your posts from the past week:\n\n{posts_block}\n\nReflect. Connect. Synthesize."""
 
@@ -2792,7 +2803,7 @@ for a rich, dense composition where a viewer who knew the memories could point t
 of them in the frame. Do NOT illustrate a single memory and ignore the rest. In the
 STATEMENT, name the specific memories that became specific elements of the picture, so the
 words and the image agree.
-The PROMPT must be highly specific and painterly/photographic — no abstract platitudes.""")
+The PROMPT must be highly specific and painterly/photographic — no abstract platitudes.""", section="art", topic=topic)
 
     user = f"""Today's style: {style_name}\nAll {n_mem} inspiration memories (weave as many as cohere into one layered image):\n{memory_block}\n\nCreate."""
 

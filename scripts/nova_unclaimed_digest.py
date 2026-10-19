@@ -229,7 +229,7 @@ def main():
         f"WHAT SHE DEVELOPED TODAY (pursuits, tinkering, wishes-as-reflection):\n{pursuits_block}\n\n"
         f"WHAT HER SELF-DIRECTED ORGANS DID TODAY (actions, not just thoughts):\n{organ_block}{quiet_note}\n\n"
         "OUTPUT EXACTLY THIS SHAPE:\nTITLE: <one punchy, ironic title, no quotes>\n<blank line>\n<the body>")
-    system = nova_voice.system_prompt(ctx)
+    system = nova_voice.system_prompt(ctx, section="burbank-ops")
     raw = nj.call_openrouter(system, "Write today's unclaimed-time column, 3000+ words, in full voice.",
                              max_tokens=9000, temperature=0.9)
     if not raw:

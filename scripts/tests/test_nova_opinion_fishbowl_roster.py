@@ -58,7 +58,7 @@ class _Run:
         self.slack = p("notify_slack")
         self.log = p("log")
         p("today_str", return_value="2026-01-01")
-        self.st.enter_context(patch.object(fr.nova_voice, "system_prompt", side_effect=lambda c: "SYS:" + c[:20]))
+        self.st.enter_context(patch.object(fr.nova_voice, "system_prompt", side_effect=lambda c, **k: "SYS:" + c[:20]))
         self.st.enter_context(patch.object(nova_article_history, "recent_articles_context", return_value=""))
         return self
 
@@ -131,7 +131,7 @@ class TestIntegration(unittest.TestCase):
         self.assertIn("source='fishbowl'", r.mem.cursor.return_value.execute.call_args_list[0][0][0])
 
     def test_uses_shared_voice_and_journal_helpers(self):
-        self.assertIn("nova_voice.system_prompt(ctx)", SRC)
+        self.assertIn('nova_voice.system_prompt(ctx, section="watches")', SRC)
         self.assertNotIn("def call_openrouter", SRC)
 
 

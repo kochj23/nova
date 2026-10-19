@@ -71,8 +71,10 @@ SITE = "https://nova.digitalnoise.net"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_monthly_wrap.log"
 
 # Not article sections (about/start-here), covered elsewhere (meta = the monthly
-# meta-analysis), or retired (rando -> operations; art, after-dark, pilot).
-SKIP_DIRS = {"about", "meta", "start-here", "rando", "art", "after-dark", "pilot"}
+# meta-analysis), or retired/archive-only (art, after-dark, pilot, and every retired
+# section folder in nova_sections: dreams, operations, local, essays, synthesis, tech-today, rando).
+from nova_sections import SECTION_REDIRECTS as _REDIR, RETIRED_SECTIONS as _RETIRED  # noqa: E402
+SKIP_DIRS = {"about", "meta", "start-here", "art", "after-dark", "pilot", *_REDIR, *_RETIRED}
 
 PROFILE = "monthly-wrap"           # ARTICLE_LENGTH row (3000-6000, grounded)
 MIN_WORDS = 5000                   # Jordan's target; a floor for GROUNDED expansion only
@@ -108,16 +110,13 @@ _FM_SLUG_RE = re.compile(r'^slug:\s*"?([a-z0-9-]+)"?\s*$', re.MULTILINE)
 
 EMOJI = "\U0001F5D3"   # spiral calendar
 MOTIF = {
-    "operations": "a homelab server room at dusk, blinking racks and dashboards",
-    "local": "Burbank streets and the Verdugo hills in warm evening light",
-    "dreams": "a surreal moonlit dreamscape of floating doors and clocks",
-    "essays": "a writer's desk with stacks of annotated manuscripts",
+    "burbank-ops": "a homelab server room at dusk above Burbank streets and the Verdugo hills, blinking racks and dashboards",
+    "watches": "a watchmaker's bench with loupes, movements and a vintage dive watch",
     "opinions": "an empty soapbox and a vintage microphone under a spotlight",
     "cars": "a classic car in a garage under work lights, tools on the bench",
     "food": "a smoker and a cast-iron pan on a backyard cook, ingredients on a board",
     "tech": "circuit boards, newspapers and glowing screens on a desk",
-    "research": "lab notebooks, charts and a microscope in soft light",
-    "synthesis": "threads of light weaving many pages together",
+    "research": "lab notebooks, annotated manuscripts, charts and a microscope in soft light",
     "digests": "neatly stacked daily reports and a coffee cup at dawn",
     "security": "a lighthouse sweeping its beam over a dark network of lights",
 }
@@ -190,7 +189,7 @@ def month_label(month: str) -> str:
 
 
 def section_label(section: str) -> str:
-    return section.replace("-", " ").title()
+    return {"burbank-ops": "Burbank and Ops"}.get(section, section.replace("-", " ").title())
 
 
 def wrap_slug(month: str, section: str) -> str:

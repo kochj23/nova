@@ -225,7 +225,7 @@ def main():
     today = time.strftime("%Y-%m-%d")
     md = (f'---\ntitle: "🗂️ The Great Re-Shelving: A Memory Audit"\n'
           f'date: {time.strftime("%Y-%m-%dT%H:%M:%S")}\n'
-          f'categories: ["operations"]\ntags: ["operations","memory","maintenance"]\n---\n\n{article}\n')
+          f'categories: ["burbank-ops"]\ntags: ["operations","memory","maintenance"]\n---\n\n{article}\n')
     (OUT / f"{today}-memory-reclassify.md").write_text(md)
     # store into the operations memory vector (PG-backed, no /Volumes/Data needed)
     try:

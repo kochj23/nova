@@ -104,7 +104,7 @@ def main():
         ctx = ctx + "\n\n" + KNOWN_FACTS
     except ImportError:
         pass
-    system = nova_voice.system_prompt(ctx)
+    system = nova_voice.system_prompt(ctx, section="watches")
     user = (f"--- PER-PERSON DOSSIERS (the cast) ---\n{dossier_block}\n\n"
             f"--- NEWEST FISHBOWL ACTIVITY (newest first) ---\n{sample_block}\n\n"
             f"Write today's opinion column.")

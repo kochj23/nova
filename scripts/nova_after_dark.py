@@ -67,6 +67,15 @@ IMAGES_DIR = HUGO_ROOT / "static/images/after-dark"
 
 # ── Logging ─────────────────────────────────────────────────────────────────────
 
+def _season(section: str, topic: str) -> str:
+    """Sci-fi + faith seasoning (nova_lexicon.safe_seasoning) for this raw prompt; '' if unavailable."""
+    try:
+        import nova_lexicon
+        return nova_lexicon.safe_seasoning(section, topic)
+    except Exception:  # noqa: BLE001 — flavour never breaks publishing
+        return ""
+
+
 def log(msg: str):
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{ts}] {msg}"
@@ -256,6 +265,8 @@ Related memories from my database:
 {memory_context}
 
 Write tonight's Nova After Dark monologue. Remember: 500-750 words, humor at 0.9, be genuinely funny."""
+
+    system_prompt += _season("after-dark", f"{year} {fact}")
 
     # Try local first, fall back to OpenRouter
     try:

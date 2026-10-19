@@ -51,19 +51,21 @@ GRACE_MIN = 30          # Jordan's spec: only complain 30 min after the schedule
 #   ("tag", t)       -> today's dated post carrying tag `t`
 #   ("slug", frag)   -> today's dated post whose filename contains `frag`
 ARTICLE_SCRIPTS = {
-    "nova_local_burbank.py":           ("local",      ("tag", "local-news")),
-    "nova_local_airwaves.py":          ("local",      ("tag", "airwaves")),
-    "nova_daily_threat_assessment.py": ("local",      ("stable", "daily-watch")),
-    # publishes into operations despite its name; content/security/ is only a landing page
-    "nova_journal_security.py":        ("operations", ("slug", "security-intelligence-briefing")),
-    "nova_weekly_ops_report.py":       ("operations", ("slug", "")),
-    "nova_daily_ops_log.py":           ("operations", ("slug", "")),
+    # Operations + Local merged into burbank-ops 2026-10-19 (content/operations is gone and
+    # content/local is archive-only), so every one of these is looked for in burbank-ops now.
+    "nova_local_burbank.py":           ("burbank-ops", ("tag", "local-news")),
+    "nova_local_airwaves.py":          ("burbank-ops", ("tag", "airwaves")),
+    "nova_daily_threat_assessment.py": ("burbank-ops", ("stable", "daily-watch")),
+    # publishes into burbank-ops despite its name; content/security/ is only a landing page
+    "nova_journal_security.py":        ("burbank-ops", ("slug", "security-intelligence-briefing")),
+    "nova_weekly_ops_report.py":       ("burbank-ops", ("slug", "")),
+    "nova_daily_ops_log.py":           ("burbank-ops", ("slug", "")),
     # Added after the 2026-07-28 18:00 run: this job WAS publishing, but its front matter was
     # dated two hours ahead so Hugo hid the article and the site 404ed. The watchdog missed it
     # entirely because the script was never in this map — a gap in the watchdog, not the job.
-    "nova_rando_daily_ops.py":         ("operations", ("slug", "")),
-    "nova_journal_emergency.py":       ("operations", ("slug", "")),
-    "nova_fishbowl_daily.py":          ("fishbowl",   ("stable", "the-fishbowl")),
+    "nova_rando_daily_ops.py":         ("burbank-ops", ("slug", "")),
+    "nova_journal_emergency.py":       ("burbank-ops", ("slug", "")),
+    "nova_fishbowl_daily.py":          ("watches",    ("stable", "the-fishbowl")),
     # Was missing until 2026-07-29, so this job's 8-day outage (execve E2BIG, see
     # nova_journal.call_openrouter) was invisible here — the same watchdog gap that hid
     # nova_rando_daily_ops.py. 'watch-community' is the tag only this job emits into opinions.
@@ -91,7 +93,12 @@ def _journal_section(profile: str) -> str:
                     _SECTION_CACHE[key] = m.group(1)
         except OSError:
             pass
-    return _SECTION_CACHE.get(profile, profile)
+    sec = _SECTION_CACHE.get(profile, profile)
+    try:   # essay/synthesis profiles still say "essays"/"synthesis"; publish_hugo remaps them
+        from nova_sections import canon
+        return canon(sec)
+    except Exception:  # noqa: BLE001
+        return sec
 
 
 def log(m):

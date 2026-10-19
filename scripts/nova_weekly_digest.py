@@ -186,11 +186,11 @@ def gather_dreams() -> list[dict]:
 # ── Section: Essays ──────────────────────────────────────────────────────────
 
 def gather_essays() -> list[dict]:
-    """Gather essays published this week from the Hugo content directory."""
+    """Gather essays/research published this week (content/research since 2026-10-19)."""
     start_date, _ = get_week_range()
     start_dt = datetime.strptime(start_date, "%Y-%m-%d")
     essays = []
-    essays_dir = HUGO_ROOT / "content/essays"
+    essays_dir = HUGO_ROOT / "content/research"   # Essays + Synthesis merged into Research 2026-10-19
     if not essays_dir.exists():
         return essays
 
@@ -465,7 +465,7 @@ def format_digest_body(data: dict) -> str:
     sections.append("")
 
     # Essays
-    sections.append("## Essays This Week")
+    sections.append("## Research and Essays This Week")
     if data["essays"]:
         for e in data["essays"]:
             sections.append(f"- **{e['title']}** — subject: {e['subject']} ({e['date']})")
@@ -714,7 +714,7 @@ def publish_to_site(full_digest: str, editorial: str, date_str: str):
 title: "\U0001f4cb Daily Digest — {date_str}"
 date: {timestamp}
 draft: false
-categories: ["operations"]
+categories: ["burbank-ops"]
 tags: ["daily"]
 description: "Nova's daily personal newsletter — {date_str}"
 """

@@ -127,7 +127,7 @@ class TestFunctional(unittest.TestCase):
         post = next(ca.CONTENT_DIR.glob("*-golden-path.md")).read_text()
         self.assertIn('title: "Golden Path"', post)
         self.assertIn("cover:\n  image: \"/images/operations/", post)
-        self.assertTrue(url.startswith("https://nova.digitalnoise.net/operations/"))
+        self.assertTrue(url.startswith("https://nova.digitalnoise.net/burbank-ops/"))
 
 
 class TestFrame(unittest.TestCase):

@@ -168,7 +168,7 @@ class TestFunctional(unittest.TestCase):
         self.assertIn("The body of the log.", text)
         cmds = [c[0][0][:2] for c in self.run.call_args_list]
         self.assertIn(["git", "push"], cmds)
-        self.assertIn("/operations/", self.notify.call_args[1]["meta"]["url"])
+        self.assertIn("/burbank-ops/", self.notify.call_args[1]["meta"]["url"])   # Burbank and Ops 2026-10-19
 
     def test_failed_rebase_aborts_without_push(self):
         def run(cmd, **k):

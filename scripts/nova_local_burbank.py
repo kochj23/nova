@@ -977,7 +977,7 @@ def publish(title, body, image_path):
 title: "{title}"
 date: {timestamp}
 draft: false
-categories: ["local"]
+categories: ["burbank-ops"]
 tags: ["burbank", "local-news", "california", "daily"]
 description: "Nova's daily dispatch from Burbank — local news with maximum sarcasm."
 """
@@ -1004,7 +1004,7 @@ description: "Nova's daily dispatch from Burbank — local news with maximum sar
     nova_config.post_both(
         f":cityscape: *Burbank Daily Dispatch posted*\n"
         f"  _{title}_\n"
-        f"  https://nova.digitalnoise.net/local/{date}-{slug}/",
+        f"  https://nova.digitalnoise.net/burbank-ops/{date}-{slug}/",
         slack_channel="#nova-notifications"
     )
 

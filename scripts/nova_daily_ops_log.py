@@ -36,7 +36,7 @@ import nova_journal
 from nova_notify import notify
 
 HUGO_ROOT = (Path.home() / "nova-journal")
-CONTENT_DIR = HUGO_ROOT / "content" / "operations"   # rando retired -> operations
+CONTENT_DIR = HUGO_ROOT / "content" / "burbank-ops"   # Operations + Local -> Burbank and Ops (2026-10-19)
 import nova_dsn as _nova_dsn  # noqa: E402
 DB = _nova_dsn.pg_dsn("nova_ops")
 import nova_dsn as _nova_dsn  # noqa: E402
@@ -605,7 +605,7 @@ def publish(title: str, body: str, brief_facts: str):
 title: "{title.replace('"', '')}"
 date: {timestamp}
 draft: false
-categories: ["operations"]
+categories: ["burbank-ops"]
 tags: ["ops-log", "daily", "infrastructure", "network", "telemetry", "watch"]
 description: "Nova's daily operations log — the day's changes, deployments, and what the sensors saw."
 {cover_block}---
@@ -647,7 +647,7 @@ description: "Nova's daily operations log — the day's changes, deployments, an
     else:
         log(f"Commit note: {(r.stdout + r.stderr)[:150]}")
 
-    url = f"https://nova.digitalnoise.net/operations/{date}-{slug}/"
+    url = f"https://nova.digitalnoise.net/burbank-ops/{date}-{slug}/"
     # Published-content FYI — the daily ops-log column went live. Not an alert.
     notify(
         "Daily Ops Log posted",

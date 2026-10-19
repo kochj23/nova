@@ -184,7 +184,7 @@ class TestIntegration(unittest.TestCase):
                 "plex_items": [], "health": {"total_memories": 1000, "memory_growth": 5, "failures": []},
                 "herd_activity": "quiet", "memory_sources": []}
         body = wd.format_digest_body(data)
-        for h in ("## Dreams This Week", "## Essays This Week", "- **T** — subject: s (d)",
+        for h in ("## Dreams This Week", "## Research and Essays This Week", "- **T** — subject: s (d)",
                   "**Total memories:** 1,000", "All scheduled tasks healthy"):
             self.assertIn(h, body)
 
@@ -200,7 +200,7 @@ class TestFunctional(unittest.TestCase):
                 patch.object(wd, "generate_editorial", return_value=f"Dear herd, write {PEER}. " * 10), \
                 patch.object(wd, "_generate_digest_image", return_value=None), _q():
             wd.main()
-        post = next((wd.HUGO_ROOT / "content/operations").glob("*-daily-digest.md")).read_text()
+        post = next((wd.HUGO_ROOT / "content/burbank-ops").glob("*-daily-digest.md")).read_text()
         self.assertNotIn(PEER, post)
         self.assertEqual(wd.nova_config.post_both.call_count, 2)        # digest + image-failure warning
         wd.nj.git_push.assert_called_once_with("digest", "daily digest")

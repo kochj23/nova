@@ -15,7 +15,7 @@ import tempfile
 import time
 import types
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -62,9 +62,7 @@ class _Base(unittest.TestCase):
         self.tags, self.linker = tags, linker
         self.git = GitShell()
         patches = [patch.object(pj, "HUGO_ROOT", root),
-                   patch.object(pj, "CONTENT_DREAMS", root / "content/dreams"),
-                   patch.object(pj, "CONTENT_ESSAYS", root / "content/essays"),
-                   patch.object(pj, "IMAGES_DREAMS", root / "static/images/dreams"),
+                   patch.object(pj, "CONTENT_ESSAYS", root / "content/research"),
                    patch.object(pj, "IMAGES_ESSAYS", root / "static/images/essays"),
                    patch.object(pj, "LOG_FILE", Path(self.td.name) / "publish.log"),
                    patch.dict(sys.modules, {"nova_tag_extractor": tags, "nova_cross_linker": linker}),
@@ -94,8 +92,8 @@ class TestSecurity(_Base):
         addr = "kochj23" + "@" + "gmail.com"
         nova = next(iter(pj.SAFE_EMAILS))          # Nova's own address is the one allowed through
         self.assertEqual(pj.scrub_emails(f"mail {addr} or {nova}"), f"mail [email redacted] or {nova}")
-        pj.publish_dream(str(self.dream_file(f"see {Path.home()}/secret.txt\nwrite {addr}\n")))
-        post = (self.root / "content/dreams/2026-05-04.md").read_text()
+        pj.publish_essay("Scrub Me", "privacy", f"see {Path.home()}/secret.txt\nwrite {addr}\n")
+        post = next((self.root / "content/research").glob("*-scrub-me.md")).read_text()
         self.assertNotIn(str(Path.home()), post)
         self.assertNotIn(addr, post)
 
@@ -137,10 +135,10 @@ class TestUnit(_Base):
 
     def test_tag_fallback_on_extractor_failure(self):
         self.tags.extract_tags.side_effect = RuntimeError("llm down")
-        self.assertEqual(pj._get_tags("t", "x", "essays"), ["essay", "culture"])
+        self.assertEqual(pj._get_tags("t", "x", "research"), ["research", "essay"])
         self.assertEqual(pj._get_tags("t", "x", "nope"), ["journal"])
         self.linker.find_related.side_effect = RuntimeError("pg down")
-        self.assertEqual(pj._get_related("x", "essays", "s"), "")
+        self.assertEqual(pj._get_related("x", "research", "s"), "")
 
     def test_missing_dream_file(self):
         self.assertFalse(pj.publish_dream(str(Path(self.td.name) / "missing.md")))
@@ -150,30 +148,34 @@ class TestUnit(_Base):
 class TestIntegration(_Base):
     def test_uses_shared_tagger_and_linker(self):
         pj.publish_essay("Orbits", "astronomy", "Body text.")
-        self.assertEqual(self.tags.extract_tags.call_args.args[2], "essays")
-        self.assertEqual(self.linker.find_related.call_args.args[1:], ("essays", "orbits"))
+        self.assertEqual(self.tags.extract_tags.call_args.args[2], "research")
+        self.assertEqual(self.linker.find_related.call_args.args[1:], ("research", "orbits"))
+        post = next((self.root / "content/research").glob("*-orbits.md")).read_text()
+        self.assertIn('categories: ["research"]', post)
 
 
 class TestFunctional(_Base):
-    def test_dream_golden_path_with_image(self):
+    def test_dream_refused_section_retired(self):
+        # Dreams retired 2026-10-19: publish_dream refuses, writes nothing, never touches git.
         img = Path(self.td.name) / "art.png"
         img.write_bytes(b"png")
-        self.assertTrue(pj.publish_dream(str(self.dream_file()), str(img)))
-        post = (self.root / "content/dreams/2026-05-04.md").read_text()
-        self.assertIn('title: "🌙 Glass Tides"', post)
-        self.assertIn('description: "A wistful dream about Glass Tides"', post)
-        self.assertIn('image: "/images/dreams/2026-05-04.png"', post)
-        self.assertIn('tags: ["space", "orbits"]', post)
-        self.assertNotIn("# Dream Journal", post)
-        self.assertTrue((self.root / "static/images/dreams/2026-05-04.png").exists())
-        self.assertEqual(self.git.calls, ["add", "commit", "pull", "push"])
+        with redirect_stderr(io.StringIO()) as err:
+            self.assertFalse(pj.publish_dream(str(self.dream_file()), str(img)))
+        self.assertIn("retired", err.getvalue())
+        self.assertFalse((self.root / "content/dreams").exists())
+        self.assertFalse((self.root / "static/images/dreams").exists())
+        self.assertEqual(self.git.calls, [])
+        with patch.object(sys, "argv", ["x", "dream", str(self.dream_file())]), \
+                redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as cm:
+            pj.main()
+        self.assertEqual(cm.exception.code, 2)
 
     def test_essay_cli_golden_path(self):
         txt = Path(self.td.name) / "essay.txt"
         txt.write_text("An essay body.")
         with patch.object(sys, "argv", ["x", "essay", "Why Orbits Matter!", "deep_space", str(txt)]):
             pj.main()
-        posts = list((self.root / "content/essays").glob("*-why-orbits-matter.md"))
+        posts = list((self.root / "content/research").glob("*-why-orbits-matter.md"))
         self.assertEqual(len(posts), 1)
         self.assertIn('description: "A formal essay on Deep Space"', posts[0].read_text())
 
@@ -190,7 +192,8 @@ class TestFrame(unittest.TestCase):
         r = subprocess.run([sys.executable, str(SCRIPT)], capture_output=True, text=True, timeout=30,
                            env={**os.environ, "NOVA_TEST_QUIET": "1"})
         self.assertEqual(r.returncode, 1)
-        self.assertIn("Usage: nova_publish_journal.py dream", r.stdout)
+        self.assertIn("Usage: nova_publish_journal.py essay", r.stdout)
+        self.assertIn("retired", r.stdout)
 
     def test_import_never_runs_main(self):
         self.assertIn('if __name__ == "__main__":', SRC)

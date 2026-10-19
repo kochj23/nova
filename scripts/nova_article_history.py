@@ -21,6 +21,11 @@ _FM_RE = re.compile(r"^\s*([A-Za-z_]+)\s*:\s*(.+?)\s*$")
 
 def _content_dir(section: str):
     """Locate the Hugo content dir for a section, robust across hosts."""
+    try:   # retired names (operations, local, essays, ...) live in their merged section now
+        from nova_sections import canon
+        section = canon(section)
+    except Exception:  # noqa: BLE001
+        pass
     candidates = [
         Path.home() / "nova-journal" / "content" / section,
         Path("/nova/nova-journal/content") / section,

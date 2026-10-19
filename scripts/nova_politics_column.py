@@ -151,6 +151,15 @@ VOICE = (
 )
 
 
+def _season(section, topic):
+    """Sci-fi + faith seasoning (nova_lexicon); '' if unavailable — never breaks the column."""
+    try:
+        import nova_lexicon
+        return nova_lexicon.safe_seasoning(section, topic)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def generate_article(brief_block, n_items):
     import json, urllib.request
     system = (
@@ -183,6 +192,7 @@ def generate_article(brief_block, n_items):
         "footnote stating the facts come from the cited third-party feeds Nova ingested this "
         "week and reflect those outlets' reporting, not independent verification, and the "
         "opinion is the owner's by request. /no_think\n\n"
+        + _season("opinions", "politics news this week") + "\n\n"
         f"SOURCE MATERIAL ({n_items} real items — wire headlines + OTA broadcast excerpts — "
         f"Nova ingested this week):\n" + brief_block
     )

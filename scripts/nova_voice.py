@@ -316,10 +316,10 @@ _CTX_TO_SECTION = None
 def _infer_section(context: str) -> str:
     global _CTX_TO_SECTION
     if _CTX_TO_SECTION is None:
-        pairs = [(CONTEXT_JOURNAL_OPS, "operations"), (CONTEXT_JOURNAL_LOCAL, "local"),
-                 (CONTEXT_JOURNAL_SECURITY, "security"), (CONTEXT_JOURNAL_ESSAY, "essays"),
+        pairs = [(CONTEXT_JOURNAL_OPS, "burbank-ops"), (CONTEXT_JOURNAL_LOCAL, "burbank-ops"),
+                 (CONTEXT_JOURNAL_SECURITY, "security"), (CONTEXT_JOURNAL_ESSAY, "research"),
                  (CONTEXT_JOURNAL_RESEARCH, "research"), (CONTEXT_JOURNAL_AFTER_DARK, "after-dark"),
-                 (CONTEXT_JOURNAL_DIGEST, "digests"), (CONTEXT_JOURNAL_WEIRD_MEMORIES, "rando"),
+                 (CONTEXT_JOURNAL_DIGEST, "digests"), (CONTEXT_JOURNAL_WEIRD_MEMORIES, "burbank-ops"),
                  (CONTEXT_JOURNAL_VECTOR_AUDIT, "meta")]
         # longest constant first so a block that contains another matches specifically
         _CTX_TO_SECTION = sorted(((c.strip(), s) for c, s in pairs if c),

@@ -22,9 +22,12 @@ HUGO_ROOT = (Path.home() / "nova-journal")
 BASE_URL = "https://nova.digitalnoise.net"
 
 # Category to URL prefix mapping
+# Live sections (nova_sections.LIVE_SECTIONS) plus the archive-only art/dreams folders, whose
+# old posts are still on the site. essays/synthesis -> research, operations/local -> burbank-ops,
+# tech-today -> tech (2026-10-19).
 CATEGORY_URLS = {
-    "dreams": "/dreams/",
-    "essays": "/essays/",
+    "burbank-ops": "/burbank-ops/",
+    "dreams": "/dreams/",          # archive only (retired 2026-10-19)
     "opinions": "/opinions/",
     "tech": "/tech/",
     "cars": "/cars/",
@@ -34,14 +37,15 @@ CATEGORY_URLS = {
     "art": "/art/",
     "research": "/research/",
     "digests": "/digests/",
-    "synthesis": "/synthesis/",
+    "security": "/security/",
+    "pilot": "/pilot/",
     "meta": "/meta/",
 }
 
 # Category emoji for display
 CATEGORY_EMOJI = {
-    "dreams": "🌙",
-    "essays": "📝",
+    "burbank-ops": "📡",
+    "dreams": "🌙",                 # archive only
     "opinions": "💬",
     "tech": "⚡",
     "cars": "🚗",
@@ -51,7 +55,8 @@ CATEGORY_EMOJI = {
     "art": "🎨",
     "research": "📄",
     "digests": "📋",
-    "synthesis": "✨",
+    "security": "🛡️",
+    "pilot": "🎬",
     "meta": "🔮",
 }
 

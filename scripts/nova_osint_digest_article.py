@@ -144,7 +144,7 @@ def publish(title, body, image_path, severity_max):
 title: "{title.replace('"', '')}"
 date: {timestamp}
 draft: false
-categories: ["operations"]
+categories: ["burbank-ops"]
 tags: ["osint", "security", "attack-surface", "sarcasm"]
 description: "Nova's weekly OSINT self-recon — what Amass, theHarvester, and HIBP found pointed at her own house."
 '''
@@ -160,7 +160,7 @@ description: "Nova's weekly OSINT self-recon — what Amass, theHarvester, and H
     # Hardened commit + push (PG advisory lock, rebase-on-reject, retry, alert-on-failure).
     nova_journal.git_push("osint", title)
 
-    url = f"https://nova.digitalnoise.net/operations/{date}-{slug}/"
+    url = f"https://nova.digitalnoise.net/burbank-ops/{date}-{slug}/"
     nova_config.post_both(f"OSINT digest posted — {title}\n{url}", slack_channel=nova_config.SLACK_FEED)
     if severity_max == "critical":
         nova_notify("OSINT digest: new breach exposure found", body=f"{title}\n{url}",

@@ -191,7 +191,7 @@ FORMAT: TOP 10 WEIRDEST MEMORIES — {period} edition.
 - Acknowledge the time of day in the intro
 - Do NOT include a title (added separately)
 - Total: ~1500-2500 words
-""")
+""", section="burbank-ops")
 
     user = f"""Here are {len(memories)} randomly sampled memories ingested in the last {HOURS_WINDOW} hours.
 Total new memories this period: {stats['total']:,}
@@ -274,7 +274,7 @@ def publish(title: str, body: str, image_path: Path | None):
 title: "{title}"
 date: {timestamp}
 draft: false
-categories: ["operations"]
+categories: ["burbank-ops"]
 tags: ["memories", "weird", "top10", "ingest", "sarcasm"]
 description: "Nova's top 10 weirdest memories ingested in the last 12 hours."
 """
@@ -296,7 +296,7 @@ description: "Nova's top 10 weirdest memories ingested in the last 12 hours."
     nova_config.post_both(
         f":brain: *Top 10 Weirdest Memories posted*\n"
         f"  _{title}_\n"
-        f"  https://nova.digitalnoise.net/operations/{date}-{slug}/",
+        f"  https://nova.digitalnoise.net/burbank-ops/{date}-{slug}/",
         slack_channel="#nova-notifications"
     )
 

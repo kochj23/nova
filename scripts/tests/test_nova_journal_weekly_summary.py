@@ -147,9 +147,9 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(ws._date_range_label(date(2025, 12, 29), date(2026, 1, 4)), "Dec 29, 2025 – Jan 04, 2026")
 
     def test_list_sections_skips_meta(self):
-        for d in ("tech", "about", "_hidden", "operations"):
+        for d in ("tech", "about", "_hidden", "burbank-ops", "operations", "dreams", "essays"):
             (ws.CONTENT_ROOT / d).mkdir(parents=True)
-        self.assertEqual(ws.list_sections(), ["operations", "tech"])
+        self.assertEqual(ws.list_sections(), ["burbank-ops", "tech"])   # retired folders skipped (2026-10-19)
 
 
 class TestIntegration(unittest.TestCase):

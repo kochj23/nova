@@ -175,11 +175,13 @@ class TestFunctional(unittest.TestCase):
         for m in (WK.call_llm, WK.publish, WK.generate_title, WK.gather, WK.fmt):
             m.reset_mock()
         _article(1, "g", "Golden", ["Body para.", "More."])
-        with patch.object(ww.subprocess, "run", _git()), redirect_stdout(io.StringIO()) as out:
+        with patch.object(ww.subprocess, "run", _git()), redirect_stdout(io.StringIO()) as out, \
+                patch.object(ww, "_season", return_value="\n<SEASONING>") as season:
             ww.main()
         self.assertEqual(out.getvalue().strip(), "https://nova.digitalnoise.net/operations/wrap/")
         system, mega = WK.call_llm.call_args[0]
-        self.assertEqual(system, ww.SYSTEM); self.assertEqual(WK.call_llm.call_args[1], {"max_tokens": 6500})
+        season.assert_called_once_with("burbank-ops", "weekly ops wrap week in review")   # sci-fi + faith seasoning
+        self.assertEqual(system, ww.SYSTEM + "\n<SEASONING>"); self.assertEqual(WK.call_llm.call_args[1], {"max_tokens": 6500})
         self.assertTrue(mega.startswith("INFRA BRIEF"))
         for header in ("ARTICLES I PUBLISHED THIS WEEK", "DETAILED ACTION LEDGER", "SHIPPED CODE (git commits this week)"):
             self.assertIn(header, mega)
@@ -208,7 +210,7 @@ class TestFrame(unittest.TestCase):
         r = subprocess.run([sys.executable, "-c", code], cwd=str(SCRIPTS), capture_output=True, text=True, timeout=30,
                            env={**os.environ, "NOVA_TEST_QUIET": "1", "HOME": str(TMP)})
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout.strip(), "operations")
+        self.assertEqual(r.stdout.strip(), "burbank-ops")   # Operations + Local -> Burbank and Ops 2026-10-19
 
 
 if __name__ == "__main__":

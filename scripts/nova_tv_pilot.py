@@ -96,6 +96,15 @@ GENRES = [
 ]
 
 
+def _season(section: str, topic: str) -> str:
+    """Sci-fi + faith seasoning (nova_lexicon.safe_seasoning) for this raw prompt; '' if unavailable."""
+    try:
+        import nova_lexicon
+        return nova_lexicon.safe_seasoning(section, topic)
+    except Exception:  # noqa: BLE001 — flavour never breaks publishing
+        return ""
+
+
 def log(msg: str):
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{ts}] {msg}"
@@ -208,6 +217,9 @@ Write the FULL pilot screenplay now. Start with:
 
 Make it brilliant. Make it original. Make someone want to watch Episode 2."""
 
+    flav = _season("pilot", f"{source_label} {genre.get('name', '')}")
+    if flav:   # in a screenplay the borrowed tongues live in the characters' dialogue
+        system_prompt += flav + "\nIN A SCREENPLAY these belong in the CHARACTERS' mouths, never in stage directions."
     screenplay = call_openrouter(system_prompt, user_prompt, max_tokens=16000)
 
     # Extract title from the screenplay

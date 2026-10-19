@@ -46,7 +46,7 @@ def _run(n_rows=5, nj=None, history=""):
     fakes = {"nova_fishbowl_summaries": types.SimpleNamespace(source_links=lambda rows: "- [s](https://x)"),
              "nova_article_history": types.SimpleNamespace(recent_articles_context=lambda s: history)}
     with patch.object(of.psycopg2, "connect", side_effect=conns), patch.object(of, "nj", nj), \
-         patch.object(of.nova_voice, "system_prompt", side_effect=lambda c: "SYS:" + c[:40]), \
+         patch.object(of.nova_voice, "system_prompt", side_effect=lambda c, **k: "SYS:" + c[:40]), \
          patch.object(nova_config, "post_both") as pb, patch.dict(sys.modules, fakes):
         rc = of.main()
     return rc, nj, pb, oc, mc

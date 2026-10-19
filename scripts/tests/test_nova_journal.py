@@ -154,8 +154,8 @@ class TestSecurity(unittest.TestCase):
     def test_published_body_is_scrubbed(self):
         body = BODY + "\n\nbox 00:11:22:33:44:55 wrote to " + _HOME + "/secret/notes.txt for bob@example.com"
         with patch.dict(sys.modules, _lazy_stubs()), _quiet():
-            self.assertTrue(nj.publish_hugo("Scrub Check Title", body, "dreams", ["t"], "d"))
-        out = (nj.HUGO_ROOT / "content/dreams").glob("*scrub-check-title.md")
+            self.assertTrue(nj.publish_hugo("Scrub Check Title", body, "opinions", ["t"], "d"))
+        out = (nj.HUGO_ROOT / "content/opinions").glob("*scrub-check-title.md")
         text = next(out).read_text()
         for leak in ("00:11:22:33:44:55", "/Users/kochj", "bob@example.com"):
             self.assertNotIn(leak, text)
@@ -396,30 +396,30 @@ class TestIntegration(unittest.TestCase):
         img = TMP / "cover.webp"; img.write_bytes(b"RIFFxxxxWEBP")
         stubs = _lazy_stubs()
         with patch.dict(sys.modules, stubs), patch("subprocess.run") as r, _quiet():
-            ok = nj.publish_hugo("Night Shift Report", BODY, "dreams", ["dream", "x"], 'desc "q"', image_path=str(img), emoji="🌙")
+            ok = nj.publish_hugo("Night Shift Report", BODY, "opinions", ["dream", "x"], 'desc "q"', image_path=str(img), emoji="🌙")
         self.assertTrue(ok)
         r.assert_not_called()                                                     # webp source: copied, no cwebp
-        md = nj.HUGO_ROOT / f"content/dreams/{nj.today_str()}-night-shift-report.md"
+        md = nj.HUGO_ROOT / f"content/opinions/{nj.today_str()}-night-shift-report.md"
         text = md.read_text()
         self.assertTrue(text.startswith('---\ntitle: "🌙 Night Shift Report"\n'))
-        self.assertIn('categories: ["dreams"]\ntags: ["dream", "x"]\ndescription: "desc \'q\'"\n', text)
-        self.assertIn(f'cover:\n  image: "/images/dreams/{nj.today_str()}-night-shift-report.webp"', text)
+        self.assertIn('categories: ["opinions"]\ntags: ["dream", "x"]\ndescription: "desc \'q\'"\n', text)
+        self.assertIn(f'cover:\n  image: "/images/opinions/{nj.today_str()}-night-shift-report.webp"', text)
         self.assertIn("*Published ", text)
         self.assertIn("*Weather: 72F, clear*", text)
-        self.assertTrue((nj.HUGO_ROOT / f"static/images/dreams/{nj.today_str()}-night-shift-report.webp").exists())
+        self.assertTrue((nj.HUGO_ROOT / f"static/images/opinions/{nj.today_str()}-night-shift-report.webp").exists())
         stubs["nova_articles_to_memory"].remember_article.assert_called_once_with(str(md))
         stubs["nova_weather_blurb"].weather_dateline_line.assert_called_once()
 
     def test_publish_hugo_stable_slug_degenerate_title_and_guard_block(self):
         stubs = _lazy_stubs()
         with patch.dict(sys.modules, stubs), _quiet():
-            self.assertTrue(nj.publish_hugo("Let me", BODY, "dreams", [], "d", stable_slug="evergreen"))
-        md = nj.HUGO_ROOT / "content/dreams/evergreen.md"
-        self.assertIn(f'title: "Dreams Dispatch — {nj.today_str()}"', md.read_text())
+            self.assertTrue(nj.publish_hugo("Let me", BODY, "opinions", [], "d", stable_slug="evergreen"))
+        md = nj.HUGO_ROOT / "content/opinions/evergreen.md"
+        self.assertIn(f'title: "Opinions Dispatch — {nj.today_str()}"', md.read_text())
         stubs["nova_articles_to_memory"].remember_article.assert_called_once_with(str(md))
         with patch.dict(sys.modules, stubs), patch.object(nj.nova_config, "post_both") as pb, _quiet():
-            self.assertFalse(nj.publish_hugo("Blocked Piece Title", "too short", "dreams", [], "d"))
-        self.assertIn("Suppressed a non-publishable *dreams* article", pb.call_args[0][0])
+            self.assertFalse(nj.publish_hugo("Blocked Piece Title", "too short", "opinions", [], "d"))
+        self.assertIn("Suppressed a non-publishable *opinions* article", pb.call_args[0][0])
 
     # ── per-article-type length policy + grounded expansion (2026-10-06) ──────────
     def _pub(self, title, body, profile, sources=None, section="essays", replies=None):
@@ -631,7 +631,7 @@ class TestIntegration(unittest.TestCase):
         self.assertIn("no sources, not expanding", nj.LOG_FILE.read_text())
 
     def test_never_rows_and_unmapped_profiles_make_no_model_call(self):
-        for prof, sec in (("dream", "dreams"), ("weekly-summary", "essays"), ("ops-security", "operations"),
+        for prof, sec in (("dream", "opinions"), ("weekly-summary", "essays"), ("ops-security", "operations"),
                           ("unclaimed-digest", "operations"), ("repo-scout", "operations"),
                           ("iot-scout", "operations"), (None, "essays")):
             with self.subTest(profile=prof):
@@ -743,7 +743,7 @@ class TestIntegration(unittest.TestCase):
         grounding = types.ModuleType("nova_grounding"); grounding.add_to_body = lambda b, ids, src: b   # footer tested below
         with patch.dict(sys.modules, dict(_lazy_stubs(), nova_grounding=grounding)), \
              patch("psycopg2.connect", return_value=conn), _quiet():
-            nj.publish_hugo("Cited Article Title", BODY, "dreams", [], "d", cited_memory_ids=[11, 22])
+            nj.publish_hugo("Cited Article Title", BODY, "pilot", [], "d", cited_memory_ids=[11, 22])
         self.assertEqual(cur.execute.call_count, 2)
         sql, params = cur.execute.call_args_list[0][0]
         self.assertIn("INSERT INTO article_citations", sql)

@@ -58,15 +58,18 @@ _comfyui_url_cache = None
 # kept because other scripts/tests import it. Every cover renders on FLUX.1 dev.
 SECTION_MODEL_MAP = {
     "art": "premium",
-    "dreams": "cinematic",
     "after-dark": "cinematic",
-    "essays": "quality",
+    "pilot": "cinematic",
+    "burbank-ops": "quality",
+    "watches": "quality",
+    "security": "quality",
     "research": "quality",
     "tech": "quality",
     "cars": "quality",
     "food": "quality",
     "opinions": "quality",
-    "synthesis": "premium",
+    # retired names still passed by older callers (nova_sections.SECTION_REDIRECTS)
+    "operations": "quality", "local": "quality", "essays": "quality", "synthesis": "premium",
     "digests": "balanced",
     "default": "quality",
 }

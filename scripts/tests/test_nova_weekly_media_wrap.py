@@ -25,7 +25,7 @@ def _stubs():
     nj.today_str = MagicMock(return_value="2026-10-05"); nj.get_image_prompt = MagicMock(return_value="prompt")
     nj.generate_image = MagicMock(return_value="/tmp/img.webp"); nj.publish_hugo = MagicMock(return_value=True)
     nj.git_push = MagicMock(); nj.notify_slack = MagicMock()
-    nv = types.ModuleType("nova_voice"); nv.system_prompt = MagicMock(side_effect=lambda ctx: "SYS:" + ctx)
+    nv = types.ModuleType("nova_voice"); nv.system_prompt = MagicMock(side_effect=lambda ctx, **k: "SYS:" + ctx)
     ah = types.ModuleType("nova_article_history"); ah.recent_articles_context = MagicMock(return_value="RECENT: prior wrap")
     return {"nova_journal": nj, "nova_voice": nv, "nova_article_history": ah}
 

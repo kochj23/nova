@@ -41,6 +41,15 @@ CONTENT_DIR.mkdir(parents=True, exist_ok=True)
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _season(section: str, topic: str) -> str:
+    """Sci-fi + faith seasoning (nova_lexicon.safe_seasoning) for this raw prompt; '' if unavailable."""
+    try:
+        import nova_lexicon
+        return nova_lexicon.safe_seasoning(section, topic)
+    except Exception:  # noqa: BLE001 — flavour never breaks publishing
+        return ""
+
+
 def log(msg: str):
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     line = f"[sec-weekly {ts}] {msg}"
@@ -151,7 +160,7 @@ RAW INTELLIGENCE FROM THE WEEK:
 
 Synthesize into the weekly strategic rollup."""
 
-    result = call_llm(system, user, max_tokens=5000)
+    result = call_llm(system + _season("security", "weekly security intelligence rollup"), user, max_tokens=5000)
     if not result or len(result) < 500:
         log("Weekly generation failed")
         sys.exit(1)   # no rollup = a missing article: fail loudly so the scheduler alerts/retries
@@ -187,7 +196,7 @@ Synthesize into the weekly strategic rollup."""
 title: "📊 {title.replace('"', '')}"
 date: {timestamp}
 draft: false
-categories: ["operations"]
+categories: ["burbank-ops"]
 tags: ["weekly", "strategic", "rollup", "trends"]
 description: "Weekly intelligence strategic rollup — {time.strftime('%d %b %Y')}"
 '''

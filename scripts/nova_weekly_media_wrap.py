@@ -105,7 +105,7 @@ def main():
         "700-1200 words, markdown, section headers welcome, no H1 title (added "
         "separately).\n\n"
         "OUTPUT EXACTLY THIS SHAPE:\nTITLE: <one punchy title, no quotes>\n<blank line>\n<the body>")
-    system = nova_voice.system_prompt(ctx)
+    system = nova_voice.system_prompt(ctx, section="burbank-ops")
     user = (f"--- THIS WEEK'S SHOW ROLL CALL (library ingest) ---\n{show_block}\n\n"
             f"--- OTA / LIVE-TV RECORDINGS ---\n{rec_block}\n\n"
             f"--- NEWS CAPTURE ---\nnews broadcasts: {n_broadcast}, local-news items: {n_localnews}\n\n"

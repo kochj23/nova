@@ -2354,21 +2354,21 @@ def _scan_log_file(log_file: Path) -> list:
 # For scheduled content (MWF etc), we also check if today is a scheduled day
 # and the task hasn't run yet — see _is_overdue_today()
 JOURNAL_SECTIONS = {
-    "dreams":     ("daily_journal",  26),
-    "essays":     ("journal_essay",  26),
-    "opinions":   ("daily_opinion",  26),
+    # 2026-10-19 (Jordan): Dreams RETIRED (no generator; alerting on it would be a false alarm
+    # forever); operations + local -> burbank-ops; essays + synthesis -> research. Task ids are
+    # the real scheduler-core ids (daily_journal/daily_opinion/research_paper/daily_digest never existed).
+    "burbank-ops": ("rando_daily_ops",    26),   # dozens of posts a day; a 26h gap is a real outage
+    "opinions":    ("journal_opinion",    74),   # Tue/Thu/Sat 12:00 -> longest gap Sat->Tue = 72h
     # after-dark RETIRED 2026-07-30 — removed so BB stops flagging it stale AND, more
     # importantly, never backfill-regenerates the content we just retired.
     # tech-today RETIRED 2026-10-19 -> Tech and Friends (tech). The Friends sections skip
-    # news-less days by design, so they are not staleness-backfilled (same as watches).
-    "research":   ("research_paper", 50),
-    "digests":    ("daily_digest",   26),
+    # news-less days by design, so they are not staleness-backfilled (same as watches, cars, food).
+    "research":    ("journal_research",   74),   # essay Wed + research Thu + synthesis Sun -> longest gap ~62h
+    "digests":     ("journal_digest",     26),
 }
 
 # Tasks with non-daily schedules: (task_id -> days_of_week as isoweekday 1=Mon)
-JOURNAL_SCHEDULE_DAYS = {
-    "journal_essay": {1, 3, 5},  # Mon, Wed, Fri
-}
+JOURNAL_SCHEDULE_DAYS: dict = {}
 JOURNAL_OVERDUE_AFTER_HOUR = 10  # If it's a scheduled day and past 10am, it's overdue
 JOURNAL_CONTENT_DIR = (Path.home() / "nova-journal" / "content")
 _journal_backfill_cooldown: dict = {}   # section -> last_backfill_ts
@@ -2381,7 +2381,9 @@ def _latest_journal_entry_age(section: str) -> float | None:
     if not section_dir.exists():
         return None
     latest_ts = 0.0
-    for md_file in section_dir.glob("*.md"):
+    # burbank-ops holds 2,500+ posts: only parse the most recently written ones.
+    files = sorted(section_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)[:200]
+    for md_file in files:
         if md_file.name == "_index.md":
             continue
         try:

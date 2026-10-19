@@ -491,7 +491,7 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual((stats["processed"], stats["moved"], stats["homeless"], stats["dry_run"]), (4, 1, 1, False))
         self.assertEqual(stats["top_moves"], [{"from→to": "wikipedia → knowledge", "n": 1}])
         md = next(R.OUT.glob("*-memory-reclassify.md")).read_text()
-        self.assertIn('categories: ["operations"]', md); self.assertIn("Nova's own article.", md)
+        self.assertIn('categories: ["burbank-ops"]', md); self.assertIn("Nova's own article.", md)
         body = json.loads(reqs[0].data)
         self.assertEqual(body["source"], "operations"); self.assertIn("Nova's own article.", body["text"])
         self.assertTrue(reqs[0].full_url.endswith("/remember"))

@@ -34,12 +34,21 @@ DB, MEMDB = daily.DB, daily.MEMDB
 log = daily.log
 
 HUGO_ROOT = (Path.home() / "nova-journal")
-CONTENT_DIR = HUGO_ROOT / "content" / "operations"
+CONTENT_DIR = HUGO_ROOT / "content" / "burbank-ops"
 IMAGES_DIR = HUGO_ROOT / "static" / "images" / "operations"
 GH_OWNER = "kochj23"
 
 
 # ── Data gathering (last 7 days) ─────────────────────────────────────────────
+
+def _season(section: str, topic: str) -> str:
+    """Sci-fi + faith seasoning (nova_lexicon.safe_seasoning) for this raw prompt; '' if unavailable."""
+    try:
+        import nova_lexicon
+        return nova_lexicon.safe_seasoning(section, topic)
+    except Exception:  # noqa: BLE001 — flavour never breaks publishing
+        return ""
+
 
 def gather() -> dict:
     d = {}
@@ -244,7 +253,7 @@ def publish(title: str, body: str) -> str:
 
     front_matter = (f'---\ntitle: "{title.replace(chr(34), "")}"\n'
                     f'date: {timestamp}\ndraft: false\n'
-                    f'categories: ["operations"]\n'
+                    f'categories: ["burbank-ops"]\n'
                     f'tags: ["ops-report", "weekly", "infrastructure", "network", "crashes", "memory", "watch"]\n'
                     f'description: "Nova\'s weekly infrastructure report — the past 7 days of changes, crashes, alerts, and what she learned."\n'
                     f'{cover_block}---\n\n')
@@ -274,7 +283,7 @@ def publish(title: str, body: str) -> str:
     else:
         log(f"Commit note: {(r.stdout + r.stderr)[:150]}")
 
-    url = f"https://nova.digitalnoise.net/operations/{date}-{slug}/"
+    url = f"https://nova.digitalnoise.net/burbank-ops/{date}-{slug}/"
     notify("Weekly Infra Report posted", body=f"_{title}_\n{url}",
            level="info", category="journal", dedup_key=f"weekly-ops-report-{date}",
            meta={"url": url, "title": title})
@@ -289,7 +298,7 @@ def main():
     # guard so that degrades to the clean "too short — aborting" path below instead of
     # crashing with AttributeError on None.strip() (the traceback that had this task
     # failing every run).
-    body = (call_llm(SYSTEM, brief, max_tokens=4500) or "").strip()
+    body = (call_llm(SYSTEM + _season("burbank-ops", "weekly infrastructure report"), brief, max_tokens=4500) or "").strip()
     if not body or len(body) < 200:
         log("Generation failed or too short — aborting")
         return

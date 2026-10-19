@@ -243,7 +243,7 @@ class TestIntegration(unittest.TestCase):
         ro.nova_journal.git_push.assert_called_once_with("operations", 'Nova "Quoted" Title')
         msg, kw = ro.nova_config.post_both.call_args[0][0], ro.nova_config.post_both.call_args[1]
         self.assertEqual(kw, {"slack_channel": "#nova-notifications"})
-        self.assertIn("https://nova.digitalnoise.net/operations/2026-10-05-nova-quoted-title/", msg)
+        self.assertIn("https://nova.digitalnoise.net/burbank-ops/2026-10-05-nova-quoted-title/", msg)
         post = (ro.CONTENT_DIR / "2026-10-05-nova-quoted-title.md").read_text()
         self.assertIn('title: "Nova Quoted Title"', post); self.assertIn("date: 2026-10-05T12:00:00-07:00", post)
         self.assertIn("![Current fleet health](/images/operations/fleet.png)", post)

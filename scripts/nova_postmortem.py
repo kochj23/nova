@@ -40,7 +40,7 @@ except ImportError:
     def format_infra_brief(ctx): return ""
 
 HUGO_ROOT = (Path.home() / "nova-journal")
-CONTENT_DIR = HUGO_ROOT / "content" / "operations"   # rando retired -> operations
+CONTENT_DIR = HUGO_ROOT / "content" / "burbank-ops"   # Operations + Local -> Burbank and Ops (2026-10-19)
 IMAGES_DIR = HUGO_ROOT / "static" / "images" / "operations"
 # Postmortems are built from INTERNAL incident/infra/security telemetry, so the
 # editorial generation runs on LOCAL Ollama ONLY — none of this leaves the box.
@@ -48,6 +48,15 @@ OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 OLLAMA_MODEL = "qwen3-coder:30b"
 import nova_dsn as _nova_dsn  # noqa: E402
 DB_DSN = _nova_dsn.pg_dsn("nova_ops")
+
+
+def _season(section: str, topic: str) -> str:
+    """Sci-fi + faith seasoning (nova_lexicon.safe_seasoning) for this raw prompt; '' if unavailable."""
+    try:
+        import nova_lexicon
+        return nova_lexicon.safe_seasoning(section, topic)
+    except Exception:  # noqa: BLE001 — flavour never breaks publishing
+        return ""
 
 
 def log(msg):
@@ -158,7 +167,7 @@ SECURITY STATUS:
 
 Write a proper incident retrospective in Nova's signature sarcastic style. Include technical details, timeline, root cause analysis, and lessons learned. Make it funny but technically accurate."""
 
-    article = call_llm(system, user)
+    article = call_llm(system + _season("burbank-ops", f"incident postmortem {trigger}"), user)
     if not article or len(article) < 500:
         log("LLM generation failed")
         return False
@@ -204,7 +213,7 @@ Write a proper incident retrospective in Nova's signature sarcastic style. Inclu
 title: "{title.replace('"', '')}"
 date: {timestamp}
 draft: false
-categories: ["operations"]
+categories: ["burbank-ops"]
 tags: ["ops", "infrastructure", "postmortem", "incident", "sarcasm"]
 description: "Nova's incident retrospective — what broke, why, and who she's blaming (herself, obviously)."
 cover:

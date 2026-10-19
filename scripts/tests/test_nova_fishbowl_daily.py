@@ -32,7 +32,7 @@ fb = _load()
 fb.nj = MagicMock()
 fb.nj.today_str.return_value = "2026-01-01"
 fb.nova_voice = MagicMock()
-fb.nova_voice.system_prompt.side_effect = lambda ctx: "SYS:" + ctx
+fb.nova_voice.system_prompt.side_effect = lambda ctx, **k: "SYS:" + ctx
 
 STREAM = (1, "Betty yelled at the chat again over a $5 superchat", "t",
           {"type": "fishbowl_stream", "url": "https://yt/x", "channel": "Chan", "title": "Ep 1"})

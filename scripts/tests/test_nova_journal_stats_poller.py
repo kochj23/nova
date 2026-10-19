@@ -76,8 +76,8 @@ def _reset_content():
     import shutil
     shutil.rmtree(jp.CONTENT_DIR, ignore_errors=True)
     jp.CONTENT_DIR.mkdir(parents=True)
-    (jp.CONTENT_DIR / "essays" / "_index.md").parent.mkdir(exist_ok=True)
-    (jp.CONTENT_DIR / "essays" / "_index.md").write_text("---\ntitle: Essays\n---\n")
+    (jp.CONTENT_DIR / "research" / "_index.md").parent.mkdir(exist_ok=True)
+    (jp.CONTENT_DIR / "research" / "_index.md").write_text("---\ntitle: Research\n---\n")
 
 
 VIEWS = {"count": 40, "uniques": 9, "views": [
@@ -113,7 +113,7 @@ class TestSecurity(unittest.TestCase):
         with patch.object(jp.subprocess, "run", _gh_router(paths=evil)):
             out = jp.fetch_top_paths()
         self.assertEqual(out[0]["title"], "{{7*7}}")
-        self.assertEqual(out[0]["section"], "essays")
+        self.assertEqual(out[0]["section"], "research")   # old /essays/ URLs count for Research (2026-10-19)
 
 
 class TestPerformance(unittest.TestCase):
@@ -125,7 +125,7 @@ class TestPerformance(unittest.TestCase):
             dt = time.perf_counter() - t0
         self.assertLess(dt, 1.0)
         self.assertEqual(len(out), 10_000)
-        self.assertEqual(out[3]["section"], "after-dark")
+        self.assertEqual(out[3]["section"], jp.SECTIONS[3])
 
     def test_history_merge_of_10k_days_is_fast(self):
         days = [{"date": f"{2000 + i // 365:04d}-01-{1 + i % 28:02d}", "count": i, "uniques": 1} for i in range(10_000)]
@@ -180,7 +180,8 @@ class TestUnit(unittest.TestCase):
     def test_section_inference_edges(self):
         with patch.object(jp.subprocess, "run", _gh_router(paths=PATHS)):
             out = jp.fetch_top_paths()
-        self.assertEqual([p["section"] for p in out], ["essays", "dreams", "other"])
+        # /essays/ -> research (merged); /dreams is retired, so it is "other" now (2026-10-19)
+        self.assertEqual([p["section"] for p in out], ["research", "other", "other"])
         self.assertEqual(out[2]["title"], "Home")
         with patch.object(jp.subprocess, "run", _gh_router(paths=[{}])):
             self.assertEqual(jp.fetch_top_paths()[0], {"path": "", "title": "", "count": 0, "uniques": 0, "section": "other"})
@@ -204,15 +205,15 @@ class TestUnit(unittest.TestCase):
         empty = jp.scan_content()
         self.assertEqual(set(empty), set(jp.SECTIONS))
         # a missing section dir must carry the same keys main() sums over (regression: KeyError 'posts_this_week')
-        self.assertEqual(empty["dreams"], {"post_count": 0, "coverage_7d": [False] * 7, "coverage_titles": [""] * 7,
+        self.assertEqual(empty["burbank-ops"], {"post_count": 0, "coverage_7d": [False] * 7, "coverage_titles": [""] * 7,
                                            "latest_ts": None, "latest_title": "", "age_hours": 9999,
                                            "posts_this_week": 0, "posts_last_week": 0, "words_this_week": 0})
-        self.assertEqual(empty["essays"]["post_count"], 0)                       # _index.md is not a post
-        _post("essays", "a.md", _iso(0), "Today", 30)
-        _post("essays", "b.md", _iso(3), "Three days", 20)
-        _post("essays", "c.md", _iso(10), "Old", 100)
-        (jp.CONTENT_DIR / "essays" / "nodate.md").write_text("no front matter at all")
-        s = jp.scan_content()["essays"]
+        self.assertEqual(empty["research"]["post_count"], 0)                       # _index.md is not a post
+        _post("research", "a.md", _iso(0), "Today", 30)
+        _post("research", "b.md", _iso(3), "Three days", 20)
+        _post("research", "c.md", _iso(10), "Old", 100)
+        (jp.CONTENT_DIR / "research" / "nodate.md").write_text("no front matter at all")
+        s = jp.scan_content()["research"]
         self.assertEqual(s["post_count"], 4)
         self.assertEqual(s["coverage_7d"][:4], [True, False, False, True])
         self.assertEqual(s["coverage_titles"][0], "Today")
@@ -223,13 +224,13 @@ class TestUnit(unittest.TestCase):
     def test_scheduler_state_shapes_every_section(self):
         home = TMP / "home"; (home / ".openclaw/config").mkdir(parents=True, exist_ok=True)
         (home / ".openclaw/config/scheduler_state.json").write_text(json.dumps(
-            {"tasks": {"daily_essay": {"last_run": 123, "last_exit_code": 0, "consecutive_failures": 2, "run_count": 9}}}))
+            {"tasks": {"journal_research": {"last_run": 123, "last_exit_code": 0, "consecutive_failures": 2, "run_count": 9}}}))
         with patch.object(jp.Path, "home", return_value=home):
             st = jp.get_scheduler_state()
         self.assertEqual(set(st), set(jp.SECTIONS))
-        self.assertEqual(st["essays"], {"task_id": "daily_essay", "last_run_ts": 123, "last_exit_code": 0, "consecutive_failures": 2,
-                                        "run_count": 9, "scheduled_hour": 9, "scheduled_minute": 0})
-        self.assertEqual(st["dreams"]["last_run_ts"], None)
+        self.assertEqual(st["research"], {"task_id": "journal_research", "last_run_ts": 123, "last_exit_code": 0, "consecutive_failures": 2,
+                                          "run_count": 9, "scheduled_hour": 23, "scheduled_minute": 50})
+        self.assertEqual(st["burbank-ops"]["last_run_ts"], None)
 
     def test_schedule_panel_sorted_by_fire_time(self):
         panel = jp.build_schedule_panel()
@@ -268,8 +269,8 @@ class TestIntegration(unittest.TestCase):
 class TestFunctional(unittest.TestCase):
     def test_golden_path_writes_stats_file(self):
         _reset_content()
-        _post("essays", "a.md", _iso(0), "Today", 30)
-        _post("dreams", "d.md", _iso(1), "Dream", 10)
+        _post("research", "a.md", _iso(0), "Today", 30)
+        _post("burbank-ops", "d.md", _iso(1), "Ops", 10)
         runs = [{"databaseId": 7, "displayTitle": "deploy", "conclusion": "success", "createdAt": "x", "url": "u"}]
         home = TMP / "home"; (home / ".openclaw/config").mkdir(parents=True, exist_ok=True)
         (home / ".openclaw/config/scheduler_state.json").write_text(json.dumps({"tasks": {}}))
@@ -281,7 +282,7 @@ class TestFunctional(unittest.TestCase):
             jp.main()
         stats = json.loads(jp.STATS_FILE.read_text())
         self.assertEqual(stats["traffic"]["total_count"], 40)
-        self.assertEqual(stats["section_views"], {"dreams": 5, "essays": 12, "opinions": 0, "after-dark": 0, "tech": 0, "cars": 0, "food": 0, "watches": 0, "research": 0, "digests": 0})
+        self.assertEqual(stats["section_views"], {"burbank-ops": 0, "opinions": 0, "after-dark": 0, "tech": 0, "cars": 0, "food": 0, "watches": 0, "research": 12, "digests": 0, "security": 0})
         self.assertEqual(stats["totals"], {"posts": 2, "posts_this_week": 2, "words_this_week": 40})
         self.assertEqual(stats["recent_deploys"][0]["id"], 7)
         self.assertEqual(stats["referrers"][0]["referrer"], "google.com")

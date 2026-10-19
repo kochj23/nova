@@ -99,43 +99,14 @@ class TestEmailScrubbing:
 
 
 class TestPublishDream:
-    """Tests for dream publishing to Hugo."""
+    """Dreams was retired 2026-10-19: publish_dream refuses and never writes or pushes."""
 
     @patch("nova_publish_journal.git_push")
-    def test_publish_dream_creates_hugo_post(self, mock_git, publish_module, sample_dream_md, tmp_path):
-        content_dir = tmp_path / "content" / "dreams"
-        images_dir = tmp_path / "static" / "images" / "dreams"
-        with patch.object(publish_module, "CONTENT_DREAMS", content_dir):
-            with patch.object(publish_module, "IMAGES_DREAMS", images_dir):
-                result = publish_module.publish_dream(str(sample_dream_md))
-        assert result is True
-        output = content_dir / "2026-05-04.md"
-        assert output.exists()
-        content = output.read_text()
-        assert "archaeology of forgotten signals" in content
-        assert "categories:" in content
-
-    @patch("nova_publish_journal.git_push")
-    def test_dream_strips_meta_lines(self, mock_git, publish_module, sample_dream_md, tmp_path):
-        content_dir = tmp_path / "content" / "dreams"
-        with patch.object(publish_module, "CONTENT_DREAMS", content_dir):
-            with patch.object(publish_module, "IMAGES_DREAMS", tmp_path / "images"):
-                publish_module.publish_dream(str(sample_dream_md))
-        content = (content_dir / "2026-05-04.md").read_text()
-        assert "# Dream Journal" not in content
-        assert "Generated locally" not in content
-
-    @patch("nova_publish_journal.git_push")
-    def test_dream_scrubs_home_paths(self, mock_git, publish_module, tmp_path):
-        dream = tmp_path / "2026-05-04.md"
-        home = str(Path.home())
-        dream.write_text(f'Theme: "test"\nMood: calm\nSaved to {home}/test.png\nContent here.')
-        content_dir = tmp_path / "content" / "dreams"
-        with patch.object(publish_module, "CONTENT_DREAMS", content_dir):
-            with patch.object(publish_module, "IMAGES_DREAMS", tmp_path / "images"):
-                publish_module.publish_dream(str(dream))
-        content = (content_dir / "2026-05-04.md").read_text()
-        assert home not in content
+    def test_publish_dream_refuses_retired_section(self, mock_git, publish_module, sample_dream_md, tmp_path):
+        assert not hasattr(publish_module, "CONTENT_DREAMS")
+        result = publish_module.publish_dream(str(sample_dream_md))
+        assert result is False
+        mock_git.assert_not_called()
 
     def test_publish_dream_handles_missing_file(self, publish_module):
         result = publish_module.publish_dream("/nonexistent/path.md")

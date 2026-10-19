@@ -33,9 +33,20 @@ DSN = _nova_dsn.pg_dsn("nova_ops")
 
 # Sections where a flourish is welcome. Breaking emergency posts are handled by an
 # explicit opt-out at the system_prompt layer (flavor=False), never seasoned.
-FLAVOR_SECTIONS = {"burbank-ops", "operations", "essays", "opinions", "rando", "after-dark",
-                   "meta", "synthesis", "digests", "digest", "tech-today", "tech", "cars", "food", "watches", "dreams",
-                   "art", "research", "security", "local", "news", "weird", "fishbowl"}
+# Live sections only (nova_sections, 2026-10-19); retired names (operations, local, essays,
+# synthesis, tech-today, rando) are canonicalised to their new home in seasoning() first.
+# Dreams is retired outright. "news"/"weird"/"fishbowl"/"digest" are generator profile aliases.
+FLAVOR_SECTIONS = {"burbank-ops", "opinions", "after-dark", "meta", "digests", "digest", "tech",
+                   "cars", "food", "watches", "art", "research", "security", "pilot",
+                   "news", "weird", "fishbowl"}
+
+
+def _canon(section: str) -> str:
+    try:
+        from nova_sections import canon
+        return canon(section)
+    except Exception:  # noqa: BLE001
+        return (section or "").lower()
 
 # ── CONLANGS ──────────────────────────────────────────────────────────────────
 
@@ -465,6 +476,27 @@ def damien_block(topic: str = "", roll=None) -> str:
             "reference and never mention nooses, hanging or suicide.")
 
 
+def safe_seasoning(section: str = "", topic: str = "") -> str:
+    """seasoning() for generators that build their own raw system prompt (no nova_voice.system_prompt).
+    Never raises: flavour is never allowed to break publishing."""
+    try:
+        return seasoning(section, topic)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def epigraph_block(topic: str = "") -> str:
+    """The RESTRAINED seasoning for formal (APA) research papers: no conlang flourishes in the
+    body, just the option of ONE accurate, cited epigraph from the faiths (or a sci-fi creed).
+    Returned as an outline-stage instruction; the paper generator renders the chosen epigraph."""
+    return ("\n\n=== OPTIONAL EPIGRAPH (formal paper: restraint) ===\n" + FAITHS + "\n"
+            "For a formal research paper the borrowed tongues stay OUT of the body. You MAY choose ONE "
+            "epigraph that genuinely illuminates the thesis on \"" + (topic or "this topic")[:120] + "\": a "
+            "scripture line, creed or saying from the list above (or an exact, well-known science-fiction "
+            "line such as the Litany Against Fear, Dune). Quote it EXACTLY, cite it (book chapter:verse or "
+            "work), never invent or paraphrase-as-quote. If nothing truly fits, leave it empty.")
+
+
 def seasoning(section: str = "", topic: str = "") -> str:
     """Prompt block weaving the borrowed tongues into an article's voice.
 
@@ -473,7 +505,7 @@ def seasoning(section: str = "", topic: str = "") -> str:
     and an evacuation notice must never be seasoned. Everything on the allowlist gets
     a topic-matched Ferengi rule plus a rotating sample of the other tongues.
     """
-    if section.lower() not in FLAVOR_SECTIONS:
+    if _canon(section) not in FLAVOR_SECTIONS:
         return ""
 
     block = ["\n=== BORROWED TONGUES (Nova's acquired languages & creeds) ==="]

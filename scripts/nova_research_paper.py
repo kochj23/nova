@@ -358,10 +358,11 @@ Output as JSON with this structure:
     {"title": "Chapter Title", "description": "What this section argues/analyzes", "needs_diagram": true/false, "diagram_type": "flowchart/sequence/class/state/etc"}
   ],
   "key_arguments": ["argument 1", "argument 2", ...],
-  "methodology_note": "Brief note on approach"
+  "methodology_note": "Brief note on approach",
+  "epigraph": {"text": "exact quotation", "attribution": "source, chapter:verse or work"} or null
 }
 
-Generate 4-6 chapters. Be intellectually ambitious. The topic should challenge assumptions."""},
+Generate 4-6 chapters. Be intellectually ambitious. The topic should challenge assumptions.""" + _epigraph_prompt(f"{source} {topic_desc}")},
             {"role": "user", "content": f"""Topic area: {source} ({topic_desc})
 
 Sample memories available (showing depth of knowledge):
@@ -717,6 +718,27 @@ def _generate_image_direct(prompt: str) -> str | None:
 
 # ── Publishing ──────────────────────────────────────────────────────────────────
 
+def _epigraph_prompt(topic: str) -> str:
+    """Restrained seasoning for a formal APA paper: the optional epigraph only (nova_lexicon)."""
+    try:
+        import nova_lexicon
+        return nova_lexicon.epigraph_block(topic)
+    except Exception:  # noqa: BLE001 — flavour never breaks a paper
+        return ""
+
+
+def render_epigraph(outline: dict) -> str:
+    """A cited epigraph block for the top of the paper, or '' when the outline chose none."""
+    ep = outline.get("epigraph") if isinstance(outline, dict) else None
+    if not isinstance(ep, dict):
+        return ""
+    text = str(ep.get("text") or "").strip().strip('"').strip()
+    who = str(ep.get("attribution") or "").strip()
+    if not text or not who:   # an uncited quotation is never printed
+        return ""
+    return f"> *\"{text}\"*\n>\n> — {who}\n\n"
+
+
 def publish_to_hugo(paper: str, outline: dict, cover_image: str | None,
                     chapter_images: list[str | None], paper_num: int) -> bool:
     date = _today_str()
@@ -753,7 +775,7 @@ def publish_to_hugo(paper: str, outline: dict, cover_image: str | None,
         else:
             chapter_image_paths.append(None)
 
-    paper_with_images = paper
+    paper_with_images = render_epigraph(outline) + paper
     chapters = outline.get("chapters", [])
     for i, ch in enumerate(chapters):
         if i < len(chapter_image_paths) and chapter_image_paths[i]:

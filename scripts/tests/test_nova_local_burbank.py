@@ -248,7 +248,7 @@ class TestFunctional(unittest.TestCase):
         self.assertIn('title: "Burbank Does A Thing"', text)
         self.assertIn("WX\nARTICLE BODY", text)
         PUSH.assert_called_once_with("local", "Burbank Does A Thing")
-        self.assertIn("/local/", POST.call_args[0][0])
+        self.assertIn("/burbank-ops/", POST.call_args[0][0])   # Burbank and Ops 2026-10-19
 
 
 class TestFrame(unittest.TestCase):

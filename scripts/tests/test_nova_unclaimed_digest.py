@@ -29,7 +29,7 @@ ud = _load()
 ud.nj = MagicMock()
 ud.nj.today_str.return_value = "2026-01-01"
 ud.nova_voice = MagicMock()
-ud.nova_voice.system_prompt.side_effect = lambda ctx: "SYS:" + ctx
+ud.nova_voice.system_prompt.side_effect = lambda ctx, **k: "SYS:" + ctx
 
 
 class _Cur:

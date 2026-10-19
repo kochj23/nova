@@ -997,14 +997,7 @@ tasks:
     group: llm
     gpu_heavy: true
 
-  journal_dream:
-    script: nova_journal.py
-    args: ["dream"]
-    schedule: cron 0 6 * * 1,3,5
-    timeout: 900
-    overlap: skip
-    group: llm
-    gpu_heavy: true
+  # journal_dream removed 2026-10-19 — Jordan retired the Dreams section
 
   journal_security:
     script: nova_journal_security.py

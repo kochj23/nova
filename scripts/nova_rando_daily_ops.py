@@ -42,7 +42,7 @@ except ImportError:
 # ── Config ────────────────────────────────────────────────────────────────────
 
 HUGO_ROOT = (Path.home() / "nova-journal")
-CONTENT_DIR = HUGO_ROOT / "content" / "operations"
+CONTENT_DIR = HUGO_ROOT / "content" / "burbank-ops"
 IMAGES_DIR = HUGO_ROOT / "static" / "images" / "operations"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "google/gemini-2.5-flash"
@@ -614,7 +614,7 @@ def publish(title: str, body: str, image_path: Path | None, pub_date: str | None
 title: "{title.replace('"', '')}"
 date: {timestamp}
 draft: false
-categories: ["operations"]
+categories: ["burbank-ops"]
 tags: ["ops", "infrastructure", "daily", "hue", "lutron", "snmp", "sarcasm"]
 description: "Nova's daily ops report — what broke, what worked, and what she's complaining about."
 """
@@ -642,7 +642,7 @@ description: "Nova's daily ops report — what broke, what worked, and what she'
     nova_config.post_both(
         f":gear: *Daily Ops Column posted*\n"
         f"  _{title}_\n"
-        f"  https://nova.digitalnoise.net/operations/{date}-{slug}/",
+        f"  https://nova.digitalnoise.net/burbank-ops/{date}-{slug}/",
         slack_channel="#nova-notifications"
     )
 

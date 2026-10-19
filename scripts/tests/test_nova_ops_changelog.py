@@ -198,7 +198,7 @@ class TestFrame(unittest.TestCase):
         code = ("import sys, types\n"
                 "wk = types.ModuleType('nova_weekly_ops_report'); wr = types.ModuleType('nova_weekly_ops_wrap')\n"
                 "sys.modules.update({'nova_weekly_ops_report': wk, 'nova_weekly_ops_wrap': wr})\n"
-                "import nova_ops_changelog as m\nprint(m.URL.startswith('https://nova.digitalnoise.net/operations/'))\n")
+                "import nova_ops_changelog as m\nprint(m.URL.startswith('https://nova.digitalnoise.net/burbank-ops/'))\n")
         r = subprocess.run([sys.executable, "-c", code], cwd=str(SCRIPTS), capture_output=True, text=True, timeout=30,
                            env={**os.environ, "NOVA_TEST_QUIET": "1"})
         self.assertEqual(r.returncode, 0, r.stderr)

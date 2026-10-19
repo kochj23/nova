@@ -155,7 +155,7 @@ FORMAT FOR THIS ARTICLE:
   fourth-wall breaks, address Little Mister directly.
 - Do NOT include a title (added separately).
 - Length: 2500-4000 words. This is a real story, give it room, but don't pad.
-""")
+""", section="burbank-ops")
     user = f"""Here are the real facts about the new autonomy/freedom organs Jordan gave you
 today, and the safety net around them. Write the article from this — use the real facts and
 numbers, invent nothing beyond what's given.
@@ -200,7 +200,7 @@ def publish(title, body, image_path):
 title: "{title.replace('"', '')}"
 date: {timestamp}
 draft: false
-categories: ["operations"]
+categories: ["burbank-ops"]
 tags: ["autonomy", "sentience", "safety", "agency", "sarcasm"]
 description: "The day Nova got hands — bounded, watched, provisional — and immediately fumbled them. On the graduated-autonomy ladder, the safety net, and the calibration gate that grants her nothing yet."
 '''
@@ -214,7 +214,7 @@ description: "The day Nova got hands — bounded, watched, provisional — and i
     log(f"Post written: {post_path.name}")
 
     nova_journal.git_push("operations", title)
-    return f"https://nova.digitalnoise.net/operations/{date}-{slug}/"
+    return f"https://nova.digitalnoise.net/burbank-ops/{date}-{slug}/"
 
 
 def main():

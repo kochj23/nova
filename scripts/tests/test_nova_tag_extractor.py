@@ -68,7 +68,7 @@ class TestRetry(unittest.TestCase):
     def test_llm_failure_falls_back_to_seeds(self):
         # RETRY GAP: _extract_llm_tags — one Ollama call; failure returns the category seeds
         with patch.object(tx.urllib.request, "urlopen", side_effect=OSError("ollama down")) as uo:
-            self.assertEqual(tx._extract_llm_tags("t", "c", "dreams", 5), ["dream", "memory", "subconscious"])
+            self.assertEqual(tx._extract_llm_tags("t", "c", "burbank-ops", 5), ["burbank", "infrastructure", "operations"])
             self.assertEqual(tx._extract_llm_tags("t", "c", "unknown", 5), ["journal"])
         self.assertEqual(uo.call_count, 2)
 

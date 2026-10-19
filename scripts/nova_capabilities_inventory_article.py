@@ -98,7 +98,7 @@ FORMAT FOR THIS ARTICLE:
   fourth-wall breaks, address Little Mister directly.
 - Do NOT include a title (added separately).
 - Length: 3000-5000 words -- this is a genuinely comprehensive inventory, don't rush it.
-""")
+""", section="burbank-ops")
     user = f"""Here's the real research on every tool/feed Nova runs across OSINT, Security, and
 Home Security. Write the comprehensive inventory article from this -- use the real facts,
 don't invent anything beyond what's given.
@@ -141,7 +141,7 @@ def publish(title, body, image_path):
 title: "{title.replace('"', '')}"
 date: {timestamp}
 draft: false
-categories: ["operations"]
+categories: ["burbank-ops"]
 tags: ["osint", "security", "home-security", "sigint", "sarcasm"]
 description: "Nova's comprehensive, brutally honest inventory of every OSINT, security, and home-security tool she actually runs."
 '''
@@ -157,7 +157,7 @@ description: "Nova's comprehensive, brutally honest inventory of every OSINT, se
     # Hardened commit + push (PG advisory lock, rebase-on-reject, retry, alert-on-failure).
     nova_journal.git_push("operations", title)
 
-    return f"https://nova.digitalnoise.net/operations/{date}-{slug}/"
+    return f"https://nova.digitalnoise.net/burbank-ops/{date}-{slug}/"
 
 
 def main():

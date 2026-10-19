@@ -17,7 +17,16 @@ from pathlib import Path
 
 import nova_weekly_ops_report as wk
 
-HUGO_OPS = Path.home() / "nova-journal" / "content" / "operations"
+HUGO_OPS = Path.home() / "nova-journal" / "content" / "burbank-ops"
+
+
+def _season(section: str, topic: str) -> str:
+    """Sci-fi + faith seasoning (nova_lexicon.safe_seasoning); '' if unavailable."""
+    try:
+        import nova_lexicon
+        return nova_lexicon.safe_seasoning(section, topic)
+    except Exception:  # noqa: BLE001 — flavour never breaks publishing
+        return ""
 
 
 def articles_this_week() -> str:
@@ -94,7 +103,7 @@ def main():
         + "\n\nWrite the DETAILED week-in-review now — everything we did."
     )
     wk.log(f"Mega-brief assembled ({len(mega)} chars)")
-    body = wk.call_llm(SYSTEM, mega, max_tokens=6500).strip()
+    body = wk.call_llm(SYSTEM + _season("burbank-ops", "weekly ops wrap week in review"), mega, max_tokens=6500).strip()
     if not body or len(body) < 400:
         wk.log("Generation failed/short — aborting"); return
     wk.log(f"Generated wrap ({len(body)} chars)")

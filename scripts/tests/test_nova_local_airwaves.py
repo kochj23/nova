@@ -28,7 +28,7 @@ SRC = (SCRIPTS / "nova_local_airwaves.py").read_text()
 REAL_NJ = aw.nj
 # every outbound path (LLM, image, publish, git push, Slack) is a mock from load onward
 aw.nj = mock.MagicMock(name="nova_journal")
-aw.nova_voice = types.SimpleNamespace(system_prompt=lambda ctx: "SYS:" + ctx)
+aw.nova_voice = types.SimpleNamespace(system_prompt=lambda ctx, **k: "SYS:" + ctx)
 HIST = types.SimpleNamespace(recent_articles_context=lambda section: "")
 
 

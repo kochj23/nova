@@ -18,9 +18,9 @@ import nova_weekly_ops_wrap as wrap
 
 HUGO = Path.home() / "nova-journal"
 STEM = "2026-07-12-weekly-ops-nova-s-weekly-infrastructure-report-a-familiar-s-l"  # keep to preserve URL
-MD = HUGO / "content" / "operations" / f"{STEM}.md"
+MD = HUGO / "content" / "burbank-ops" / f"{STEM}.md"
 IMG = HUGO / "static" / "images" / "operations" / f"{STEM}.webp"
-URL = f"https://nova.digitalnoise.net/operations/{STEM}/"
+URL = f"https://nova.digitalnoise.net/burbank-ops/{STEM}/"
 
 
 def airwave_timeline() -> str:
@@ -167,10 +167,11 @@ def main():
     fm = (
         f'---\ntitle: "{title.replace(chr(34), "")}"\n'
         f'date: 2026-07-12T16:30:00-07:00\ndraft: false\n'
-        f'categories: ["operations"]\n'
+        f'categories: ["burbank-ops"]\n'
         f'tags: ["changelog", "release-notes", "infrastructure", "cluster", "migration", "scanners", "airwaves", "shipped"]\n'
         f'description: "What shipped in nova-land this week: the whole cluster + the DB-primary migration off the Mac Studio, the new scanning devices and internet airwave feeds, plus what changed and what got fixed."\n'
-        f'cover:\n  image: "/images/operations/{STEM}.webp"\n  alt: "{title.replace(chr(34), "")}"\n  relative: false\n---\n\n'
+        f'cover:\n  image: "/images/operations/{STEM}.webp"\n  alt: "{title.replace(chr(34), "")}"\n  relative: false\n'
+        f'aliases: ["/operations/{STEM}/"]\n---\n\n'   # old /operations/ URL keeps working
     )
     MD.write_text(fm + body)
     wk.log(f"[changelog] rewrote {MD.name}")

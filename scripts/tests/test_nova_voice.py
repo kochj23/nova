@@ -98,7 +98,7 @@ class TestIntegration(unittest.TestCase):
         lex = types.ModuleType("nova_lexicon"); lex.seasoning = MagicMock(return_value="\n[seasoned]")
         with _offline(), patch.dict(sys.modules, {"nova_lexicon": lex}):
             p = nv.system_prompt(nv.CONTEXT_JOURNAL_ESSAY, topic="memory", flavor=True)
-        lex.seasoning.assert_called_once_with("essays", "memory")
+        lex.seasoning.assert_called_once_with("research", "memory")   # essays merged into research 2026-10-19
         self.assertIn("[seasoned]", p)
 
     def test_flavor_false_skips_seasoning(self):

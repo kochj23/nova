@@ -100,7 +100,7 @@ def main():
         + (f" Not yet wired up (mention once, lightly, as 'coming soon'): {', '.join(pending)}.\n" if pending else "\n")
         + "500-900 words, markdown, use the beat names as section headers, no H1 title (added separately).\n\n"
         "OUTPUT EXACTLY THIS SHAPE:\nTITLE: <one punchy title, no quotes>\n<blank line>\n<the body>")
-    system = nova_voice.system_prompt(ctx)
+    system = nova_voice.system_prompt(ctx, section="burbank-ops")
     user = (f"--- LAST 24H ON THE AIRWAVES (tally: {tally}) ---\n\n"
             + "\n\n".join(blocks) + "\n\nWrite today's airwaves roundup.")
     import nova_article_history

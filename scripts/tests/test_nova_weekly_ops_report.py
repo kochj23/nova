@@ -122,7 +122,7 @@ class TestFunctional(unittest.TestCase):
             self.assertIn("ops-report", fm)
             self.assertNotIn("git push", str(run.call_args_list))  # commit returned rc=1 -> never pushed
             notify.assert_called_once()
-            self.assertIn("digitalnoise.net/operations/", url)
+            self.assertIn("digitalnoise.net/burbank-ops/", url)
 
     def test_main_golden_path(self):
         with mock.patch.object(wo, "gather", return_value={}), \

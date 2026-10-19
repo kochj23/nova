@@ -286,7 +286,7 @@ def publish_hugo(title: str, body: str, tags: list[str], description: str,
 title: "{display_title}"
 date: {timestamp}
 draft: false
-categories: ["operations"]
+categories: ["burbank-ops"]
 tags: {tags_yaml}
 description: "{description.replace('"', "'")}"
 '''

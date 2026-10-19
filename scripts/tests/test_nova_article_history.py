@@ -183,7 +183,8 @@ class TestIntegration(unittest.TestCase):
 class TestFunctional(unittest.TestCase):
     def test_cli_prints_context_for_a_populated_section(self):
         with tempfile.TemporaryDirectory() as tmp:
-            d = Path(tmp) / "nova-journal" / "content" / "operations"; d.mkdir(parents=True)
+            # "operations" is a retired name: it reads the merged burbank-ops folder (2026-10-19)
+            d = Path(tmp) / "nova-journal" / "content" / "burbank-ops"; d.mkdir(parents=True)
             name, text = _article(_days_ago(2), "Golden path"); (d / name).write_text(text)
             r = subprocess.run([sys.executable, str(SCRIPT), "operations"], capture_output=True, text=True, timeout=30,
                                env={**os.environ, "HOME": tmp, "NOVA_TEST_QUIET": "1"})

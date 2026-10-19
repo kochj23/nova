@@ -41,8 +41,6 @@ CONTENT_DIR = JOURNAL_DIR / "content"
 STATIC_DIR = JOURNAL_DIR / "static/images"
 
 SECTIONS = {
-    "dreams": "dreamlike surreal digital painting, abstract, moody, ethereal",
-    "essays": "scholarly illustration, clean composition, academic",
     "opinions": "editorial cartoon style, satirical, bold colors",
     "digests": "collage data visualization, editorial layout, modern",
     "tech": "futuristic technology, circuits, neon, cyberpunk",
@@ -50,9 +48,12 @@ SECTIONS = {
     "food": "barbecue smokers, kitchens, plated dishes and cooking fires",
     "research": "academic research illustration, technical, detailed",
     "after-dark": "late night talk show set, purple blue neon, moody spotlight",
-    "operations": "cyberpunk operations center, server racks, holographic displays, dark moody",
-    "local": "Los Angeles cityscape, Burbank suburban, editorial photography",
-    "synthesis": "abstract neural network, data flow, interconnected nodes, glowing",
+    # Burbank and Ops = Operations + Local merged 2026-10-19 (Research absorbed Essays + Synthesis;
+    # Dreams retired). Older covers keep their static/images/<oldsection>/ paths.
+    "burbank-ops": "cyberpunk operations center over a Burbank cityscape, server racks, editorial, dark moody",
+    "watches": "macro watch photography, dials and movements, warm studio light",
+    "security": "dark network operations map, shields and signal traces, cinematic",
+    "pilot": "television studio set, film slate, cinematic lighting",
 }
 
 LOG_FILE = "/tmp/nova-fix-images.log"

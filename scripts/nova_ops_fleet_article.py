@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One-off Operations article: the fleet-optimization campaign — each node, what it is, what we did
 to it, and the active-active plan. Reuses the standard ops machinery (nova_voice + call_llm +
-generate_image + publish to ~/nova-journal/content/operations). Nova's voice, published live.
+generate_image + publish to ~/nova-journal/content/burbank-ops via nova_rando_daily_ops.publish). Nova's voice, published live.
 Touches only nova-related space (the journal repo + Nova's workspace)."""
 import sys
 from pathlib import Path

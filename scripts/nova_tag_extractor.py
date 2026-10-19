@@ -17,8 +17,10 @@ MODEL = "qwen3-coder:30b"
 
 # Category-aware seed tags — ensure category-specific vocab always appears
 CATEGORY_SEEDS = {
-    "dreams":    ["dream", "memory", "subconscious"],
-    "essays":    ["analysis", "culture", "society"],
+    "burbank-ops": ["burbank", "infrastructure", "operations"],
+    "watches":   ["watches", "horology"],
+    "security":  ["security", "cyber", "osint"],
+    "pilot":     ["screenplay", "tv"],
     "opinions":  ["tech", "culture", "commentary"],
     "tech": ["technology", "AI", "infrastructure"],
     "cars": ["cars", "automotive"],
@@ -27,7 +29,6 @@ CATEGORY_SEEDS = {
     "after-dark": ["history", "comedy", "monologue"],
     "art":       ["art", "generative", "visual"],
     "digests":   ["weekly", "reflection", "digest"],
-    "synthesis": ["synthesis", "weekly", "reflection"],
     "meta":      ["meta-analysis", "self-reflection", "patterns"],
 }
 
@@ -51,6 +52,11 @@ def extract_tags(title: str, content: str, category: str = "", n: int = 5) -> li
     Falls back to LLM if content is complex.
     Returns lowercase, no-stopword tags.
     """
+    try:   # retired section names (essays, operations...) seed as their new home
+        from nova_sections import canon
+        category = canon(category) if category else category
+    except Exception:  # noqa: BLE001
+        pass
     tags = _extract_keyword_tags(title, content, category, n)
     if len(tags) >= 3:
         return tags[:n]

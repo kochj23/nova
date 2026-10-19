@@ -47,8 +47,8 @@ def tearDownModule():
         _PATCHES.pop().stop()
 
 
-POST = '---\ntitle: "Glass Ocean"\ncategories: ["dreams"]\ntags: ["surreal"]\n---\nA dream about glass.\n'
-GOOD = '---\ntitle: "Ok"\ncategories: ["essays"]\ntags: ["memory systems", "vector search"]\n---\nBody.\n'
+POST = '---\ntitle: "Glass Ocean"\ncategories: ["research"]\ntags: ["surreal"]\n---\nA dream about glass.\n'
+GOOD = '---\ntitle: "Ok"\ncategories: ["opinions"]\ntags: ["memory systems", "vector search"]\n---\nBody.\n'
 NOTAGS = '---\ntitle: X\ncategories: ["art"]\n---\nBody text.\n'
 
 
@@ -75,9 +75,9 @@ class TestSecurity(unittest.TestCase):
 
     def test_tags_are_json_escaped(self):
         with _Site() as s:
-            f = s.add("dreams", "a.md", POST)
+            f = s.add("research", "a.md", POST)
             with patch.object(bt, "extract_tags", return_value=['quote " here', "x\ny"]):
-                self.assertTrue(bt.process_file(f, "dreams"))
+                self.assertTrue(bt.process_file(f, "research"))
             line = [ln for ln in f.read_text().splitlines() if ln.startswith("tags:")][0]
         self.assertEqual(line, 'tags: ["quote \\" here", "x\\ny"]')   # one line, quotes/newlines escaped
 
@@ -85,7 +85,7 @@ class TestSecurity(unittest.TestCase):
         with _Site() as s, patch.object(bt, "extract_tags", return_value=["a b", "c d"]) as et, \
                 redirect_stdout(io.StringIO()):
             s.add("private", "p.md", POST)
-            s.add("dreams", "_index.md", POST)
+            s.add("research", "_index.md", POST)
             bt.main()
         et.assert_not_called()
 
@@ -103,7 +103,7 @@ class TestRetry(unittest.TestCase):
         # RETRY GAP: process_file()/extract_tags — one attempt per post; an error is logged and the loop continues
         with _Site() as s, patch.object(bt, "extract_tags", side_effect=[RuntimeError("ollama down"), ["new tag", "x y"]]) as et, \
                 redirect_stdout(io.StringIO()) as out:
-            s.add("dreams", "a.md", POST); s.add("dreams", "b.md", POST)
+            s.add("research", "a.md", POST); s.add("research", "b.md", POST)
             bt.main()
         self.assertEqual(et.call_count, 2)
         self.assertIn("1 updated, 0 skipped, 1 errors", out.getvalue())
@@ -118,14 +118,14 @@ class TestUnit(unittest.TestCase):
 
     def test_good_tags_untouched(self):
         with _Site() as s:
-            f = s.add("essays", "g.md", GOOD)
-            self.assertFalse(bt.process_file(f, "essays"))
+            f = s.add("opinions", "g.md", GOOD)
+            self.assertFalse(bt.process_file(f, "opinions"))
             self.assertEqual(f.read_text(), GOOD)
 
     def test_empty_extraction_leaves_file(self):
         with _Site() as s, patch.object(bt, "extract_tags", return_value=[]):
-            f = s.add("dreams", "a.md", POST)
-            self.assertFalse(bt.process_file(f, "dreams"))
+            f = s.add("research", "a.md", POST)
+            self.assertFalse(bt.process_file(f, "research"))
             self.assertEqual(f.read_text(), POST)
 
 
@@ -135,9 +135,9 @@ class TestIntegration(unittest.TestCase):
         self.assertIn("from nova_tag_extractor import extract_tags", SRC)
         self.assertTrue(callable(nova_tag_extractor.extract_tags))
         with _Site() as s, patch.object(bt, "extract_tags", return_value=["a b", "c d"]) as et:
-            bt.process_file(s.add("dreams", "a.md", POST), "dreams")
+            bt.process_file(s.add("research", "a.md", POST), "research")
         title, body, cat = et.call_args.args
-        self.assertEqual((title, cat, et.call_args.kwargs["n"]), ("Glass Ocean", "dreams", 5))
+        self.assertEqual((title, cat, et.call_args.kwargs["n"]), ("Glass Ocean", "research", 5))
         self.assertEqual(body, "A dream about glass.")
 
     def test_inserts_tags_after_categories_when_missing(self):
@@ -151,8 +151,8 @@ class TestFunctional(unittest.TestCase):
     def test_golden_path_main(self):
         with _Site() as s, patch.object(bt, "extract_tags", return_value=["glass ocean", "dream logic"]), \
                 redirect_stdout(io.StringIO()) as out:
-            a = s.add("dreams", "a.md", POST)
-            s.add("essays", "g.md", GOOD)
+            a = s.add("research", "a.md", POST)
+            s.add("opinions", "g.md", GOOD)
             bt.main()
             self.assertIn('tags: ["glass ocean", "dream logic"]', a.read_text())
         self.assertIn("1 updated, 1 skipped, 0 errors", out.getvalue())

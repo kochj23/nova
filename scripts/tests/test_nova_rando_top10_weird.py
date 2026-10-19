@@ -183,7 +183,7 @@ class TestFunctional(_Env):
         self.assertEqual(len(posts), 1)
         self.assertIn('title: "The Goose Knows"', posts[0].read_text())
         self.m["push"].assert_called_once_with("operations", "The Goose Knows")
-        self.assertIn("/operations/", rt.nova_config.post_both.call_args[0][0])
+        self.assertIn("/burbank-ops/", rt.nova_config.post_both.call_args[0][0])
 
     def test_quiet_period_and_grounding_guard_skip(self):
         self._main(total=10)

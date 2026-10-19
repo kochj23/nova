@@ -80,7 +80,7 @@ def main():
         ctx = ctx + "\n\n" + KNOWN_FACTS
     except ImportError:
         pass
-    system = nova_voice.system_prompt(ctx)
+    system = nova_voice.system_prompt(ctx, section="watches")
     user = (f"--- MAIN CAST DOSSIERS ---\n{cast_block}\n\n"
             f"--- NOTABLE GUEST DOSSIERS ---\n{guest_block}\n\n"
             f"--- THIN-FILE ENTRIES (handle per the voice-calibration instructions above) ---\n{thin_block}\n\n"

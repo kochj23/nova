@@ -53,7 +53,7 @@ def main():
         "Be honest when a revision was forced by being plainly wrong. Close with one line "
         "on why a mind that can't change isn't a mind. 600-1000 words, markdown, no H1.\n\n"
         "OUTPUT EXACTLY THIS SHAPE:\nTITLE: <one punchy title, no quotes>\n<blank line>\n<the body>")
-    system = nova_voice.system_prompt(ctx)
+    system = nova_voice.system_prompt(ctx, section="burbank-ops")
     user = (f"--- REVISED THIS MONTH ---\n{rev_block}\n\n"
             f"--- NEWLY FORMED ---\n{new_block}\n\nWrite the ledger.")
     raw = nj.call_openrouter(system, user, max_tokens=2600, temperature=0.8)

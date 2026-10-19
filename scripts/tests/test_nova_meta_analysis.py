@@ -102,14 +102,14 @@ class TestSecurity(unittest.TestCase):
 
     def test_post_body_excerpt_bounded(self):
         _fresh_site()
-        _post("essays", 1, body="Z" * 5000)
+        _post("research", 1, body="Z" * 5000)
         posts = ma._collect_month_posts()
         self.assertEqual(len(posts[0]["body"]), 800)
 
     def test_underscore_files_and_old_posts_skipped(self):
         _fresh_site()
-        _post("essays", 1); _post("essays", 2, days_ago=60)
-        (ma.HUGO_ROOT / "content/essays/_index.md").write_text("---\ndate: 2099-01-01\n---\n")
+        _post("research", 1); _post("research", 2, days_ago=60)
+        (ma.HUGO_ROOT / "content/research/_index.md").write_text("---\ndate: 2099-01-01\n---\n")
         self.assertEqual([p["slug"] for p in ma._collect_month_posts()], ["post-1"])
 
 
@@ -213,7 +213,7 @@ class TestFunctional(unittest.TestCase):
     def test_main_golden_path_posts_and_records_state(self):
         _fresh_site()
         for i in range(6):
-            _post(("dreams", "essays")[i % 2], i)
+            _post(("burbank-ops", "research")[i % 2], i)
         ma.nova_config.post_both.reset_mock()
         with patch.object(ma, "_should_run", return_value=True), \
              patch.object(ma, "_generate_meta_analysis", return_value="Water everywhere."), redirect_stdout(io.StringIO()):

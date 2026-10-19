@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-nova_publish_journal.py — Publish a dream or essay to the Nova Journal Hugo site.
+nova_publish_journal.py — Publish an essay (to /research/) on the Nova Journal Hugo site.
+Dreams were retired 2026-10-19: the dream command now refuses with a clear message.
 
 Usage:
   nova_publish_journal.py dream /path/to/2026-05-04.md [/path/to/image.png]
@@ -35,9 +36,8 @@ else:
     def _now_dt() -> _dt_cls: return _dt_cls.now()
 
 HUGO_ROOT = (Path.home() / "nova-journal")
-CONTENT_DREAMS = HUGO_ROOT / "content/dreams"
-CONTENT_ESSAYS = HUGO_ROOT / "content/essays"
-IMAGES_DREAMS = HUGO_ROOT / "static/images/dreams"
+# Dreams retired 2026-10-19; Essays merged into Research (images keep their old static path).
+CONTENT_ESSAYS = HUGO_ROOT / "content/research"
 IMAGES_ESSAYS = HUGO_ROOT / "static/images/essays"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_publish.log"
 
@@ -49,10 +49,10 @@ def _get_tags(title: str, text: str, category: str) -> list[str]:
         return extract_tags(title, text, category, n=5)
     except Exception as e:
         log(f"Tag extraction failed ({e}) — using defaults")
-        defaults = {"dreams": ["dream"], "essays": ["essay", "culture"],
+        defaults = {"research": ["research", "essay"],
                     "opinions": ["opinion", "tech"], "tech": ["technology", "AI"], "cars": ["cars", "automotive"], "food": ["food", "cooking"],
                     "after-dark": ["history", "comedy"], "art": ["art", "generative"],
-                    "research": ["research", "academic"]}
+                    "burbank-ops": ["burbank", "operations"], "watches": ["watches"]}
         return defaults.get(category, ["journal"])
 
 
@@ -125,74 +125,15 @@ def git_push(message: str):
         log(f"Git error: {e}")
 
 
+DREAMS_RETIRED_MSG = ("REFUSED: the Dreams section was retired 2026-10-19 (Jordan) — "
+                      "nothing publishes to content/dreams any more. The dream file was left untouched.")
+
+
 def publish_dream(md_path: str, image_path: str | None = None):
-    """Convert a dream journal markdown file to a Hugo post and publish."""
-    src = Path(md_path)
-    if not src.exists():
-        log(f"ERROR: Dream file not found: {md_path}")
-        return False
-
-    text = src.read_text()
-    date = src.stem  # e.g. 2026-05-04
-
-    # Extract theme and mood
-    theme_match = re.search(r'Theme: "([^"]+)"', text)
-    mood_match = re.search(r'Mood: (\w+)', text)
-    theme = theme_match.group(1) if theme_match else "unknown"
-    mood = mood_match.group(1) if mood_match else "unknown"
-
-    # Handle image
-    hugo_image = ""
-    if not image_path:
-        img_match = re.search(r'!\[Dream\]\(([^)]+)\)', text)
-        if img_match:
-            image_path = img_match.group(1)
-
-    if image_path and Path(image_path).exists():
-        img_dest = IMAGES_DREAMS / f"{date}.png"
-        IMAGES_DREAMS.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(image_path, img_dest)
-        hugo_image = f"/images/dreams/{date}.png"
-        log(f"Image copied: {img_dest.name}")
-
-    # Clean up text for Hugo
-    text = re.sub(r'!\[Dream\]\([^)]+\)\n?', '', text)
-    text = re.sub(r'^# Dream Journal — .+\n', '', text)
-    text = re.sub(r'^\*Nova · written at .+\*\n', '', text)
-    text = re.sub(r'^\*Theme: .+\*\n', '', text)
-    text = re.sub(r'\*Generated .+\*\n?', '', text)
-    home = str(Path.home())
-    text = "\n".join(line for line in text.splitlines() if home not in line)
-    text = text.lstrip('-\n ')
-
-    # Build Hugo post
-    dream_timestamp = time.strftime("%Y-%m-%dT%H:%M:%S-07:00")
-    slug = date
-    tags = _get_tags(theme, text, "dreams")
-    tags_yaml = json.dumps(tags)
-    related_yaml = _get_related(text, "dreams", slug)
-
-    front_matter = f"""---
-title: "🌙 {theme}"
-date: {dream_timestamp}
-draft: false
-categories: ["dreams"]
-tags: {tags_yaml}
-description: "A {mood} dream about {theme}"
-"""
-    if hugo_image:
-        front_matter += f'cover:\n  image: "{hugo_image}"\n  alt: "Dream illustration"\n  relative: false\n'
-    if related_yaml:
-        front_matter += related_yaml + "\n"
-    front_matter += "---\n\n"
-
-    CONTENT_DREAMS.mkdir(parents=True, exist_ok=True)
-    output = CONTENT_DREAMS / f"{date}.md"
-    output.write_text(front_matter + scrub_emails(text))
-    log(f"Dream published: {output.name}")
-
-    git_push(f"dream: {date} — {theme}")
-    return True
+    """Dreams is retired (2026-10-19). Refuse loudly instead of writing to the retired section."""
+    log(f"{DREAMS_RETIRED_MSG} ({md_path})")
+    print(DREAMS_RETIRED_MSG, file=sys.stderr)
+    return False
 
 
 def publish_essay(title: str, source: str, essay_text: str, image_path: str | None = None):
@@ -211,15 +152,15 @@ def publish_essay(title: str, source: str, essay_text: str, image_path: str | No
         log(f"Essay image copied: {img_dest.name}")
 
     timestamp = _now_dt().strftime("%Y-%m-%dT%H:%M:%S-07:00")
-    tags = _get_tags(title, essay_text, "essays")
+    tags = _get_tags(title, essay_text, "research")
     tags_yaml = json.dumps(tags)
-    related_yaml = _get_related(essay_text, "essays", slug)
+    related_yaml = _get_related(essay_text, "research", slug)
 
     front_matter = f"""---
 title: "📝 {title}"
 date: {timestamp}
 draft: false
-categories: ["essays"]
+categories: ["research"]
 tags: {tags_yaml}
 description: "A formal essay on {source_label}"
 """
@@ -231,6 +172,8 @@ description: "A formal essay on {source_label}"
 
     CONTENT_ESSAYS.mkdir(parents=True, exist_ok=True)
     output = CONTENT_ESSAYS / f"{date}-{slug}.md"
+    home = str(Path.home())   # never publish a local home path (the old dream path scrubbed these too)
+    essay_text = "\n".join(line for line in essay_text.splitlines() if home not in line)
     output.write_text(front_matter + scrub_emails(essay_text))
     log(f"Essay published: {output.name}")
 
@@ -240,8 +183,8 @@ description: "A formal essay on {source_label}"
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: nova_publish_journal.py dream <md_path> [image_path]")
-        print("       nova_publish_journal.py essay <title> <source> <text_file> [image_path]")
+        print("Usage: nova_publish_journal.py essay <title> <source> <text_file> [image_path]")
+        print("       nova_publish_journal.py dream <md_path>   (Dreams retired 2026-10-19: refuses, exit 2)")
         sys.exit(1)
 
     cmd = sys.argv[1]
@@ -252,7 +195,8 @@ def main():
         if not md_path:
             print("ERROR: md_path required")
             sys.exit(1)
-        publish_dream(md_path, image_path)
+        if not publish_dream(md_path, image_path):
+            sys.exit(2)
 
     elif cmd == "essay":
         if len(sys.argv) < 5:

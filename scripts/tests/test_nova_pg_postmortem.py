@@ -157,7 +157,7 @@ class TestFunctional(unittest.TestCase):
         with patch.object(pm, "get_openrouter_key", return_value="k"), patch("urllib.request.urlopen", net), \
              redirect_stdout(io.StringIO()) as out:
             pm.main()
-        self.assertIn("Done: https://nova.digitalnoise.net/operations/", out.getvalue())
+        self.assertIn("Done: https://nova.digitalnoise.net/burbank-ops/", out.getvalue())
         post = next(pm.CONTENT_DIR.glob("*-writing-into-the-void.md"))
         self.assertTrue(post.read_text().endswith("The pollers kept writing."))
         self.assertIn("Writing Into The Void", pm.notify.call_args.kwargs["body"])

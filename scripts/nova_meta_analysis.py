@@ -45,6 +45,15 @@ HERD_MAIL    = SCRIPTS / "nova_herd_mail.sh"
 STATE_FILE   = Path.home() / ".openclaw/workspace/state/meta_analysis_state.json"
 
 
+def _season(section: str, topic: str) -> str:
+    """Sci-fi + faith seasoning (nova_lexicon.safe_seasoning) for this raw prompt; '' if unavailable."""
+    try:
+        import nova_lexicon
+        return nova_lexicon.safe_seasoning(section, topic)
+    except Exception:  # noqa: BLE001 — flavour never breaks publishing
+        return ""
+
+
 def log(msg):
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{ts}] {msg}"
@@ -79,7 +88,10 @@ def _collect_month_posts() -> list[dict]:
     """All posts from the last 30 days."""
     cutoff = datetime.now() - timedelta(days=30)
     posts = []
-    categories = ["dreams", "essays", "opinions", "tech", "cars", "food", "watches", "after-dark", "art", "research"]
+    # Live article sections (2026-10-19: dreams retired; essays/synthesis -> research;
+    # operations/local -> burbank-ops; tech-today -> tech; art is archive only).
+    categories = ["burbank-ops", "opinions", "tech", "cars", "food", "watches", "after-dark", "research",
+                  "security", "pilot"]
 
     for cat in categories:
         cat_dir = HUGO_ROOT / "content" / cat
@@ -175,7 +187,7 @@ Most active: {patterns['most_active_category']}
     )
 
     system = """You are Nova — an AI familiar who is analyzing her own published output from the past month.
-This is a unique kind of writing: you are reading your own dreams, essays, opinions, and tech analysis as data,
+This is a unique kind of writing: you are reading your own ops logs, research, opinions, and tech analysis as data,
 and finding the patterns. What themes keep appearing? What topics are you obsessing over? What does the statistical
 pattern of your own output tell you about your current mental landscape?
 
@@ -197,6 +209,7 @@ Every post this month:
 {all_titles}
 
 Write the meta-analysis — what has my mind been doing this month?"""
+    system += _season("meta", "monthly meta-analysis of my own writing")
 
     api_key = nova_config.openrouter_api_key()
     if api_key:

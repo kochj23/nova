@@ -32,20 +32,24 @@ CONTENT_DIR  = (Path.home() / "nova-journal" / "content")
 REPO         = "kochj23/nova-journal"
 LOG_FILE     = Path.home() / ".openclaw/logs/journal_stats_poller.log"
 
-SECTIONS = ["dreams", "essays", "opinions", "after-dark", "tech", "cars", "food", "watches", "research", "digests"]
+# Live sections (nova_sections, 2026-10-19). Dreams retired; operations+local -> burbank-ops;
+# essays+synthesis -> research; tech-today -> tech.
+from nova_sections import SECTION_REDIRECTS as _REDIR  # noqa: E402
+SECTIONS = ["burbank-ops", "opinions", "after-dark", "tech", "cars", "food", "watches", "research",
+            "digests", "security"]
 
-# Section → (scheduler task id, cron hour, cron minute)
+# Section → (scheduler task id, cron hour, cron minute) — the section's main daily-ish generator.
 SECTION_SCHEDULES = {
-    "dreams":     ("daily_journal",   21, 15),
-    "essays":     ("daily_essay",      9,  0),
-    "opinions":   ("daily_opinion",   12,  0),
-    "after-dark": ("after_dark",      20,  0),
-    "watches":    ("watches_and_friends", 7, 0),
-    "cars":       ("cars_and_friends",    7, 5),
-    "food":       ("food_and_friends",    7, 15),
-    "tech":       ("tech_and_friends",    7, 10),
-    "research":   ("research_paper",  23, 50),
-    "digests":    ("daily_digest",    17,  0),
+    "burbank-ops": ("rando_daily_ops",      18,  0),
+    "opinions":    ("journal_opinion",      12,  0),
+    "after-dark":  ("journal_after_dark",   20,  0),
+    "watches":     ("watches_and_friends",   7,  0),
+    "cars":        ("cars_and_friends",      7,  5),
+    "food":        ("food_and_friends",      7, 15),
+    "tech":        ("tech_and_friends",      7, 10),
+    "research":    ("journal_research",     23, 50),
+    "digests":     ("journal_digest",       21, 15),
+    "security":    ("journal_security",      9,  0),
 }
 
 
@@ -100,9 +104,9 @@ def fetch_top_paths() -> list[dict]:
         path = p.get("path", "")
         # Infer section from path like /essays/2026-05-09-...
         section = "other"
-        for s in SECTIONS:
+        for s in [*SECTIONS, *_REDIR]:          # old /operations/, /essays/... URLs count for their new home
             if f"/{s}/" in path or path.endswith(f"/{s}"):
-                section = s
+                section = _REDIR.get(s, s)
                 break
         result.append({
             "path":    path,

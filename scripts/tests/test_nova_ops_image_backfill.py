@@ -42,7 +42,7 @@ def _stubbed(mods):
 def _home(articles):
     home = Path(tempfile.mkdtemp(prefix="ops_backfill_"))
     (home / ".openclaw/logs").mkdir(parents=True)
-    content = home / "nova-journal/content/operations"
+    content = home / "nova-journal/content/burbank-ops"
     content.mkdir(parents=True)
     for name, text in articles.items():
         (content / name).write_text(text)
@@ -134,7 +134,7 @@ class TestIntegration(unittest.TestCase):
     def test_cover_frontmatter_inserted(self):
         home = _home({"a.md": NO_COVER})
         _run(home)
-        text = (home / "nova-journal/content/operations/a.md").read_text()
+        text = (home / "nova-journal/content/burbank-ops/a.md").read_text()
         self.assertIn('cover:\n  image: "/images/operations/a.webp"\n  alt: "Pager Storm"\n  relative: false\n---', text)
         self.assertTrue(text.endswith("body\n"))
 
