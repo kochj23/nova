@@ -56,7 +56,7 @@ CHANNELS = [
     {"key": "mortysdiner", "url": "https://www.youtube.com/@MortysDiner/streams", "vector": "fishbowl"},
     {"key": "theoriginaloc", "url": "https://www.youtube.com/@theoriginaloc/streams", "vector": "fishbowl"},
     {"key": "tpgentleman", "url": "https://www.youtube.com/@Thetimepiecegentleman/videos", "vector": "fishbowl"},
-    {"key": "romansharf", "url": "https://www.youtube.com/@RomanSharf/streams", "vector": "horology"},
+    {"key": "romansharf", "url": "https://www.youtube.com/@RomanSharf/streams", "vector": "horology", "name": "Roman Sharf"},
     {"key": "greymarketpod", "url": "https://www.youtube.com/@greymarketpod/videos", "vector": "horology"},
     {"key": "cramareels", "url": "https://www.youtube.com/@TheCramaReels/streams", "vector": "fishbowl"},
     # ---- Watches and Friends (Jordan 2026-10-06): watch-news channels -> horology; Nico -> fishbowl ----
@@ -85,6 +85,11 @@ CHANNELS = [
     {"key": "menta", "url": "https://www.youtube.com/@mentawatches/videos", "vector": "horology", "name": "Menta Watches"},
     {"key": "officialwatches", "url": "https://www.youtube.com/@officialwatches1/videos", "vector": "horology", "name": "Official Watches"},
     {"key": "burdeens", "url": "https://www.youtube.com/@BurdeensJewelry/videos", "vector": "horology", "name": "Burdeens Jewelry"},
+    {"key": "bhindi", "url": "https://www.youtube.com/@bhindijewellers6739/videos", "vector": "horology", "name": "Bhindi Jewellers"},  # Jordan 2026-10-19
+    {"key": "chisholmhunter", "url": "https://www.youtube.com/@ChisholmHunterOfficial/videos", "vector": "horology", "name": "Chisholm Hunter"},  # Jordan 2026-10-19
+    {"key": "calibre", "url": "https://www.youtube.com/@CalibreSignature/videos", "vector": "horology", "name": "Calibre"},  # Jordan 2026-10-19
+    {"key": "thetimeteller", "url": "https://www.youtube.com/@thetimeteller/videos", "vector": "horology", "name": "The Time Teller"},  # Jordan 2026-10-19
+    {"key": "cultivatedcollector", "url": "https://www.youtube.com/@thecultivatedcollector/videos", "vector": "horology", "name": "The Cultivated Collector"},  # Jordan 2026-10-19
     {"key": "nicoleonard", "url": "https://www.youtube.com/@NicoLeonard/videos", "vector": "fishbowl", "name": "Nico Leonard"},
     {"key": "nicoleonard_mk2", "url": "https://www.youtube.com/@NicoLeonardMK2/videos", "vector": "fishbowl", "name": "Nico Leonard MK2"},
 ]

@@ -135,6 +135,7 @@ FOOD_EXCLUDED = ("Bacon 28", "fonki cheff", "The Stock Pot")
 # Jordan 2026-10-19: eight more sections. Names are exact subscription names (service_config
 # yt_subs_audio/subscriptions); every list is disjoint from every other (a test enforces it).
 MUSIC_CHANNELS = (
+    "The Punk Rock MBA",  # Jordan 2026-10-19
     "Rick Beato", "Rick Beato 2", "Adam Neely", "12tone", "Trash Theory",
     "Amplified - Classic Rock & Music History", "Rock N' Rewind", "Discogs", "KEXP", "UKF Drum & Bass",
     "DnB Allstars", "Drum&BassArena", "RELEVANT DNB", "DnB Portal", "Nia Archives", "Boiler Room", "HÖR BERLIN",
