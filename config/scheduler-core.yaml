@@ -1087,6 +1087,13 @@ tasks:
     timeout: 3600
     overlap: skip
 
+  food_and_friends:                # Jordan 2026-10-19: food channels + recipe memories -> /food/ ("Recipe Recommendation" on top)
+    script: nova_friends.py
+    args: ["--subject", "food", "--days", "1"]
+    schedule: cron 15 7 * * *
+    timeout: 3600
+    overlap: skip
+
   opinion_fishbowl:                  # Nova's daily OPINION column on Watch Fishbowl updates -> /opinions
     script: nova_opinion_fishbowl.py
     schedule: cron 0 6 * * *         # daily 6:00 AM — dated opinion piece, operations voice
