@@ -116,7 +116,7 @@ class TestRetry(unittest.TestCase):
         # RETRY GAP: git fetch — one attempt; on failure the check judges the last-fetched origin/main
         cur = _Cur()
         with patch.object(pc, "git", return_value=subprocess.CompletedProcess([], 128, "", "network down")), \
-             patch.object(pc, "_pg", return_value=_Conn(cur)), patch.object(pc, "check", return_value=[]), _quiet() as out:
+             patch.object(pc, "_pg", return_value=_Conn(cur)), patch.object(pc, "check_hosts", return_value={}), patch.object(pc, "check", return_value=[]), _quiet() as out:
             self.assertEqual(pc.main([]), 0)
         self.assertIn("git fetch failed", out.getvalue())
 
@@ -201,6 +201,34 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(pc.learn_signatures(runs[:1], index), [])  # too little history
 
 
+class TestPublishHosts(TestUnit.__base__):
+    """2026-10-19: the core leader moved to nova-core3, whose ~/nova-journal was not a git checkout."""
+    def test_probe_reports_a_non_checkout_and_parses_problems(self):
+        fake = TMP / "home-no-clone"
+        (fake / "nova-journal").mkdir(parents=True, exist_ok=True)
+        r = subprocess.run(["bash", "-c", pc.HOST_PROBE], capture_output=True, text=True, timeout=30,
+                           env={**os.environ, "HOME": str(fake)})
+        self.assertIn("PROBLEM: ~/nova-journal is not a git checkout", r.stdout)
+        out = "PROBLEM: cannot push to origin (git credentials / deploy key)\nPROBE-DONE\n"
+        with patch.object(pc.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, out, "")):
+            self.assertEqual(pc.probe_host("nova-core3"), ["cannot push to origin (git credentials / deploy key)"])
+        with patch.object(pc.subprocess, "run", return_value=subprocess.CompletedProcess([], 255, "", "No route")):
+            self.assertIn("unreachable", pc.probe_host("nova-core3")[0])
+
+    def test_writes_on_a_broken_host_are_missing_not_stranded(self):
+        it = _item()
+        row = [("written", "content/burbank-ops/x.md", "nova-core3", None)]
+        with patch.object(pc, "origin_has", return_value=False):
+            pc._BAD_HOSTS.clear()
+            self.assertEqual(pc.classify(it, row, [], True, None)[0], "STRANDED")
+            pc._BAD_HOSTS.add("nova-core3")
+            self.assertEqual(pc.classify(it, row, [], True, None)[0], "MISSING")     # re-run on .6
+            pc._BAD_HOSTS.clear()
+        silent = _run("success", 0, "", "[journal] Git add failed: fatal: not a git repository\nNOT COMMITTED (git failed): X")
+        self.assertEqual(pc.classify(it, [], [silent], True, None)[0], "MISSING")
+        self.assertIn("not a git repository", pc.error_tail(silent).lower() + "not a git repository")
+
+
 class TestIntegration(unittest.TestCase):
     def _yaml(self, name, body):
         p = TMP / name
@@ -251,7 +279,7 @@ class TestFunctional(unittest.TestCase):
         it = _item(due=dt.datetime.now() - dt.timedelta(hours=2), state=missing_state,
                    detail="failure exit 75: LLM UNAVAILABLE")
         states = iter([(missing_state, it["detail"]), (after_state, "content/burbank-ops/x.md")])
-        with patch.object(pc, "_pg", return_value=_Conn(cur)), \
+        with patch.object(pc, "_pg", return_value=_Conn(cur)), patch.object(pc, "check_hosts", return_value={}), \
              patch.object(pc, "git", return_value=subprocess.CompletedProcess([], 0, "", "")), \
              patch.object(pc, "check", return_value=[it]), \
              patch.object(pc, "evaluate", side_effect=lambda *a, **k: next(states)), \
@@ -279,7 +307,7 @@ class TestFunctional(unittest.TestCase):
     def test_landed_meanwhile_is_not_rerun(self):
         cur = _Cur()
         it = _item(due=dt.datetime.now() - dt.timedelta(hours=2), state="MISSING", detail="x")
-        with patch.object(pc, "_pg", return_value=_Conn(cur)), \
+        with patch.object(pc, "_pg", return_value=_Conn(cur)), patch.object(pc, "check_hosts", return_value={}), \
              patch.object(pc, "git", return_value=subprocess.CompletedProcess([], 0, "", "")), \
              patch.object(pc, "check", return_value=[it]), patch.object(pc, "added_index", return_value=[]), \
              patch.object(pc, "evaluate", return_value=("OK", "content/a/landed.md")), \
@@ -297,9 +325,25 @@ class TestFunctional(unittest.TestCase):
         pa.assert_not_called()
         self.assertFalse(any("INSERT" in s for s, _ in cur.sql))
 
+    def test_broken_publishing_host_is_alerted_once_a_day(self):
+        cur = _Cur()
+        bad = {"nova-core3": ["~/nova-journal is not a git checkout"]}
+        with patch.object(pc, "_pg", return_value=_Conn(cur)), patch.object(pc, "check_hosts", return_value=bad), \
+             patch.object(pc, "git", return_value=subprocess.CompletedProcess([], 0, "", "")), \
+             patch.object(pc, "check", return_value=[]), patch.object(pc, "post_alert", return_value=True) as pa, _quiet():
+            pc.main([])
+        self.assertIn("not a git checkout", pa.call_args[0][0])
+        self.assertTrue(any("hosts:nova-core3" in str(p) for _, p in cur.sql))
+        cur2 = _Cur(claimed=False)                              # same day, already recorded -> silent
+        with patch.object(pc, "_pg", return_value=_Conn(cur2)), patch.object(pc, "check_hosts", return_value=bad), \
+             patch.object(pc, "git", return_value=subprocess.CompletedProcess([], 0, "", "")), \
+             patch.object(pc, "check", return_value=[]), patch.object(pc, "post_alert") as pa2, _quiet():
+            pc.main([])
+        pa2.assert_not_called()
+
     def test_busy_lock_means_another_check_is_running(self):
         cur = _Cur(lock=False)
-        with patch.object(pc, "_pg", return_value=_Conn(cur)), \
+        with patch.object(pc, "_pg", return_value=_Conn(cur)), patch.object(pc, "check_hosts", return_value={}), \
              patch.object(pc, "git", return_value=subprocess.CompletedProcess([], 0, "", "")), \
              patch.object(pc, "check") as ck, _quiet():
             self.assertEqual(pc.main([]), 0)

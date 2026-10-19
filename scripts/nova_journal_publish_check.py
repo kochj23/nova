@@ -72,7 +72,26 @@ OUTAGE_MARKERS = (
     "no such file or directory: 'claude'", "claude code call failed", "timed out after",
     "llm unavailable", "llm produced nothing", "generation failed", "claude code cli not found",
     "not logged in",
+    # the publishing HOST is broken, not the model (2026-10-19: the core leader moved to nova-core3,
+    # whose ~/nova-journal was not a git checkout — articles were written and never committed)
+    "not a git repository", "permission denied (publickey)", "could not read username",
+    "git add failed", "not committed (git failed)", "push failed", "read only",
 )
+
+# What a host needs to publish: a real clone, push rights, cwebp (covers are committed as .webp;
+# .png is gitignored), and the claude CLI. Probed on .6 and on every core-scheduler node.
+HOST_PROBE = r"""
+cd ~/nova-journal 2>/dev/null || { echo "PROBLEM: no ~/nova-journal"; exit 0; }
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "PROBLEM: ~/nova-journal is not a git checkout"; exit 0; }
+git push --dry-run --no-verify -q origin HEAD:refs/heads/publish-check-probe >/dev/null 2>&1 \
+  || echo "PROBLEM: cannot push to origin (git credentials / deploy key)"
+command -v cwebp >/dev/null 2>&1 || [ -x /opt/homebrew/bin/cwebp ] || echo "PROBLEM: cwebp missing (cover images would not be committed)"
+ok=""; for c in claude /opt/homebrew/bin/claude /usr/local/bin/claude "$HOME/.local/bin/claude"; do
+  command -v "$c" >/dev/null 2>&1 && ok=1; done
+[ -n "$ok" ] || echo "PROBLEM: claude CLI not installed"
+echo PROBE-DONE
+"""
+_BAD_HOSTS = set()       # hostnames whose probe failed this pass (their STRANDED writes will never push)
 
 
 def log(msg):
@@ -392,7 +411,10 @@ def classify(item: dict, ledger: list, runs: list, instrumented: bool, disk, lea
         if r[1] and origin_has(r[1]):
             return "OK", r[1]
     if written:
-        return "STRANDED", f"{written[-1][1]} written on {written[-1][2]} but not on origin yet"
+        host = str(written[-1][2] or "")
+        if any(host.split(".")[0] == b.split(".")[0] for b in _BAD_HOSTS):
+            return "MISSING", f"{written[-1][1]} written on {host}, which cannot publish (see host check)"
+        return "STRANDED", f"{written[-1][1]} written on {host} but not on origin yet"
     if pushed:
         return "OK", f"pushed ({pushed[-1][0]}) from {pushed[-1][2]}"
     ok, detail = disk if disk else (None, "")
@@ -492,6 +514,44 @@ def evaluate(cur, item: dict, index: list, until: dt.datetime) -> tuple:
                     ever_ran=bool(history) or bool(ledger))
 
 
+def publish_hosts(cur) -> list:
+    """This host plus every node the core scheduler can fail over to (leader + standbys)."""
+    hosts = [socket.gethostname()]
+    try:
+        cur.execute("SELECT DISTINCT node FROM leader_standby WHERE name = 'nova-scheduler-core' AND node IS NOT NULL")
+        hosts += sorted(r[0] for r in cur.fetchall())
+    except Exception as e:  # noqa: BLE001
+        log(f"cannot list core scheduler nodes: {e}")
+    return hosts
+
+
+def probe_host(host: str) -> list:
+    """Problems that stop `host` publishing ([] = healthy). Remote hosts over ssh (BatchMode)."""
+    local = host == socket.gethostname()
+    cmd = (["bash", "-c", HOST_PROBE] if local else
+           ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, "bash -s"])
+    try:
+        r = subprocess.run(cmd, input=None if local else HOST_PROBE, capture_output=True, text=True, timeout=90)
+    except subprocess.TimeoutExpired:
+        return ["probe timed out"]
+    if "PROBE-DONE" not in r.stdout and "PROBLEM:" not in r.stdout:
+        return [f"unreachable over ssh ({(r.stderr or '').strip()[:80]})"]
+    return [ln.split("PROBLEM:", 1)[1].strip() for ln in r.stdout.splitlines() if "PROBLEM:" in ln]
+
+
+def check_hosts(cur) -> dict:
+    """{host: [problems]} for hosts that cannot publish; also fills _BAD_HOSTS."""
+    _BAD_HOSTS.clear()
+    bad = {}
+    for h in publish_hosts(cur):
+        problems = probe_host(h)
+        log(f"  host {h}: {'OK' if not problems else '; '.join(problems)}")
+        if problems:
+            bad[h] = problems
+            _BAD_HOSTS.add(h)
+    return bad
+
+
 def check(now: dt.datetime, cur, lookback_h: int) -> list:
     results = []
     _ORIGIN_NAMES.clear()
@@ -527,6 +587,20 @@ def main(argv=None) -> int:
         log("another publish check is running — exiting")
         return 0
     try:
+        bad_hosts = check_hosts(cur)
+        if bad_hosts:
+            lines = [f"• `{h}` — {'; '.join(p)}" for h, p in bad_hosts.items()]
+            text = (":rotating_light: *Journal: publishing host(s) cannot publish* — jobs that run there "
+                    "write nothing to the site:\n" + "\n".join(lines))
+            if a.dry_run:
+                log("DRY-RUN — would alert:\n" + text)
+            else:
+                today = dt.datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+                cur.execute("""INSERT INTO journal_publish_reruns (task_id, due_at, host, result)
+                               VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING RETURNING task_id""",
+                            ("hosts:" + ",".join(sorted(bad_hosts)), today, socket.gethostname(), text[:500]))
+                if cur.fetchone():                 # once per day per set of broken hosts
+                    post_alert(text)
         results = check(now, cur, a.hours)
         missing = [r for r in results if r["state"] in ("MISSING", "STRANDED")]
         if not missing:
