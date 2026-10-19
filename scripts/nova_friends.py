@@ -62,6 +62,7 @@ VID_PER, VID_MAX = 1600, 30         # ~48k chars of video transcript
 ART_PER, ART_MAX = 700, 24          # + ~17k of articles: under the size that hangs claude -p
 
 CARS_CHANNELS = (
+    "We Are Curated", "WatchJRGo",  # Jordan 2026-10-19: automotive despite the names
     "1320video", "Adam LZ", "April's Garage", "ArnieTex", "Atlantic Beach Customs", "Audrain Museum Network",
     "Auto Auction Rebuilds", "AutoLegacy", "Bad Obsession Motorsport", "Banks Power", "Barrett-Jackson",
     "Ben Collins Drives", "Between Two Pumps Podcast", "Brian Lohnes", "Brian Scotto", "BluCollarGarage",
