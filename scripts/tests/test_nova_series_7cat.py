@@ -57,7 +57,8 @@ class TestSecurity(unittest.TestCase):
     def test_no_shell_and_explicit_paths_only(self):
         self.assertNotIn("shell=True", SRC)
         self.assertNotIn('"add", "-A"', SRC)
-        self.assertNotIn("stash", SRC.replace("--autostash", ""))
+        self.assertNotIn('"--autostash"', SRC)          # never stash other writers' WIP
+        self.assertNotIn('"stash"', SRC)
 
 
 class TestPerformance(unittest.TestCase):
@@ -147,6 +148,22 @@ class TestIntegration(unittest.TestCase):
         self.assertIn("2026-10-19-b.md", st)      # the in-progress file is untouched and uncommitted
         self.assertIn("other.txt", st)
         self.assertIn("series:", g("show", "HEAD:content/burbank-ops/2026-10-18-a.md").stdout)
+
+
+class TestSweep(unittest.TestCase):
+    def test_sweep_commits_and_pushes_to_bare_origin(self):
+        g = lambda cwd, *a: subprocess.run(["git", *a], cwd=cwd, capture_output=True, text=True)  # noqa: E731
+        base = Path(tempfile.mkdtemp())
+        g(base, "init", "-q", "--bare", "-b", "main", "origin.git")
+        d = tree({"cars/2026-10-19-c.md": art("🚗 Cars and Friends: x", [])})
+        for args in (("init", "-q", "-b", "main"), ("config", "user.email", "t@t"), ("config", "user.name", "t"),
+                     ("remote", "add", "origin", str(base / "origin.git")), ("add", "-A"), ("commit", "-qm", "i"),
+                     ("push", "-q", "origin", "main")):
+            g(d, *args)
+        with patch.object(m, "_push_lock", return_value=(lambda *a, **k: None, lambda c: None)):
+            m.main(["--sweep", "--root", str(d)])
+        shown = g(base / "origin.git", "show", "main:content/cars/2026-10-19-c.md").stdout
+        self.assertIn('series: ["Cars and Friends"]', shown)
 
 
 class TestFunctional(unittest.TestCase):

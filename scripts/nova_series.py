@@ -23,8 +23,9 @@ Usage:
   nova_series.py --check "<title>" --section S [--tags a,b]
 
 The sweep only edits files that are committed and clean in git (never a half-written article another
-writer is still working on), commits those explicit paths, then pull --rebase + push under
-nova_journal's fleet-wide journal push lock.
+writer is still working on), skips a run while the clone is behind origin and cannot fast-forward,
+commits those explicit paths, then pull --rebase (never --autostash) + push under nova_journal's
+fleet-wide journal push lock; a commit it cannot push is left for journal_stranded_push.
 
 Written by Jordan Koch (via Claude).
 """
@@ -271,12 +272,14 @@ def commit_and_push(root: Path, paths: list[str], message: str) -> str:
         r = _git(root, "commit", "-q", "-m", message, "--", *paths)
         if r.returncode:
             return f"commit failed: {(r.stderr or r.stdout)[:200]}"
-        r = _git(root, "pull", "--rebase", "--autostash", "-q", "origin", "main")
+        # No --autostash: other writers' work-in-progress in this shared clone is never stashed. If the
+        # rebase cannot run (dirty tree) or the push is rejected, the commit stays local and
+        # journal_stranded_push (every 10 min) rebases + pushes it.
+        r = _git(root, "pull", "--rebase", "-q", "origin", "main")
         if r.returncode:
             _git(root, "rebase", "--abort")
-            return f"committed, pull --rebase failed: {r.stderr[:200]}"
         r = _git(root, "push", "-q", "origin", "HEAD:main")
-        return "pushed" if r.returncode == 0 else f"committed, push failed: {r.stderr[:200]}"
+        return "pushed" if r.returncode == 0 else "committed (journal_stranded_push will push it)"
     finally:
         release(conn)
 
@@ -306,7 +309,16 @@ def main(argv=None) -> int:
         print(f"{len(changed)} file(s) {'updated' if a.backfill and a.write else 'would change'}; "
               f"{sum(series.values())} series, {blocks} top_block")
         return 0
-    # --sweep: the scheduled pass over the live clone
+    # --sweep: the scheduled pass over the live clone. Never work on a clone that is behind origin
+    # (the backfill / another sweep may already have written these files upstream).
+    _git(root, "fetch", "-q", "origin")
+    behind = _git(root, "rev-list", "--count", "HEAD..origin/main").stdout.strip()
+    if behind not in ("", "0"):
+        r = _git(root, "pull", "--rebase", "-q", "origin", "main")
+        if r.returncode:
+            _git(root, "rebase", "--abort")
+            print(f"[series] clone is {behind} behind origin and cannot fast-forward now — skipping this run")
+            return 0
     changed, series, blocks = run(root, write=True, only_clean=True)
     print(f"[series] {len(changed)} file(s): {dict(series)} top_block={blocks}")
     if changed:
