@@ -55,7 +55,13 @@ class Cur:
         return self._r
 
 
-def run_main(argv=("--subject", "cars"), videos=None, arts=None, llm=None, publish=True, recipes=()):
+# Placeholder house rules: the real ones live in nova_ops.service_config (food_and_friends/recipe_constraints)
+# and are deliberately NOT in this repo.
+RULES = {"rules": "HOUSE-RULE-SENTINEL: pick the smokiest, spiciest fit.", "private_terms": ["zorbcondition", "secretperson"],
+         "prefer": ["smoked", "salmon"], "avoid": ["pudding"]}
+
+
+def run_main(argv=("--subject", "cars"), videos=None, arts=None, llm=None, publish=True, recipes=(), rules=RULES):
     videos = [vrow("a rear wing that lifts the nose", "v1")] if videos is None else videos
     arts = [arow("new kernel release", "https://a/1")] if arts is None else arts
     cur = Cur(videos, arts, recipes)
@@ -66,7 +72,8 @@ def run_main(argv=("--subject", "cars"), videos=None, arts=None, llm=None, publi
     nj.publish_hugo.return_value = publish
     nj.git_push.return_value = "ok"
     with patch.object(sys, "argv", ["x", *argv]), patch.object(m, "_connect", return_value=conn), \
-            patch.object(m, "nj", nj), patch.object(m.nova_voice, "system_prompt", side_effect=lambda c, **k: c):
+            patch.object(m, "nj", nj), patch.object(m.nova_voice, "system_prompt", side_effect=lambda c, **k: c), \
+            patch.object(m, "load_food_rules", return_value=rules):
         rc = m.main()
     return rc, nj, cur
 
@@ -247,7 +254,7 @@ class TestFunctional(unittest.TestCase):
 
 class TestFrame(unittest.TestCase):
     def test_module_shape(self):
-        for n in ("main", "fetch", "source_list", "norm"):
+        for n in ("main", "fetch", "source_list", "norm", "load_food_rules", "private_hit", "fetch_recipes"):
             self.assertTrue(callable(getattr(m, n)))
         self.assertEqual(set(m.SUBJECTS), {"cars", "tech", "food"})
         self.assertEqual(set(m.FEATURES), set(m.SUBJECTS))
@@ -349,7 +356,8 @@ class TestTopBlocks(unittest.TestCase):
         system, user = next(x for x in seen if "very TOP" in x[0])
         self.assertIn("RECIPE PAGES", user)
         self.assertIn("Ingredients: baby back ribs, honey. Method: smoke at 250F", user)
-        self.assertIn("ONLY ingredients, amounts, times and temperatures the source actually", system)
+        self.assertIn("Amounts, times and temperatures come ONLY from the source", system)
+        self.assertIn("HOUSE-RULE-SENTINEL", system)          # the private rules reach the model at runtime
         body = published_body(nj)
         self.assertTrue(body.startswith("## Recipe Recommendation"))
         self.assertIn("### Recipe\n\n- [Meat Church BBQ — Sweet Honey Ribs](" + REC, body)
@@ -378,6 +386,86 @@ class TestTopBlocks(unittest.TestCase):
 
     def test_watches_big_story_is_the_shared_helper(self):
         self.assertIs(m.featured_block, w.featured_block)
+
+
+class TestFoodPrivacy(unittest.TestCase):
+    """The Recipe Recommendation's selection rules are private: loaded from PG at runtime, never in the
+    repo, never in the published block."""
+
+    def test_block_with_a_private_term_is_never_published(self):
+        for leak in ("zorbcondition", "ZorbConditions", "my secretperson can't eat it"):
+            text = f"Cook the [Meat Church BBQ — Sweet Honey Ribs]({REC}). Good for {leak}. " + "yum " * 40
+            rc, nj, _ = run_main(["--subject", "food"], recipes=[recrow("Ingredients: ribs.")], llm=block_llm(text))
+            self.assertEqual(rc, 0)
+            body = published_body(nj)
+            self.assertNotIn("Recipe Recommendation", body, leak)
+            self.assertNotIn(leak.lower(), body.lower())
+
+    def test_neutral_tags_and_generic_swaps_are_fine(self):
+        text = (f"*gluten-free · pescatarian · low-sugar · smoked · spicy*\n\nSmoked salmon from "
+                f"[Meat Church BBQ — Sweet Honey Ribs]({REC}). Swap: garlic-infused oil keeps it gentle. " + "yum " * 30)
+        rc, nj, _ = run_main(["--subject", "food"], recipes=[recrow("Ingredients: salmon.")], llm=block_llm(text))
+        self.assertTrue(published_body(nj).startswith("## Recipe Recommendation\n\n*gluten-free · pescatarian"))
+
+    def test_no_house_rules_means_no_recipe_block(self):
+        seen = []
+        rc, nj, _ = run_main(["--subject", "food"], rules=None, llm=block_llm(good_block(), seen))
+        self.assertEqual(rc, 0)
+        self.assertNotIn("Recipe Recommendation", published_body(nj))
+        self.assertFalse(any("very TOP" in s for s, _ in seen))
+        nj.git_push.assert_called_once()                     # the roundup still publishes
+
+    def test_rules_only_reach_the_food_block(self):
+        for subj in ("cars", "tech"):
+            seen = []
+            run_main(["--subject", subj, "--dry-run"], llm=block_llm("NONE", seen))
+            self.assertFalse(any("HOUSE-RULE-SENTINEL" in s or "HOUSE-RULE-SENTINEL" in u for s, u in seen), subj)
+        seen = []
+        run_main(["--subject", "food", "--dry-run"], llm=block_llm("NONE", seen))
+        news = [s for s, _ in seen if "very TOP" not in s]
+        self.assertFalse(any("HOUSE-RULE-SENTINEL" in s for s in news))   # never in the roundup call
+
+    def test_load_food_rules_reads_service_config_parameterised(self):
+        cur = MagicMock(); cur.fetchone.return_value = (RULES,)
+        conn = MagicMock(); conn.cursor.return_value = cur
+        with patch.object(m, "_connect", return_value=conn):
+            self.assertEqual(m.load_food_rules(), RULES)
+        sql, params = cur.execute.call_args.args
+        self.assertEqual(params, ("food_and_friends", "recipe_constraints"))
+        for bad in (None, ({"rules": "x"},), ({"private_terms": ["a"]},)):
+            cur.fetchone.return_value = bad
+            with patch.object(m, "_connect", return_value=conn):
+                self.assertIsNone(m.load_food_rules())
+        with patch.object(m, "_connect", side_effect=RuntimeError("pg down")):
+            self.assertIsNone(m.load_food_rules())
+
+    def test_private_hit_word_start(self):
+        self.assertEqual(m.private_hit("Zorbconditional stuff", ["zorbcondition"]), "zorbcondition")
+        self.assertIsNone(m.private_hit("xzorbcondition", ["zorbcondition"]))
+        self.assertIsNone(m.private_hit("anything", None))
+
+    def test_recipe_pick_follows_house_preferences(self):
+        recs = [recrow("x", url=f"https://r/{i}", title=t) for i, t in
+                enumerate(["Banana Pudding", "Smoked Salmon", "Country Style Ribs"])]
+        nj = MagicMock(); nj.today_str.return_value = "2026-10-19"
+        with patch.object(m, "nj", nj):
+            got = m.fetch_recipes(Cur([], [], recs), [], n=1, prefer=["smoked", "salmon"], avoid=["pudding"])
+        self.assertEqual(got[0]["title"], "Smoked Salmon")
+
+    def test_live_private_terms_never_in_repo_or_published_food_blocks(self):
+        """Against the REAL private terms (PG) — skipped when PG is unreachable."""
+        rules = m.load_food_rules()
+        if not rules:
+            self.skipTest("house rules not reachable")
+        terms = rules["private_terms"]
+        for f in ("nova_friends.py", "nova_watches_and_friends.py", "tests/test_nova_friends_7cat.py"):
+            self.assertIsNone(m.private_hit((SCRIPTS / f).read_text().replace("private_terms", ""), terms), f)
+        food = Path(m.nj.HUGO_ROOT) / "content/food"
+        for md in sorted(food.glob("*.md")) if food.is_dir() else []:
+            t = md.read_text()
+            if "## Recipe Recommendation" in t:
+                block = t.split("## Recipe Recommendation", 1)[1].split("\n## ", 1)[0]
+                self.assertIsNone(m.private_hit(block, terms), md.name)
 
 
 class TestFoodRouting(unittest.TestCase):

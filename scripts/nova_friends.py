@@ -10,6 +10,10 @@ nova_watches_and_friends.featured_block (grounded, fail closed — no grounding 
             known home stack (HOME_STACK — the About page's list, nothing private).
   * food  — "Recipe Recommendation": one recipe from the day's food videos or Nova's recipe memories
             (source 'recipes', type 'recipe' — full recipe pages with URLs), credited and linked.
+            Selection follows the house rules in PG (nova_ops.service_config food_and_friends /
+            recipe_constraints: prompt rules, preferred/avoided recipe words, and private terms the
+            published block must never contain). They are loaded at runtime and never live in this repo;
+            if they can't be loaded, or the block contains a private term, the block is omitted.
 
 Shape: one grounded NEWS call over the window's transcripts/articles, a grounded "deeper cuts"
 call only if the issue is still under the minimum, then a code-built Sources list from the
@@ -40,7 +44,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_journal as nj          # noqa: E402
 import nova_voice                  # noqa: E402
-from nova_watches_and_friends import (MEM_DSN, MODEL, _connect, digest, featured_block,  # noqa: E402
+from nova_watches_and_friends import (MEM_DSN, MODEL, OPS_DSN, _connect, digest, featured_block,  # noqa: E402
                                       group_videos, sources, split_title, words)
 
 VID_PER, VID_MAX = 1600, 30         # ~48k chars of video transcript
@@ -178,10 +182,10 @@ FEATURES = {
              "no device in the material genuinely fits, reply NONE."),
     "food": ("Recipe Recommendation",
              "Recommend ONE recipe Nova would cook, taken from the day's food videos or the RECIPE PAGES in the "
-             "material: the dish name, a line on why, then a short **Ingredients** bullet list and a short "
-             "**Method** (numbered) — ONLY ingredients, amounts, times and temperatures the source actually "
-             "states; leave out anything it doesn't give, never fill gaps. Credit and link the channel/video or "
-             "recipe page it comes from. If no source gives enough of a real recipe, reply NONE."),
+             "material and chosen by the HOUSE RULES below: the dish name, a line on why, then a short "
+             "**Ingredients** bullet list and a short **Method** (numbered). Amounts, times and temperatures come "
+             "ONLY from the source — never invent them; where the house rules call for a change, mark it plainly as "
+             "a swap. Credit and link the channel/video or recipe page it comes from."),
 }
 
 # Public-journal fail-closed check. Inputs mentioning these are dropped; a draft that still
@@ -248,7 +252,38 @@ def fetch(cur, cfg, days):
     return videos, arts
 
 
-def fetch_recipes(cur, videos, n=RECIPES_MAX):
+def load_food_rules():
+    """The Recipe Recommendation house rules from nova_ops.service_config (food_and_friends /
+    recipe_constraints): {"rules": str, "private_terms": [...], "prefer": [...], "avoid": [...]}.
+    Private by design — never hardcoded here. None when unavailable (the block is then omitted)."""
+    try:
+        conn = _connect(OPS_DSN)
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT value FROM service_config WHERE service = %s AND key = %s",
+                        ("food_and_friends", "recipe_constraints"))
+            row = cur.fetchone()
+        finally:
+            conn.close()
+    except Exception as e:  # noqa: BLE001
+        log(f"food house rules unavailable ({type(e).__name__})")
+        return None
+    v = row[0] if row else None
+    if not isinstance(v, dict) or not v.get("rules") or not v.get("private_terms"):
+        log("food house rules missing/incomplete")
+        return None
+    return v
+
+
+def private_hit(text, terms):
+    """First private term found in text (word-start match, case-insensitive), else None."""
+    for t in terms or ():
+        if re.search(r"\b" + re.escape(t.lower()), (text or "").lower()):
+            return t
+    return None
+
+
+def fetch_recipes(cur, videos, n=RECIPES_MAX, prefer=(), avoid=()):
     """Nova's recipe memories (source 'recipes', type 'recipe': full recipe pages with URLs) for the
     Recipe Recommendation — the ones whose titles best match the day's videos, else a date-seeded
     pick so the block still has grounding on a thin day. -> [{channel,title,url,date,text}]."""
@@ -263,8 +298,11 @@ def fetch_recipes(cur, videos, n=RECIPES_MAX):
     day = set(re.findall(r"[a-z]{4,}", " ".join(f"{v['title']} {v['text']}" for v in videos).lower())) - RECIPE_STOP
     seed = nj.today_str()          # same pick all day, a different one tomorrow
 
+    pref, avd = {w.lower() for w in prefer}, {w.lower() for w in avoid}
+
     def score(p):
-        return (len(set(re.findall(r"[a-z]{4,}", p[1].lower())) & day), zlib.crc32(f"{seed}{p[0]}".encode()))
+        t = set(re.findall(r"[a-zñé]{3,}", p[1].lower()))
+        return (len(t & pref) - 2 * len(t & avd), len(t & day), zlib.crc32(f"{seed}{p[0]}".encode()))
     pick = sorted(pages, key=score, reverse=True)[:n]
     cur.execute("""SELECT text, created_at, metadata FROM memories
                    WHERE source = 'recipes' AND metadata->>'type' = 'recipe' AND metadata->>'url' = ANY(%s)
@@ -281,9 +319,15 @@ def fetch_recipes(cur, videos, n=RECIPES_MAX):
     return group_videos(rows, RECIPE_CHARS, n)
 
 
-def top_block(subj, videos, arts, recipes=()):
-    """The featured block for this subject ("" = omitted, fail closed)."""
+def top_block(subj, videos, arts, recipes=(), food_rules=None):
+    """The featured block for this subject ("" = omitted, fail closed). Food needs its house rules
+    (food_rules) and a block free of every private term, or there is no block."""
     heading, task = FEATURES[subj]
+    if subj == "food":
+        if not food_rules:
+            log("Recipe Recommendation: no house rules — block omitted (fail closed)")
+            return ""
+        task += "\n\nHOUSE RULES:\n" + food_rules["rules"]
     material = digest([*videos, *arts])
     if recipes:
         material += "\n\n--- RECIPE PAGES (Nova's recipe memories) ---\n\n" + digest(list(recipes))
@@ -291,7 +335,13 @@ def top_block(subj, videos, arts, recipes=()):
              "IP addresses, no hostnames, no file paths, no names of people in Jordan's household, nothing about "
              "when anyone is home or asleep, no sexual content. Never invent prices, specs, model numbers, "
              "ingredients, amounts or quotes that are not in the material.")
-    return featured_block(heading, task, material, [*videos, *arts, *recipes], rules, llm=nj.call_openrouter)
+    block = featured_block(heading, task, material, [*videos, *arts, *recipes], rules, llm=nj.call_openrouter)
+    if block and subj == "food":
+        hit = private_hit(block, food_rules.get("private_terms"))
+        if hit:
+            log("Recipe Recommendation: private-term check tripped — block omitted (fail closed)")
+            return ""
+    return block
 
 
 def source_list(items):
@@ -359,13 +409,15 @@ def main():
         if more:
             body += "\n\n" + more.strip()
 
-    recipes = []
+    recipes, food_rules = [], None
     if a.subject == "food":
+        food_rules = load_food_rules()
         try:
-            recipes = fetch_recipes(mc, videos)
+            recipes = fetch_recipes(mc, videos, prefer=(food_rules or {}).get("prefer", ()),
+                                    avoid=(food_rules or {}).get("avoid", ()))
         except Exception as e:  # noqa: BLE001 — recipe memories are optional grounding
             log(f"recipe memories unavailable ({e})")
-    block = top_block(a.subject, videos, arts, recipes)
+    block = top_block(a.subject, videos, arts, recipes, food_rules)
     if block:
         body = block + "\n" + body
         log(f"{FEATURES[a.subject][0]}: {words(block)} words at the top")
