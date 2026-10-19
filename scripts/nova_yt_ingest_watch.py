@@ -41,6 +41,7 @@ CHANNELS = [
     {"key": "blondeetime", "url": "https://www.youtube.com/@BlondeeTime/streams", "vector": "fishbowl"},
     {"key": "timwrite", "url": "https://www.youtube.com/@TimWrite", "vector": "fishbowl"},
     {"key": "watchhangout", "url": "https://www.youtube.com/@WatchHangout/streams", "vector": "horology"},
+    {"key": "traxnyc", "url": "https://www.youtube.com/@TraxNYCDiamondJewelry/streams", "vector": "horology"},  # Jordan 2026-10-19
     {"key": "mookieverse", "url": "https://www.youtube.com/@themookieverse/streams", "vector": "fishbowl"},
     {"key": "escapementshow", "url": "https://www.youtube.com/@theescapementshow/streams", "vector": "horology"},
     {"key": "angelic_slayer", "url": "https://www.youtube.com/@angelic_slayer/streams", "vector": "fishbowl"},

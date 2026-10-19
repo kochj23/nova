@@ -99,6 +99,11 @@ def main():
         "not write your own link list.\n"
         "500-900 words, markdown, section headers optional, no H1 title (added separately).\n\n"
         "OUTPUT EXACTLY THIS SHAPE:\nTITLE: <one punchy opinion-column title, no quotes>\n<blank line>\n<the body>")
+    try:  # Jordan 2026-10-19: the good-guys ground truth is canon here too
+        from nova_fishbowl_summaries import KNOWN_FACTS
+        ctx = ctx + "\n\n" + KNOWN_FACTS
+    except ImportError:
+        pass
     system = nova_voice.system_prompt(ctx)
     user = (f"--- PER-PERSON DOSSIERS (the cast) ---\n{dossier_block}\n\n"
             f"--- NEWEST FISHBOWL ACTIVITY (newest first) ---\n{sample_block}\n\n"

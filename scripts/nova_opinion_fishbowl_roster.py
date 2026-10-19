@@ -75,6 +75,11 @@ def main():
         "change) — Nova can rate individuals highly while still being clear-eyed about the ecosystem.\n"
         "1800-2600 words, markdown, section headers per person/cluster, no H1 title (added separately).\n\n"
         "OUTPUT EXACTLY THIS SHAPE:\nTITLE: <one punchy title, no quotes>\n<blank line>\n<the body>")
+    try:  # Jordan 2026-10-19: the good-guys ground truth is canon here too
+        from nova_fishbowl_summaries import KNOWN_FACTS
+        ctx = ctx + "\n\n" + KNOWN_FACTS
+    except ImportError:
+        pass
     system = nova_voice.system_prompt(ctx)
     user = (f"--- MAIN CAST DOSSIERS ---\n{cast_block}\n\n"
             f"--- NOTABLE GUEST DOSSIERS ---\n{guest_block}\n\n"
