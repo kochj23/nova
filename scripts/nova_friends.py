@@ -335,7 +335,8 @@ def top_block(subj, videos, arts, recipes=(), food_rules=None):
              "IP addresses, no hostnames, no file paths, no names of people in Jordan's household, nothing about "
              "when anyone is home or asleep, no sexual content. Never invent prices, specs, model numbers, "
              "ingredients, amounts or quotes that are not in the material.")
-    block = featured_block(heading, task, material, [*videos, *arts, *recipes], rules, llm=nj.call_openrouter)
+    block = featured_block(heading, task, material, [*videos, *arts, *recipes], rules, llm=nj.call_openrouter,
+                           max_words=650 if subj == "food" else 450)   # a recipe needs room for its method
     if block and subj == "food":
         hit = private_hit(block, food_rules.get("private_terms"))
         if hit:

@@ -402,8 +402,9 @@ class TestFoodPrivacy(unittest.TestCase):
             self.assertNotIn(leak.lower(), body.lower())
 
     def test_neutral_tags_and_generic_swaps_are_fine(self):
-        text = (f"*gluten-free · pescatarian · low-sugar · smoked · spicy*\n\nSmoked salmon from "
-                f"[Meat Church BBQ — Sweet Honey Ribs]({REC}). Swap: garlic-infused oil keeps it gentle. " + "yum " * 30)
+        text = (f"*gluten-free · pescatarian · low-sugar · smoked · spicy · pairs with: 805*\n\nSmoked salmon from "
+                f"[Meat Church BBQ — Sweet Honey Ribs]({REC}). Swap: garlic-infused oil keeps it gentle. Serves 2, "
+                "moderate. A pat of brown butter to finish. " + "yum " * 30 + "\n\n**Pairs with:** rum & Coke Zero.")
         rc, nj, _ = run_main(["--subject", "food"], recipes=[recrow("Ingredients: salmon.")], llm=block_llm(text))
         self.assertTrue(published_body(nj).startswith("## Recipe Recommendation\n\n*gluten-free · pescatarian"))
 
@@ -460,6 +461,12 @@ class TestFoodPrivacy(unittest.TestCase):
         terms = rules["private_terms"]
         for f in ("nova_friends.py", "nova_watches_and_friends.py", "tests/test_nova_friends_7cat.py"):
             self.assertIsNone(m.private_hit((SCRIPTS / f).read_text().replace("private_terms", ""), terms), f)
+        # every real private term (whatever categories the PG row carries) is caught in a block
+        for t in terms:
+            text = f"Cook the [Meat Church BBQ — Sweet Honey Ribs]({REC}). Ideal for {t} reasons. " + "yum " * 40
+            rc, nj, _ = run_main(["--subject", "food"], recipes=[recrow("Ingredients: salmon.")], llm=block_llm(text),
+                                 rules=rules)
+            self.assertNotIn("Recipe Recommendation", published_body(nj), "a private term slipped through")
         food = Path(m.nj.HUGO_ROOT) / "content/food"
         for md in sorted(food.glob("*.md")) if food.is_dir() else []:
             t = md.read_text()
