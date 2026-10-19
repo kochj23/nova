@@ -1073,6 +1073,20 @@ tasks:
     timeout: 3600
     overlap: skip
 
+  cars_and_friends:                # Jordan 2026-10-19: Watches-and-Friends sibling, no Fishbowl part; car channels -> /cars/ (5 min after watches: journal push race)
+    script: nova_friends.py
+    args: ["--subject", "cars", "--days", "1"]
+    schedule: cron 5 7 * * *
+    timeout: 3600
+    overlap: skip
+
+  tech_and_friends:                # Jordan 2026-10-19: replaces Tech Today; tech channels + tech feeds -> /tech/
+    script: nova_friends.py
+    args: ["--subject", "tech", "--days", "1"]
+    schedule: cron 10 7 * * *
+    timeout: 3600
+    overlap: skip
+
   opinion_fishbowl:                  # Nova's daily OPINION column on Watch Fishbowl updates -> /opinions
     script: nova_opinion_fishbowl.py
     schedule: cron 0 6 * * *         # daily 6:00 AM — dated opinion piece, operations voice
@@ -1140,6 +1154,7 @@ tasks:
     timeout: 900
     overlap: skip
     group: llm
+    enabled: false                 # retired 2026-10-19: Tech Today replaced by tech_and_friends (Tech and Friends, /tech/)
 
   journal_stats_poller:
     script: nova_journal_stats_poller.py
