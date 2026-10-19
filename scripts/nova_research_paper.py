@@ -740,14 +740,16 @@ def render_epigraph(outline: dict) -> str:
 
 
 def publish_to_hugo(paper: str, outline: dict, cover_image: str | None,
-                    chapter_images: list[str | None], paper_num: int) -> bool:
+                    chapter_images: list[str | None], paper_num: int, section: str = "nova") -> bool:
+    """section: "nova" unless nova_sections.route_topic sent a clearly-music/military paper elsewhere."""
+    content_dir = CONTENT_DIR if section == "nova" else CONTENT_DIR.parent / section
     date = _today_str()
     title = outline.get("title", "Untitled Research Paper")
     slug = re.sub(r'[^a-z0-9]+', '-', title.lower().replace("'", "")).strip('-')[:60]
     timestamp = _now_dt().strftime("%Y-%m-%dT%H:%M:%S-07:00")
 
     # Use subprocess for mkdir/cp to work around potential TCC restrictions
-    subprocess.run(["mkdir", "-p", str(CONTENT_DIR)], capture_output=True)
+    subprocess.run(["mkdir", "-p", str(content_dir)], capture_output=True)
     subprocess.run(["mkdir", "-p", str(IMAGES_DIR)], capture_output=True)
 
     hugo_cover = ""
@@ -789,7 +791,7 @@ def publish_to_hugo(paper: str, outline: dict, cover_image: str | None,
 title: "📄 {title}"
 date: {timestamp}
 draft: false
-categories: ["nova"]
+categories: ["{section}"]
 tags: ["{outline.get('paper_type', 'analytical')}", "{outline.get('chapters', [{}])[0].get('title', 'research').split()[0].lower()}"]
 description: "{outline.get('thesis', '')[:150]}"
 """
@@ -800,7 +802,7 @@ description: "{outline.get('thesis', '')[:150]}"
     footer = f"\n\n---\n\n*Nova Research Paper #{paper_num} · {_now_dt().strftime('%B %d, %Y')}*\n"
     footer += "*Generated locally on Apple Silicon · APA format · Sources verified via SearXNG and Nova Memory Database*\n"
 
-    output = CONTENT_DIR / f"{date}-{slug}.md"
+    output = content_dir / f"{date}-{slug}.md"
     content = front_matter + paper_with_images + footer
     try:
         output.write_text(content)
@@ -820,7 +822,7 @@ description: "{outline.get('thesis', '')[:150]}"
     log(f"Hugo post written: {output.name}")
 
     # Hardened commit + push (PG advisory lock, rebase-on-reject, retry, alert-on-failure).
-    nj.git_push("research", title)
+    nj.git_push("research" if section == "nova" else section, title)   # research -> nova via the remap
 
     return True
 
@@ -964,7 +966,16 @@ def main():
     # 11. Publish
     paper_num = state.get("paper_count", 0) + 1
     log("Publishing to Hugo...")
-    publish_to_hugo(full_paper, outline, cover_image, chapter_images, paper_num)
+    section = "nova"
+    try:   # clearly-music / clearly-military papers go to their and-Friends section (Jordan 2026-10-19)
+        from nova_sections import route_topic
+        section = route_topic("nova", f"{outline.get('title', '')} {topic_desc}",
+                              [source] + [m.get("source") for m in memories if isinstance(m, dict)])
+        if section != "nova":
+            log(f"topic routing: paper is about {section} -> /{section}/")
+    except Exception as e:  # noqa: BLE001
+        log(f"topic routing unavailable ({e})")
+    publish_to_hugo(full_paper, outline, cover_image, chapter_images, paper_num, section=section)
 
     # 12. Notify
     post_to_slack(outline, paper_num, len(memories), len(web_sources))

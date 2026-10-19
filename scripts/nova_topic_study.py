@@ -383,6 +383,11 @@ def study(topic: str, show: str | None = None, section: str = "nova", dry_run: b
     title, body = art
     body += episodes_cited(lessons)
     res.update(title=title, words=len(body.split()))
+    try:   # clearly-music / clearly-military studies go to their and-Friends section (Jordan 2026-10-19)
+        from nova_sections import route_topic
+        section = route_topic(section, f"{title} {name} {topic}", [p.get("source") for p in passages])
+    except Exception as e:  # noqa: BLE001
+        log(f"topic routing unavailable ({e})")
     url = article_url(section, title)
     if dry_run:
         Path(os.environ.get("NOVA_STUDY_PREVIEW", "/tmp/topic_study_preview.md")).write_text(f"# {title}\n\n{body}")

@@ -3101,6 +3101,19 @@ def run_profile(profile_name: str) -> int:
                 f"(matched: {refusal!r}) — aborting for today.")
             return 1
 
+    # ── Step 2b: Topic routing (Jordan 2026-10-19) — clearly-music / clearly-military pieces publish
+    # to Music and Friends / Military and Friends instead of Nova and Friends (nova_sections.route_topic).
+    if profile_name in ("essay", "opinion", "research"):
+        try:
+            from nova_sections import route_topic
+            routed = route_topic(section, f"{title} {topic}",
+                                 [m.get("source") for m in (memories or []) if isinstance(m, dict)])
+            if routed != section:
+                log(f"topic routing: \"{title[:60]}\" is about {routed} -> /{routed}/")
+                section = routed
+        except Exception as e:  # noqa: BLE001 — routing never sinks an article
+            log(f"topic routing unavailable ({e})")
+
     # ── Step 3: Image generation ──────────────────────────────────────────────
     image_path = None
     try:
