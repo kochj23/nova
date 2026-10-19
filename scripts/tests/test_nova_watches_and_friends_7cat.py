@@ -308,6 +308,13 @@ class TestBigStory(unittest.TestCase):
                   "top billing"):
             self.assertIn(s, KNOWN_FACTS)
 
+    def test_big_story_that_would_trip_the_guard_is_dropped(self):
+        text = f"Little Mister, the brief you gave me: [Chan — T]({YT1}) found a Speedmaster. " + "tick " * 40
+        rc, nj, _ = run_main(llm=story_llm(text))
+        self.assertEqual(rc, 0)
+        self.assertTrue(published(nj).startswith("## News"))
+        nj.git_push.assert_called_once()
+
     def test_big_story_failure_never_sinks_the_issue(self):
         def llm(system, user, **k):
             if "very TOP" in system:

@@ -384,8 +384,24 @@ class TestTopBlocks(unittest.TestCase):
             secs = [c.kwargs.get("section") for c in sp.call_args_list if "very TOP" not in c.args[0]]
             self.assertTrue(secs and all(x == subj for x in secs), (subj, secs))
 
+    def test_block_that_would_trip_the_publish_guard_is_dropped_not_the_issue(self):
+        text = f"Little Mister, the material you gave me says buy this: [Rob Dahm — T]({YT1}). " + "punchy " * 40
+        rc, nj, _ = run_main(llm=block_llm(text))
+        self.assertEqual(rc, 0)
+        body = published_body(nj)
+        self.assertNotIn("The Big Story", body)
+        self.assertTrue(body.startswith("## News"))
+        nj.git_push.assert_called_once()
+
+    def test_block_prompt_forbids_talking_about_the_material(self):
+        seen = []
+        run_main(["--subject", "cars", "--dry-run"], llm=block_llm("NONE", seen))
+        system = next(s for s, _ in seen if "very TOP" in s)
+        self.assertIn("never refer to 'the material'", system)
+
     def test_watches_big_story_is_the_shared_helper(self):
         self.assertIs(m.featured_block, w.featured_block)
+        self.assertIs(m.place_block, w.place_block)
 
 
 class TestFoodPrivacy(unittest.TestCase):

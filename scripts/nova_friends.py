@@ -45,7 +45,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_journal as nj          # noqa: E402
 import nova_voice                  # noqa: E402
 from nova_watches_and_friends import (MEM_DSN, MODEL, OPS_DSN, _connect, digest, featured_block,  # noqa: E402
-                                      group_videos, sources, split_title, words)
+                                      group_videos, place_block, sources, split_title, words)
 
 VID_PER, VID_MAX = 1600, 30         # ~48k chars of video transcript
 ART_PER, ART_MAX = 700, 24          # + ~17k of articles: under the size that hangs claude -p
@@ -419,9 +419,14 @@ def main():
         except Exception as e:  # noqa: BLE001 — recipe memories are optional grounding
             log(f"recipe memories unavailable ({e})")
     block = top_block(a.subject, videos, arts, recipes, food_rules)
-    if block:
-        body = block + "\n" + body
+    if not title or len(title) < 8:
+        title = f"{name} — {week}" if daily else f"{name} — Week Ending {week}"
+    title = title if title.lower().startswith(name.lower()) else f"{name}: {title}"
+    body = place_block(title, block, body)
+    if block and body.startswith(block):
         log(f"{FEATURES[a.subject][0]}: {words(block)} words at the top")
+    else:
+        block = ""
 
     body += "\n\n## Sources\n\n"
     if videos:
@@ -432,9 +437,6 @@ def main():
     if linked:
         body += "\n### Recipe\n\n" + source_list(linked) + "\n"
     body = body.rstrip() + "\n"
-    if not title or len(title) < 8:
-        title = f"{name} — {week}" if daily else f"{name} — Week Ending {week}"
-    title = title if title.lower().startswith(name.lower()) else f"{name}: {title}"
     hit = BANNED.search(title + "\n" + body)
     if hit:
         log(f"NOT PUBLISHED — public-journal check tripped on {hit.group(0)!r} (fail closed)")

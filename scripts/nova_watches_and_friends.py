@@ -123,7 +123,9 @@ def featured_block(heading, task, material, items, rules, llm=None, max_words=45
     ctx = (f"You are writing the '{heading}' block that sits at the very TOP of the issue, above the roundup. "
            f"{task} Short and punchy: 80-300 words of markdown, no headers, no title line, start directly with "
            "the prose. Credit the source by name and link it with a markdown link, using ONLY URLs from the "
-           "LINKABLE SOURCES list — never any other URL. Use only facts that are actually in the material. "
+           "LINKABLE SOURCES list — never any other URL. Use only facts that are actually in the material, but write "
+           "it as reporting: never refer to 'the material', 'the sources', 'the excerpts', 'the brief' or what you "
+           "were given, and do not open by addressing Little Mister. "
            "If the material cannot support this block, reply with exactly NONE and nothing else. " + rules)
     linkable = "\n".join(f"- {v['channel']} — {v['title'] or 'video'}: {v['url']}" for v in items if v.get("url"))
     try:
@@ -153,6 +155,24 @@ def featured_block(heading, task, material, items, rules, llm=None, max_words=45
         log(f"{heading}: {reason} — block omitted (fail closed)")
         return ""
     return f"## {heading}\n\n{text}\n"
+
+
+def place_block(title, block, body):
+    """Put the featured block on top of body — unless that would make the publish guard reject the
+    whole issue (the block is the new opening, and the guard reads the opening). Then the block is
+    dropped and the issue publishes without it (2026-10-19: a Buying Recommendation that opened
+    "Little Mister ... the material" got a whole Tech issue blocked)."""
+    if not block:
+        return body
+    try:
+        from nova_journal_guard import is_publishable
+        ok, why = is_publishable(title, block + "\n" + body)
+        if not ok and is_publishable(title, body)[0]:
+            log(f"featured block dropped — it would trip the publish guard ({why})")
+            return body
+    except Exception as e:  # noqa: BLE001 — the guard runs again inside publish_hugo anyway
+        log(f"guard pre-check unavailable ({e})")
+    return block + "\n" + body
 
 
 def main():
@@ -251,7 +271,7 @@ def main():
                          "material (a release, a market move, a find, a scoop) and write it up: what happened, why "
                          "it matters, who covered it. If a new Peter Piccolino episode is in the material, it IS the "
                          "Big Story — he gets top billing.", digest(news), news, block_rules, llm=nj.call_openrouter)
-    body = (big + "\n" if big else "") + news_body
+    body = news_body
     if fish_body:
         fish_body = re.sub(r"^#+\s*Fishbowl[^\n]*\n", "", fish_body.strip())
         fish_body = re.sub(r"^(#{2,5}) ", r"#\1 ", fish_body, flags=re.M)   # nest under the section header
@@ -261,6 +281,7 @@ def main():
     if not title or len(title) < 8:
         title = f"Watches and Friends — {week}" if daily else f"Watches and Friends — Week Ending {week}"
     title = title if title.lower().startswith("watches and friends") else f"Watches and Friends: {title}"
+    body = place_block(title, big, body)
     log(f"{words(body)} words: {title}")
     if a.dry_run:
         print(body)
