@@ -103,7 +103,8 @@ WORKS = [
     W("upanishads_2", "Hinduism", "Upanishads, part 2 (SBE 15)", "F. Max Müller", 1884, "hin/sbe15/index.htm", 120, "section"),
     W("gita_arnold", "Hinduism", "Bhagavad Gita (The Song Celestial)", "Sir Edwin Arnold", 1885, "hin/gita/index.htm", 18, "chapter"),
     W("gita_telang", "Hinduism", "Bhagavad Gita (SBE 8)", "Kashinath Trimbak Telang", 1882, "hin/sbe08/index.htm", 18, "chapter"),
-    W("mahabharata", "Hinduism", "Mahabharata", "Kisari Mohan Ganguli", 1896, "hin/maha/index.htm", 2100, "section"),
+    W("mahabharata", "Hinduism", "Mahabharata", "Kisari Mohan Ganguli", 1896, "hin/maha/mahatxt.zip", 2100, "section",
+      kind="maha_zip"),  # archived index is the JS redesign (no book links); sacred-texts' own all-books text zip instead
     W("ramayana", "Hinduism", "Ramayana", "Ralph T. H. Griffith", 1895, "hin/rama/index.htm", 650, "canto"),
     W("yoga_sutras", "Hinduism", "Yoga Sutras of Patanjali", "Charles Johnston", 1912, "hin/ysp/index.htm", 4, "book"),
     W("manu", "Hinduism", "Laws of Manu (SBE 25)", "Georg Bühler", 1886, "hin/manu.htm", 12, "chapter", scope="hin/manu/"),
@@ -526,8 +527,44 @@ def ia_units(raw: str, size: int = 6000) -> list:
     return out
 
 
+def maha_sections(raw: str) -> tuple:
+    """-> (parva_name, [(section_label, text)]) for one maha<NN>.txt of sacred-texts' Mahabharata zip.
+    Section heads are 'SECTION XII' (most books) or a bare number line (books 8-11, 16-18). Pure."""
+    raw = raw.replace("\r\n", "\n")
+    m = re.search(r"(?m)^BOOK \d+\s*\n\s*\n?\s*(.+?)\s*$", raw)
+    parva = m.group(1).strip().title().replace("-Parva", " Parva") if m else ""
+    raw = re.split(r"(?m)^\s*FOOTNOTES\s*$", raw)[0]
+    raw = re.sub(r"(?m)^\s*END OF .*PARVA.*$", "", raw)
+    parts = re.split(r"(?m)^[ \t]*(SECTION [IVXLCDM]+|\d{1,3})[ \t]*$", raw)
+    out = []
+    for i in range(1, len(parts) - 1, 2):
+        txt = parts[i + 1].strip()
+        if len(txt) >= 80:
+            out.append((parts[i].title() if parts[i].startswith("SECTION") else f"Section {parts[i]}", txt))
+    return parva, out
+
+
 def units(work: dict, max_pages: int = 0):
     """Yield (uid_base, section, text, extra_meta) for a work."""
+    if work["kind"] == "maha_zip":
+        d = CACHE / "maha_zip" / "txt"
+        if not d.exists():
+            import zipfile
+            z = CACHE / "maha_zip" / "mahatxt.zip"
+            if not z.exists():
+                z.parent.mkdir(parents=True, exist_ok=True)
+                z.write_bytes(http_get(f"https://web.archive.org/web/2022id_/{ST}{work['index']}"))
+            zipfile.ZipFile(z).extractall(d)
+        for f in sorted(d.glob("maha*.txt")):
+            book = int(re.search(r"(\d+)", f.name).group(1))
+            parva, secs = maha_sections(f.read_bytes().decode("utf-8", "replace"))
+            for k, (label, text) in enumerate(secs, 1):
+                if max_pages and k > max_pages:
+                    break
+                yield f"b{book:02d}s{k:03d}", f"Book {book}, {parva}, {label}", text, {
+                    "book": book, "parva": parva, "section_no": k,
+                    "url": f"{ST}hin/m{book:02d}/index.htm", "via": "sacred-texts mahatxt.zip (Wayback)"}
+        return
     if work["kind"] == "ia":
         for ident in work["index"].split():
             vol = int(re.search(r"(\d+)\D*$", ident).group(1))
@@ -561,7 +598,7 @@ def manifest_upsert(work: dict, **fields):
     import psycopg2
     cols = {"tradition": work["tradition"], "vector": work["vector"], "work": work["work"],
             "translator": work["translator"], "year": work["year"], "license": work["license"],
-            "source_url": (ST + work["index"]) if work["kind"] == "st" else
+            "source_url": (ST + work["index"]) if work["kind"] in ("st", "maha_zip") else
             f"{IA}details/{work['index'].split()[0]} (+{len(work['index'].split()) - 1} more volumes)" if work["kind"] == "ia" else
             f"https://github.com/suttacentral/bilara-data/tree/published/{BILARA_SUB}/{work['index']}",
             "expected_units": work["expected"], "unit_kind": work["unit"], **fields}

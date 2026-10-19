@@ -236,7 +236,7 @@ def units(work: dict):
                                                      "via": "Internet Archive OCR (cleaned)"}
         return
     if work["kind"] == "st":
-        for k, (path, title, text) in enumerate(nis.crawl_st({**work, "split_re": None}), 1):
+        for k, (path, title, text) in enumerate(nis.crawl_st({**work, "split_re": None, "force_index": True}), 1):
             if re.search(r"(?i)^(title page|contents|index|bibliography|abbreviations|list of)", title):
                 continue
             yield path.rsplit("/", 1)[-1].replace(".htm", ""), title, text, {
