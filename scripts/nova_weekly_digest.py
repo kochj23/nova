@@ -695,7 +695,7 @@ def publish_to_site(full_digest: str, editorial: str, date_str: str):
     timestamp = _now().strftime("%Y-%m-%dT%H:%M:%S-07:00")
     slug = f"{date_str}-daily-digest"
 
-    content_dir = HUGO_ROOT / "content/operations"
+    content_dir = HUGO_ROOT / "content/burbank-ops"
     content_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate cover image

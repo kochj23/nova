@@ -8,7 +8,7 @@ def run(args):
     print(">", " ".join(args), "->", r.returncode)
     if r.stdout.strip(): print("  out:", r.stdout.strip()[-300:])
     if r.stderr.strip(): print("  err:", r.stderr.strip()[-300:])
-run(["git", "rm", "-f", f"content/operations/{SLUG}.md"])
+run(["git", "rm", "-f", f"content/burbank-ops/{SLUG}.md"])
 run(["git", "rm", "-f", f"static/images/operations/{SLUG}.webp"])
 run(["git", "commit", "-m", "Retract Frigate scout article - already in production (#635); scout false positive, now guarded."])
 # Rebase onto origin BEFORE pushing so a diverged clone can't silently strand commits.

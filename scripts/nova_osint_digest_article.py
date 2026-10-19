@@ -50,7 +50,7 @@ def call_llm(system: str, user: str, max_tokens: int = 8000) -> str:
 import nova_dsn as _nova_dsn  # noqa: E402
 DSN = _nova_dsn.pg_dsn("nova_ops")
 HUGO_ROOT = Path.home() / "nova-journal"
-CONTENT_DIR = HUGO_ROOT / "content/operations"
+CONTENT_DIR = HUGO_ROOT / "content/burbank-ops"
 IMAGES_DIR = HUGO_ROOT / "static/images/operations"
 LOG_FILE = Path.home() / ".openclaw/logs/osint_digest_article.log"
 LOOKBACK_DAYS = 7

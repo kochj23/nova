@@ -36,7 +36,7 @@ RETIRED_CONTENT_SCRIPTS = [
 ]
 
 # nova_journal.py <profile> subcommands that replaced the old content tasks.
-JOURNAL_PROFILES = ["essay", "opinion", "after-dark", "research", "digest", "dream", "art"]
+JOURNAL_PROFILES = ["essay", "opinion", "after-dark", "research", "digest", "art"]
 
 
 def _journal_profile_keys() -> list[str]:

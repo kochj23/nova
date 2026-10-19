@@ -31,7 +31,7 @@ from nova_image_utils import generate_image
 from nova_notify import notify
 
 HUGO_ROOT = (Path.home() / "nova-journal")
-CONTENT_DIR = HUGO_ROOT / "content/operations"
+CONTENT_DIR = HUGO_ROOT / "content/burbank-ops"
 IMAGES_DIR = HUGO_ROOT / "static/images/security"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_security_weekly.log"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"

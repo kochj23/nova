@@ -272,7 +272,7 @@ class TestRetry(unittest.TestCase):
 class TestUnit(unittest.TestCase):
     def test_article_length_table_lookup_per_profile(self):
         G, N = nj.EXPAND_GROUNDED, nj.EXPAND_NEVER
-        expect = {"ops-security": (300, 700, N), "emergency-breaking": (300, 700, N), "dream": (400, 900, N),
+        expect = {"ops-security": (300, 700, N), "emergency-breaking": (300, 700, N),
                   "unclaimed-digest": (600, 1200, N), "digest": (600, 1200, N), "copenhagen": (600, 1200, N),
                   "weekly-summary": (700, 1400, N), "opinion": (1000, 1800, G), "fishbowl-daily": (1000, 1800, G),
                   "local-airwaves": (1200, 2000, G), "tech-today": (1200, 2000, G), "synthesis": (1500, 2500, G),
@@ -290,7 +290,7 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(nj.LONGFORM_OVERRIDES, [])                               # Jordan names the stories
         for prof, (lo, hi, pol) in nj.ARTICLE_LENGTH.items():
             self.assertLess(lo, hi, prof); self.assertIn(pol, (G, N), prof)
-        for p in ("essay", "opinion", "tech-today", "research", "synthesis", "digest", "dream"):
+        for p in ("essay", "opinion", "tech-today", "research", "synthesis", "digest"):
             self.assertIn(p, nj.PROFILES)                                        # keys are real profile names
 
     def test_sources_from_memories(self):
@@ -327,8 +327,8 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(nj._extract_field("nothing", "TITLE"), "")
         self.assertEqual(nj._topic_to_tags("2024 Quantum Networking Basics | extra"), ["quantum", "networking"])
         self.assertEqual(nj._topic_to_tags("a to be"), [])
-        self.assertEqual(nj._canon_section("rando"), "operations")
-        self.assertEqual(nj._canon_section("essays"), "essays")
+        self.assertEqual(nj._canon_section("rando"), "burbank-ops")
+        self.assertEqual(nj._canon_section("essays"), "research")
         self.assertEqual(nj._canon_section("tech-today"), "tech")   # Tech Today -> Tech and Friends
         self.assertEqual(nj.PROFILES["tech-today"]["section"], "tech")
 
@@ -380,14 +380,15 @@ class TestUnit(unittest.TestCase):
         nj.notify = MagicMock()
         nj.notify_slack("rando", "T", "word " * 100)
         kw = nj.notify.call_args[1]
-        self.assertEqual(nj.notify.call_args[0][0], "Nova Journal — operations: T")
+        self.assertEqual(nj.notify.call_args[0][0], "Nova Journal — burbank-ops: T")
         self.assertTrue(kw["body"].endswith("...") and len(kw["body"]) <= 254)
-        self.assertEqual((kw["level"], kw["category"], kw["meta"]), ("info", "journal", {"section": "operations"}))
+        self.assertEqual((kw["level"], kw["category"], kw["meta"]), ("info", "journal", {"section": "burbank-ops"}))
 
 
 class TestSectionRemap(unittest.TestCase):
     def test_merged_sections_route_to_research(self):
-        self.assertEqual(nj.SECTION_REMAP, {"essays": "research", "synthesis": "research", "tech-today": "tech"})
+        self.assertEqual(nj.SECTION_REMAP, {"rando": "burbank-ops", "tech-today": "tech", "operations": "burbank-ops",
+                                            "local": "burbank-ops", "essays": "research", "synthesis": "research"})
 
 
 class TestIntegration(unittest.TestCase):
@@ -757,7 +758,7 @@ class TestIntegration(unittest.TestCase):
         self.assertEqual(art.read_text(), "router [redacted-mac] rebooted")
         self.assertIn(["git", "add", "content/essays/leak.md"], calls)
         commit = next(c for c in calls if c[:2] == ["git", "commit"])
-        self.assertEqual(commit[3], f"operations: {nj.today_str()} — A title that is definitely longer than fifty chara")
+        self.assertEqual(commit[3], f"burbank-ops: {nj.today_str()} — A title that is definitely longer than fifty chara")
         self.assertEqual(calls[-1], ["git", "push"])
         self.assertIn("Pushed to GitHub — deploy triggered", out.getvalue())
 

@@ -29,7 +29,7 @@ import nova_journal as nj
 # ── Config ────────────────────────────────────────────────────────────────────
 
 HUGO_ROOT = (Path.home() / "nova-journal")
-CONTENT_DIR = HUGO_ROOT / "content/local"
+CONTENT_DIR = HUGO_ROOT / "content/burbank-ops"
 IMAGES_DIR = HUGO_ROOT / "static/images/local"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_local_burbank.log"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"

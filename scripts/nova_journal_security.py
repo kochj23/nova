@@ -45,7 +45,7 @@ from nova_notify import notify as nova_notify
 # ── Config ────────────────────────────────────────────────────────────────────
 
 HUGO_ROOT = (Path.home() / "nova-journal")
-CONTENT_DIR = HUGO_ROOT / "content/operations"
+CONTENT_DIR = HUGO_ROOT / "content/burbank-ops"
 IMAGES_DIR = HUGO_ROOT / "static/images/operations"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_journal_security.log"
 # Internal Wazuh/firewall/IDS telemetry is summarized on-box (local Ollama)

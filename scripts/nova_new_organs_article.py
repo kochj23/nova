@@ -24,7 +24,7 @@ from nova_image_utils import generate_image
 from nova_voice import system_prompt
 
 HUGO_ROOT = Path.home() / "nova-journal"
-CONTENT_DIR = HUGO_ROOT / "content/operations"
+CONTENT_DIR = HUGO_ROOT / "content/burbank-ops"
 IMAGES_DIR = HUGO_ROOT / "static/images/operations"
 
 RESEARCH = """

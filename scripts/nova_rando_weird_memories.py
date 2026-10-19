@@ -66,7 +66,7 @@ def sanitize_memories(memories: list[dict]) -> list[dict]:
 # ── Config ────────────────────────────────────────────────────────────────────
 
 HUGO_ROOT = (Path.home() / "nova-journal")
-CONTENT_DIR = HUGO_ROOT / "content/operations"
+CONTENT_DIR = HUGO_ROOT / "content/burbank-ops"
 IMAGES_DIR = HUGO_ROOT / "static/images/operations"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_rando_weird.log"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"

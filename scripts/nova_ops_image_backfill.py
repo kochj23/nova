@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.expanduser("~/.openclaw/scripts"))
 from nova_image_utils import generate_image
 
 REPO=os.path.expanduser("~/nova-journal")
-CONTENT=f"{REPO}/content/operations"
+CONTENT=f"{REPO}/content/burbank-ops"
 IMGDIR=f"{REPO}/static/images/operations"
 LOG=os.path.expanduser("~/.openclaw/logs/ops_image_backfill.log")
 def log(m): open(LOG,"a").write(f"[{time.strftime('%H:%M:%S')}] {m}\n")
