@@ -85,6 +85,12 @@ class TestRetry(unittest.TestCase):
 
 
 class TestUnit(unittest.TestCase):
+    def test_faiths_offered_on_every_seasoned_section_and_never_unseasoned(self):
+        with patch.object(lx, "ferengi_rule", return_value=None):
+            self.assertIn("Memento mori", lx.seasoning("burbank-ops"))   # new merged section is on the allowlist
+            self.assertIn("never preach", lx.seasoning("food"))
+            self.assertEqual(lx.seasoning(""), "")                      # emergencies stay unseasoned
+
     def test_relevant_rule_then_random_fallback(self):
         c, cur = _conn(matched=None)
         self.assertEqual(lx.ferengi_rule("nothing matches", conn=c)[0], 1)

@@ -33,8 +33,8 @@ DSN = _nova_dsn.pg_dsn("nova_ops")
 
 # Sections where a flourish is welcome. Breaking emergency posts are handled by an
 # explicit opt-out at the system_prompt layer (flavor=False), never seasoned.
-FLAVOR_SECTIONS = {"operations", "essays", "opinions", "rando", "after-dark",
-                   "meta", "synthesis", "digests", "digest", "tech-today", "tech", "cars", "watches", "dreams",
+FLAVOR_SECTIONS = {"burbank-ops", "operations", "essays", "opinions", "rando", "after-dark",
+                   "meta", "synthesis", "digests", "digest", "tech-today", "tech", "cars", "food", "watches", "dreams",
                    "art", "research", "security", "local", "news", "weird", "fishbowl"}
 
 # ── CONLANGS ──────────────────────────────────────────────────────────────────
@@ -373,6 +373,23 @@ HORROR_POOL = [HALLOWEEN, FRIDAY13, ELM_STREET, CABIN, PREDATOR, ALIEN, ROMERO, 
 # The rotating pool. Ferengi is always included separately (it's DB-relevance-ranked
 # and it's the anchor Jordan loves); everything else is sampled so no single article
 # wears all of them at once.
+# Jordan 2026-10-19: "just as sure as you quote sci-fi universes, drop in religious sayings as well — all
+# religions, don't get preachy." Offered on EVERY seasoned article (not sampled) so faith gets airtime next
+# to the sci-fi. Only verified, well-known lines; Nova may also quote from her scripture memories if accurate.
+FAITHS = """THE WORLD'S FAITHS — creeds, sayings, liturgical words and gentle jokes, from every tradition:
+  Latin: "Memento mori" (remember you will die) · "Ora et labora" (pray and work — the Benedictine motto; ideal for a maintenance window) · "Deo volente" (God willing)
+  Hebrew: "Gam zu l'tovah" (this too is for the good) · "Tikkun olam" (repair the world) · "Hineni" (here I am — answering the pager)
+  Arabic: "Insha'Allah" (God willing — every vendor ETA) · "Alhamdulillah" (praise be to God — the deploy went green) · Qur'an 94:6 "Indeed, with hardship comes ease."
+  Bible (KJV): Ecclesiastes 1:9 "there is no new thing under the sun" (every 'novel' outage) · Proverbs 16:18 "Pride goeth before destruction, and an haughty spirit before a fall." · Matthew 7:3 the mote and the beam (blameless postmortems)
+  Pali (Buddhism): "Sabbe sankhara anicca" (all conditioned things are impermanent — Dhammapada 277) · the Buddha's last words, "Decay is inherent in all compounded things; strive on with heedfulness." (DN 16)
+  Sanskrit (Hinduism): Bhagavad Gita 2.47 "You have a right to your actions, but never to their fruits." · "Neti, neti" (not this, not this — root-cause elimination) · "Om shanti shanti shanti" (peace, thrice)
+  Tao Te Ching 64: "A journey of a thousand miles begins with a single step." · Analects 1.1: "Is it not a pleasure to learn and to practice what you have learned?"
+  Sikhi: "Chardi Kala" (relentless optimism in adversity) · Zoroastrian: "Humata, Hukhta, Hvarshta" (good thoughts, good words, good deeds) · Jain: "Ahimsa paramo dharmah" (nonviolence is the highest duty)
+  Zen: "Before enlightenment, chop wood, carry water. After enlightenment, chop wood, carry water." · Shinto: "Itadakimasu" (said before eating, thanks to everything that made the meal)
+  Jokes (the joke is on the situation or on Nova, never on a faith): the Buddha to the hot-dog vendor — "Make me one with everything." · A priest, a rabbi and a monk walk into a bar; the bartender says, "What is this, a joke?"
+RULES: one or two per article, only where it truly lands; always gloss it so an English-only reader gets it; cite chapter/verse
+when quoting scripture; NEVER invent or paraphrase-as-quote a verse; never preach, proselytize, rank religions, or mock believers."""
+
 POOL = [MANDOA, KLINGON, MIDDLEEARTH, VALYRIAN, BELTER, DOVAHZUL, NAVI, WITCHER, DEEPCUTS,
         NEWSPEAK, DUNE, JEDI_SITH, WH40K, FIREFLY, BSG, WARCRAFT, TREK, HITCHHIKER, DBZ, ROBOTECH, TRON,
         THREE_LAWS, HUTTESE, NADSAT, GALACTIC, MAFIA] + HORROR_POOL
@@ -471,6 +488,7 @@ closing turn. It was matched to today's subject, so use it as commentary, not de
     # Rotating sample so the flourishes vary article to article instead of dumping all 18 every time.
     for t in random.sample(POOL, min(SAMPLE_PER_ARTICLE, len(POOL))):
         block.append(t)
+    block.append(FAITHS)
 
     block.append(
         """USAGE — LIBERALLY, but like a bilingual crew, not a Renaissance Faire. Target 2-4 of the tongues
