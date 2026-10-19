@@ -15,7 +15,46 @@ CLI/auth hiccup can never silently break a generation.
 DO NOT use for high-volume/agentic workloads (Strix, per-item loops): that risks the
 Max plan's rate limits and is off-label for bulk automation.
 """
-import subprocess, os, sys
+import subprocess, os, sys, shutil
+
+# Where `claude` lives across the fleet. launchd / systemd / scheduler children often run with a
+# minimal PATH (the core scheduler: /usr/local/bin:/usr/bin:/bin), so a bare "claude" argv fails
+# with [Errno 2] even though the CLI is installed — that is how 16 articles died between
+# 2026-10-18 16:36 and 10-19 09:27 (core leader failed over to nova-core3, whose CLI is the
+# per-user install in ~/.local/bin; .6's Homebrew link was also mid-update). Checked in order
+# after $NOVA_CLAUDE_BIN and shutil.which().
+CLAUDE_KNOWN_PATHS = (
+    "/opt/homebrew/bin/claude",          # .6 / Apple Silicon Homebrew (npm global link)
+    "/usr/local/bin/claude",             # nova-core (npm global, root-owned link)
+    "~/.local/bin/claude",               # nova-core3 native installer (per-user)
+    "~/.claude/local/claude",            # `claude migrate-installer` local install
+    "~/.npm-global/bin/claude",
+    "/usr/bin/claude",
+)
+
+
+class ClaudeCLIMissing(FileNotFoundError):
+    """The Claude Code CLI is not installed / not reachable from this process."""
+
+
+def resolve_claude_bin() -> str:
+    """Absolute path of an executable `claude`, or raise ClaudeCLIMissing with an actionable
+    message (host, PATH, every location tried, how to fix). Never returns a bare name."""
+    tried = []
+    override = os.environ.get("NOVA_CLAUDE_BIN", "").strip()
+    cands = ([override] if override else []) + [shutil.which("claude") or ""] + list(CLAUDE_KNOWN_PATHS)
+    for c in cands:
+        if not c:
+            continue
+        p = os.path.expanduser(c)
+        tried.append(p)
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    import socket
+    raise ClaudeCLIMissing(
+        f"Claude Code CLI not found on {socket.gethostname()} — tried {', '.join(dict.fromkeys(tried))} "
+        f"(PATH={os.environ.get('PATH', '')}). Fix: reinstall (`npm i -g @anthropic-ai/claude-code` or the "
+        f"native installer), or set NOVA_CLAUDE_BIN=/path/to/claude, then re-run the job.")
 
 
 def claude_oauth_token() -> str | None:
@@ -65,7 +104,7 @@ def claude_env(base: dict | None = None) -> dict:
 def claude_generate(user: str, system: str | None = None,
                     model: str = "sonnet", timeout: int = 240) -> str:
     prompt = user if not system else f"[System instructions]\n{system}\n\n[Task]\n{user}"
-    cmd = ["claude", "-p"]
+    cmd = [resolve_claude_bin(), "-p"]   # ClaudeCLIMissing (a FileNotFoundError) if absent
     if model:
         cmd += ["--model", model]
     # Prompt goes over stdin, not argv -- a big prompt (e.g. fishbowl channel churn data)

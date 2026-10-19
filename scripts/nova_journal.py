@@ -320,6 +320,105 @@ def fetch_memories_by_source(source: str, n: int = 25) -> list[dict]:
 # LLM GENERATION
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ── Fail loudly when the model is unavailable (2026-10-19) ──────────────────────
+# Incident 2026-10-18 16:36 -> 10-19 09:27: `claude` was unreachable, call_openrouter returned
+# None, and generators that log "LLM generation failed" and `return` EXITED 0 — the scheduler
+# recorded success, its retry/alerting never fired, and 16 articles (the BLUF among them) were
+# silently missing until Jordan asked. Now: every terminal LLM failure is recorded, and a process
+# that (a) is a generator script run from this directory, (b) had LLM failures and ZERO LLM
+# successes, and (c) published nothing, exits EXIT_LLM_UNAVAILABLE (75, EX_TEMPFAIL) instead of 0.
+# Intentional skips ("no fresh material") never call the model, or call it successfully, so they
+# still exit 0. Generators may call exit_if_llm_unavailable() explicitly at their failure branch;
+# the atexit guard below is the catch-all for the ~40 that import this module.
+# Opt out per process: NOVA_LLM_FAIL_LOUD=0.
+EXIT_LLM_UNAVAILABLE = 75
+_RUN_STATE = {"llm_ok": 0, "llm_fail": [], "published": 0}
+
+
+def _is_generator_process() -> bool:
+    """True when __main__ is a script in this directory (a scheduled/manual generator run) — not
+    pytest, not `python tests/test_x.py`, not an interactive import."""
+    try:
+        main = Path(sys.argv[0]).resolve()
+        return (main.parent == Path(__file__).resolve().parent and main.suffix == ".py"
+                and not main.name.startswith("test_"))
+    except Exception:
+        return False
+
+
+def _llm_failed(reason: str):
+    _RUN_STATE["llm_fail"].append(" ".join(str(reason).split())[:300])
+
+
+def llm_unavailable() -> bool:
+    """The model was unreachable for this whole run: failures and no success."""
+    return bool(_RUN_STATE["llm_fail"]) and _RUN_STATE["llm_ok"] == 0
+
+
+def note_published(n: int = 1):
+    """Count an article as published by this process (publish_hugo / git_push do this already;
+    call it from any generator that publishes by some other route)."""
+    _RUN_STATE["published"] += n
+
+
+def exit_if_llm_unavailable(who: str = ""):
+    """Call at a generator's 'generation failed' branch: exits EXIT_LLM_UNAVAILABLE when the
+    model/CLI was unavailable and nothing was published, so the scheduler retries + alerts.
+    Returns normally (caller keeps its own exit code) otherwise."""
+    if llm_unavailable() and not _RUN_STATE["published"]:
+        log(f"LLM UNAVAILABLE{' (' + who + ')' if who else ''} — nothing published; exiting "
+            f"{EXIT_LLM_UNAVAILABLE} so the scheduler alerts/retries. Last error: {_RUN_STATE['llm_fail'][-1]}")
+        sys.exit(EXIT_LLM_UNAVAILABLE)
+
+
+def _fail_loud_atexit():
+    if os.environ.get("NOVA_LLM_FAIL_LOUD", "1") == "0" or not _is_generator_process():
+        return
+    if not llm_unavailable() or _RUN_STATE["published"]:
+        return
+    try:
+        log(f"LLM UNAVAILABLE — {len(_RUN_STATE['llm_fail'])} failed call(s), 0 succeeded, nothing published; "
+            f"forcing exit {EXIT_LLM_UNAVAILABLE} (was going to exit 0 = silent miss). "
+            f"Last error: {_RUN_STATE['llm_fail'][-1]}")
+    except Exception:
+        pass
+    try:   # os._exit skips later atexit handlers: flush what matters first
+        import logging
+        logging.shutdown()
+    except Exception:
+        pass
+    for f in (sys.stdout, sys.stderr):
+        try:
+            f.flush()
+        except Exception:
+            pass
+    os._exit(EXIT_LLM_UNAVAILABLE)
+
+
+import atexit as _atexit  # noqa: E402
+_atexit.register(_fail_loud_atexit)
+
+
+def _record_publish(event: str, section=None, path=None, title=None):
+    """Append to nova_ops.journal_publish_log (what nova_journal_publish_check.py verifies
+    against). Generator processes only; never fatal; 3s connect budget."""
+    if not _is_generator_process():
+        return
+    try:
+        import socket
+        import psycopg2
+        c = psycopg2.connect(_nova_dsn.pg_dsn("nova_ops"), connect_timeout=3)
+        c.autocommit = True
+        with c.cursor() as cur:
+            cur.execute("INSERT INTO journal_publish_log (host, script, args, event, section, path, title) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                        (socket.gethostname(), Path(sys.argv[0]).name, " ".join(sys.argv[1:]), event,
+                         section, str(path) if path else None, (title or "")[:300]))
+        c.close()
+    except Exception as e:
+        log(f"publish ledger write skipped: {str(e)[:120]}")
+
+
 def call_openrouter(system: str, user: str, model: str = "anthropic/claude-haiku-4.5",
                     max_tokens: int = 4000, temperature: float = 0.7,
                     top_p: float = 0.9, timeout: int = 240) -> str | None:
@@ -377,12 +476,23 @@ def call_openrouter(system: str, user: str, model: str = "anthropic/claude-haiku
     # dream on adjacent days). Retry transient failures with backoff; do NOT retry a
     # timeout (too expensive) or the size refusal above. One fix covers all ~15 callers.
     import time as _time
+    # Resolve the CLI to an absolute path (shutil.which + known install locations) — a bare
+    # "claude" under a minimal scheduler PATH is the [Errno 2] that silently killed 16 articles.
+    try:
+        from nova_claude_code import resolve_claude_bin
+        claude_bin = resolve_claude_bin()
+    except ImportError:          # helper unavailable: keep the old PATH lookup
+        claude_bin = "claude"
+    except FileNotFoundError as e:   # ClaudeCLIMissing: no point retrying
+        log(f"Claude Code call failed ({cli_model}): {e}")
+        _llm_failed(e)
+        return None
     _attempts = 3
     for _attempt in range(1, _attempts + 1):
         proc = None
         try:
             proc = subprocess.Popen(
-                ["claude", "-p", "--model", cli_model, "--system-prompt", system],
+                [claude_bin, "-p", "--model", cli_model, "--system-prompt", system],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, start_new_session=True, env=_env)
             try:
@@ -397,6 +507,7 @@ def call_openrouter(system: str, user: str, model: str = "anthropic/claude-haiku
                 except Exception:
                     pass
                 log(f"Claude Code call TIMED OUT after {timeout}s ({cli_model}) — killed process group")
+                _llm_failed(f"timed out after {timeout}s")
                 return None
             if proc.returncode != 0:
                 log(f"Claude Code call failed ({cli_model}) attempt {_attempt}/{_attempts}: "
@@ -404,6 +515,7 @@ def call_openrouter(system: str, user: str, model: str = "anthropic/claude-haiku
                 if _attempt < _attempts:
                     _time.sleep(2 * _attempt)
                     continue
+                _llm_failed(f"exit {proc.returncode}: {(err or '').strip()[:200]}")
                 return None
             text = (out or "").strip()
             if not text:
@@ -412,10 +524,12 @@ def call_openrouter(system: str, user: str, model: str = "anthropic/claude-haiku
                 if _attempt < _attempts:
                     _time.sleep(2 * _attempt)
                     continue
+                _llm_failed("empty output")
                 return None
             if _attempt > 1:
                 log(f"Claude Code call recovered on attempt {_attempt} ({cli_model})")
             log(f"LLM [{cli_model} via claude-code] chars out={len(text)}")
+            _RUN_STATE["llm_ok"] += 1
             return text
         except Exception as e:
             if proc is not None:
@@ -427,6 +541,7 @@ def call_openrouter(system: str, user: str, model: str = "anthropic/claude-haiku
             if _attempt < _attempts:
                 _time.sleep(2 * _attempt)
                 continue
+            _llm_failed(e)
             return None
     return None
 
@@ -1394,6 +1509,10 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
             body = weather_dateline_line() + body
     except Exception:
         pass
+    try:  # "Grounded in N memories · M sources" footer (nova_grounding, 2026-10-19); none when uncited
+        body = __import__("nova_grounding").add_to_body(body, cited_memory_ids, sources)
+    except Exception:  # noqa: BLE001
+        pass
     content_dir = HUGO_ROOT / f"content/{section}"
     images_dir = HUGO_ROOT / f"static/images/{section}"
     content_dir.mkdir(parents=True, exist_ok=True)
@@ -1455,6 +1574,8 @@ description: "{description.replace('"', "'")}"
     # (with its site-relative /images/... cover path) is deliberately excluded.
     output.write_text(front_matter + byline + scrub_home_paths(scrub_pii(body)))
     log(f"Published: {section}/{filename}")
+    note_published()
+    _record_publish("written", section, output.relative_to(HUGO_ROOT), title)
     try: __import__("nova_razor_blade").record_publish(title, section, slug, _razor_draft, body)  # never fatal
     except Exception: pass  # noqa: BLE001,E701
     try:  # store the article into Nova's vector memory as a thing she wrote (non-fatal)
@@ -1766,6 +1887,23 @@ def _git_net(args, timeout=180):
                                            stderr=f"git {args[0]} timed out after {timeout}s")
 
 
+def _records_push(fn):
+    """git_push is the publish chokepoint every generator ends at (some write their own
+    markdown and only call git_push): record the outcome in the publish ledger, and count a
+    commit as a publish for the fail-loud guard."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(section, title, *a, **kw):
+        status = fn(section, title, *a, **kw)
+        if status in (PUSH_PUSHED, PUSH_NOT_PUSHED):
+            note_published()
+        _record_publish(f"push:{status}", _canon_section(section), None, title)
+        return status
+    return wrapper
+
+
+@_records_push
 def git_push(section: str, title: str):
     """Stage, commit, push the Hugo repo — serialized fleet-wide via a PG advisory lock.
 
@@ -2603,6 +2741,10 @@ DIGEST FORMAT:
         raise RuntimeError("Digest generation failed")
 
     title = _extract_title(result)
+    try:  # thin daily generators fold into the digest as sections (nova_digest_fold, 2026-10-19)
+        result = result.rstrip() + __import__("nova_digest_fold").sections_for_digest()
+    except Exception as e:  # noqa: BLE001
+        log(f"[digest] fold sections skipped: {e}")
     return title, result
 
 

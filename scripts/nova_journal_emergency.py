@@ -63,6 +63,7 @@ from nova_weather_blurb import weather_forecast_context
 # call_openrouter, generate_image, log) so this stays consistent with the rest
 # of the journal system.
 from nova_journal import publish_hugo, git_push, call_openrouter, generate_image
+import nova_journal as _nj  # noqa: E402  (exit_if_llm_unavailable)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -433,7 +434,8 @@ Write today's LA County emergency recap for the local section. Facts first, voic
     body = _strip_meta_preamble(call_openrouter(system, user, model=MODEL, max_tokens=5000, temperature=0.85))
     if not body or len(body) < 300:
         log("Recap generation failed or too short")
-        return
+        _nj.exit_if_llm_unavailable("emergency daily recap")   # CLI/model down -> exit 75, not a silent 0
+        sys.exit(1)
 
     title = _extract_title(body)
     # If the model echoed the title as the first line, drop it from the body.
@@ -555,7 +557,8 @@ Write the breaking emergency article for the local section. Facts and what-to-do
         return
     if not body or len(body) < 150:
         log("Breaking generation failed or too short")
-        return
+        _nj.exit_if_llm_unavailable("emergency breaking")
+        sys.exit(1)
 
     title = _extract_title(body)
     first = body.strip().split("\n", 1)

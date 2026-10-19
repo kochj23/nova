@@ -240,7 +240,7 @@ class TestFunctional(unittest.TestCase):
         f = next(sw.CONTENT_DIR.glob("*.md")); text = f.read_text()
         self.assertTrue(f.name.endswith("-week-in-intelligence-29-sep-05-oct-2026.md"))
         self.assertIn('title: "📊 WEEK IN INTELLIGENCE — 29 Sep-05 Oct 2026"', text)
-        self.assertIn('categories: ["operations"]', text)
+        self.assertIn('categories: ["burbank-ops"]', text)
         self.assertIn("cover:\n  image: \"/images/security/", text)
         self.assertIn("## BLUF", text)
         cwebp = runner.named("cwebp")[0]
@@ -252,8 +252,10 @@ class TestFunctional(unittest.TestCase):
         self.assertIn("Published: security/", out.getvalue())
 
     def test_short_llm_output_publishes_nothing(self):
-        runner, _, out = _run(llm=_llm("# too short"))
-        self.assertIn("Weekly generation failed", out)
+        runner = _Runner(memories="- intel line")
+        with self.assertRaises(SystemExit) as ctx:            # fails LOUDLY now (2026-10-19), not a silent 0
+            _run(llm=_llm("# too short"), runner=runner)
+        self.assertEqual(ctx.exception.code, 1)
         self.assertEqual(list(sw.CONTENT_DIR.glob("*.md")), [])
         self.assertEqual(runner.named("git"), [])
         sw.notify.assert_not_called()

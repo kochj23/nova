@@ -154,7 +154,7 @@ Synthesize into the weekly strategic rollup."""
     result = call_llm(system, user, max_tokens=5000)
     if not result or len(result) < 500:
         log("Weekly generation failed")
-        return
+        sys.exit(1)   # no rollup = a missing article: fail loudly so the scheduler alerts/retries
 
     lines = result.strip().split("\n")
     title = lines[0].strip().lstrip("#").strip()

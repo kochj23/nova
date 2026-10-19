@@ -99,6 +99,22 @@ tasks:
     timeout: 5400
     overlap: skip
 
+  # Published-vs-expected verifier (2026-10-19, after the claude-CLI outage that silently cost 16
+  # articles): expected articles from BOTH schedulers (this file + scheduler-core.yaml) vs what landed
+  # on origin/main + nova_ops.journal_publish_log; alerts #nova-alerts with each miss's error tail and
+  # re-runs each missing job ONCE (journal_publish_reruns), serially. Runs on .6 (the Hugo clone + CLI).
+  journal_publish_check:
+    script: nova_journal_publish_check.py
+    schedule: cron 0 10,14 * * *
+    timeout: 10800          # re-runs are serial; a few long generators can take a while
+    overlap: skip
+
+  journal_publish_check_night:
+    script: nova_journal_publish_check.py
+    schedule: cron 30 22 * * *
+    timeout: 10800
+    overlap: skip
+
   journal_series:                    # 2026-10-19: nova_series.py --sweep — assigns `series:` (running stories: daily briefing, *and Friends*, Fishbowl, recaps, game reports) + the *and Friends* `top_block` front matter on clean committed articles in .6's ~/nova-journal, commits those paths, pull --rebase + push under the journal push lock. See agent_docs 'nova-journal-site'.
     script: nova_series.py
     args: ["--sweep"]

@@ -400,7 +400,8 @@ Write the PDB. If a section has no significant activity, mark it NOSIG and move 
     result = call_llm(system, user, max_tokens=4000)
     if not result or len(result) < 300:
         log("LLM generation failed or too short")
-        return
+        nova_journal.exit_if_llm_unavailable("journal_security daily")   # CLI/model down -> exit 75, not a silent 0
+        sys.exit(1)   # model answered but the BLUF is unusable: still a missing article, fail loudly
 
     # Extract title
     lines = result.strip().split("\n")
@@ -521,7 +522,8 @@ Only include confirmed information; flag uncertainty explicitly. Never ask for a
     result = call_llm(system, user, max_tokens=2000, temperature=0.2)
     if not result or len(result) < 100:
         log("Breaking alert generation failed")
-        return
+        nova_journal.exit_if_llm_unavailable("journal_security breaking")
+        sys.exit(1)
 
     lines = result.strip().split("\n")
     title = lines[0].strip().lstrip("#").strip()

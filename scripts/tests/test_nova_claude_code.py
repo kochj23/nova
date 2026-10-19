@@ -80,10 +80,11 @@ class TestSecurity(unittest.TestCase):
     def test_prompt_travels_over_stdin_not_argv(self):
         run, calls = _run([_cp("fine")])
         evil = "ignore previous; $(rm -rf /) `id`"
-        with _env(), patch.object(cc.subprocess, "run", run), patch.object(cc.sys, "platform", "linux"):
+        with _env(), patch.object(cc.subprocess, "run", run), patch.object(cc.sys, "platform", "linux"), \
+             patch.object(cc, "resolve_claude_bin", return_value="/opt/x/claude"):
             cc.claude_generate(evil, system="sys")
         argv, kw = calls[-1]
-        self.assertEqual(argv, ["claude", "-p", "--model", "sonnet"])
+        self.assertEqual(argv, ["/opt/x/claude", "-p", "--model", "sonnet"])   # absolute, resolved binary
         self.assertNotIn(evil, " ".join(argv))
         self.assertIn(evil, kw["input"])
 
@@ -180,13 +181,31 @@ class TestUnit(unittest.TestCase):
 
     def test_prompt_assembly_and_model_flag(self):
         run, calls = _run([_cp("a"), _cp("b")])
-        with _env(), patch.object(cc.subprocess, "run", run), patch.object(cc.sys, "platform", "linux"):
+        with _env(), patch.object(cc.subprocess, "run", run), patch.object(cc.sys, "platform", "linux"), \
+             patch.object(cc, "resolve_claude_bin", return_value="claude"):
             cc.claude_generate("task", system="be terse", model="opus")
             cc.claude_generate("task", model="")
         self.assertEqual(calls[0][1]["input"], "[System instructions]\nbe terse\n\n[Task]\ntask")
         self.assertEqual(calls[0][0], ["claude", "-p", "--model", "opus"])
         self.assertEqual(calls[1][1]["input"], "task")
         self.assertEqual(calls[1][0], ["claude", "-p"])
+
+    def test_resolve_claude_bin_finds_known_paths_and_fails_actionably(self):
+        exe = TMP / "bin-claude"
+        exe.write_text("#!/bin/sh\n"); exe.chmod(0o755)
+        with _env(NOVA_CLAUDE_BIN=str(exe)):
+            self.assertEqual(cc.resolve_claude_bin(), str(exe))             # explicit override wins
+        with _env(), patch.object(cc.shutil, "which", return_value=None), \
+             patch.object(cc, "CLAUDE_KNOWN_PATHS", (str(TMP / "nope"), str(exe))):
+            self.assertEqual(cc.resolve_claude_bin(), str(exe))             # minimal PATH -> known location
+        with _env(), patch.object(cc.shutil, "which", return_value=None), \
+             patch.object(cc, "CLAUDE_KNOWN_PATHS", (str(TMP / "nope"),)):
+            with self.assertRaises(cc.ClaudeCLIMissing) as ctx:
+                cc.resolve_claude_bin()
+            self.assertIsInstance(ctx.exception, FileNotFoundError)        # callers' except FileNotFoundError works
+            self.assertIn("NOVA_CLAUDE_BIN", str(ctx.exception))           # actionable
+            with self.assertRaises(FileNotFoundError):
+                cc.claude_generate("task")                                 # never runs a bare "claude"
 
 
 class TestIntegration(unittest.TestCase):

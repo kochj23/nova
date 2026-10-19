@@ -23,6 +23,7 @@ SRC = SCRIPT.read_text()
 
 def _stub_modules():
     nj = types.ModuleType("nova_journal"); nj.call_openrouter = MagicMock(return_value="")
+    nj.exit_if_llm_unavailable = MagicMock(return_value=None)
     voice = types.ModuleType("nova_voice"); voice.system_prompt = MagicMock(side_effect=lambda ctx: f"SYS {ctx}")
     ref = types.ModuleType("nova_code_reference"); ref.code_reference_block = MagicMock(return_value="\nREF")
     nn = types.ModuleType("nova_notify"); nn.notify = MagicMock(return_value=True)
@@ -88,8 +89,9 @@ def _run(rows, body="x" * 400, connect_exc=None):
     br.nj.call_openrouter = MagicMock(return_value=body)
     br.code_reference_block = MagicMock(return_value="\nREF")
     br.nova_voice.system_prompt = MagicMock(side_effect=lambda ctx: f"SYS {ctx}")
+    br.nj.exit_if_llm_unavailable = MagicMock(return_value=None)
     with redirect_stdout(io.StringIO()) as out:
-        br.main()
+        _run.rc = br.main()
     return conn, out.getvalue()
 
 
@@ -142,13 +144,16 @@ class TestRetry(unittest.TestCase):
         self.assertEqual(br.psycopg2.connect.call_count, 1)
         br.notify.assert_not_called()
 
-    def test_short_llm_output_fails_open_without_posting(self):
-        # RETRY GAP: main()/nj.call_openrouter — one call; an empty or <80 char answer skips the post
+    def test_short_llm_output_fails_loudly_without_posting(self):
+        # RETRY GAP: main()/nj.call_openrouter — one call (its own 3x retry lives in nova_journal); an
+        # empty or <80 char answer skips the post and now exits NON-ZERO (fail loud, 2026-10-19)
         for body in ("", None, "too short"):
             _, out = _run([_row()], body=body)
             self.assertEqual(br.nj.call_openrouter.call_count, 1)
             br.notify.assert_not_called()
             self.assertIn("LLM produced too little", out)
+            br.nj.exit_if_llm_unavailable.assert_called_once_with("block_report")   # 75 if the CLI was down
+            self.assertEqual(_run.rc, 1)
 
 
 class TestUnit(unittest.TestCase):
@@ -219,7 +224,7 @@ class TestFunctional(unittest.TestCase):
 
 class TestFrame(unittest.TestCase):
     def test_import_never_runs_main(self):
-        self.assertIn('if __name__ == "__main__":\n    main()', SRC)
+        self.assertIn('if __name__ == "__main__":\n    sys.exit(main())', SRC)
         code = ("import sys, types\n"
                 "for m in ('nova_journal','nova_voice','nova_code_reference','nova_notify'):\n"
                 "    sys.modules[m] = types.ModuleType(m)\n"

@@ -345,8 +345,31 @@ def regenerate(item, dry):
     if dry:
         log("    DRY-RUN — not executing")
         return False
-    # Generous timeout: the usual cause of absence is the 600s ceiling being too tight.
-    r = run(cmd, timeout=1800)
+    # Serialize with nova_journal_publish_check.py's re-runs (same PG advisory lock): two
+    # regenerators racing on one missing article is a double publish. Busy -> skip this hour.
+    lock = None
+    try:
+        import psycopg2
+        lock = psycopg2.connect(_nova_dsn.pg_dsn("nova_ops"), connect_timeout=5)
+        lock.autocommit = True
+        cur = lock.cursor()
+        cur.execute("SELECT pg_try_advisory_lock(47110816)")
+        if not cur.fetchone()[0]:
+            log("    publish_check is re-running jobs right now — skipping regeneration this pass")
+            lock.close()
+            return False
+    except Exception as e:
+        log(f"    re-run lock unavailable ({str(e)[:60]}) — proceeding unlocked")
+        lock = None
+    try:
+        if published(item["section"], dt.datetime.now(), item["matcher"])[0]:
+            log("    landed while we waited — not regenerating")
+            return True
+        # Generous timeout: the usual cause of absence is the 600s ceiling being too tight.
+        r = run(cmd, timeout=1800)
+    finally:
+        if lock is not None:
+            lock.close()          # closing the session releases the advisory lock
     log(f"    exit {r.returncode}" + (f" :: {r.stderr.strip()[-160:]}" if r.returncode else ""))
     return r.returncode == 0
 

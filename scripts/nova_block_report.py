@@ -61,7 +61,9 @@ def main():
         "Group trivial/repeat chatter into a line. Dry, factual, lightly wry. 250-500 words." + ref)
     body = nj.call_openrouter(system, block, max_tokens=1200, temperature=0.6)
     if not body or len(body) < 80:
-        print("[block-report] LLM produced too little"); return
+        print("[block-report] LLM produced too little", flush=True)
+        nj.exit_if_llm_unavailable("block_report")   # CLI/model down -> exit 75, not a silent 0
+        return 1
 
     notify(f"\U0001F3D8️ Block report — {len(rows)} calls within {RADIUS_MI} mi",
            body=body[:2800], category="block_report", dedup_key="block-report")
@@ -69,4 +71,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

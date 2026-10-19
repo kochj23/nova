@@ -21,7 +21,10 @@ scheduler:
   shell: /bin/bash
   tz: America/Los_Angeles
   env:
-    PATH: /usr/local/bin:/usr/bin:/bin
+    # ~/.local/bin first: nova-core3's Claude Code CLI is the per-user native install there; without
+    # it every article job on a core3-led scheduler died "[Errno 2] ... 'claude'" (2026-10-18/19).
+    # (env is read at start-up, not on SIGHUP — effective at the next leader start/failover.)
+    PATH: /home/kochj/.local/bin:/usr/local/bin:/usr/bin:/bin
     PYTHONPATH: /home/kochj/.openclaw/scripts
 
 slack:
