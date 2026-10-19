@@ -95,11 +95,11 @@ def process_file(md_path: Path, category: str) -> bool:
 
 def main():
     log("Starting tag backfill...")
-    # Live sections + the art archive (2026-10-19: dreams retired; essays/synthesis -> research;
+    # Live sections + the art archive (2026-10-19: dreams retired; essays/synthesis/research/opinions -> nova;
     # operations/local -> burbank-ops; tech-today -> tech).
-    categories = ["burbank-ops", "opinions", "tech", "cars", "food", "music", "military", "screen", "science", "mystery",
+    categories = ["burbank-ops", "nova", "tech", "cars", "food", "music", "military", "screen", "science", "mystery",
                   "crime", "workshop", "travel", "watches", "after-dark",
-                  "art", "research", "digests", "security", "pilot"]
+                  "art", "digests", "security", "pilot"]
     updated = 0
     skipped = 0
     errors = 0

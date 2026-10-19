@@ -36,8 +36,9 @@ else:
     def _now_dt() -> _dt_cls: return _dt_cls.now()
 
 HUGO_ROOT = (Path.home() / "nova-journal")
-# Dreams retired 2026-10-19; Essays merged into Research (images keep their old static path).
-CONTENT_ESSAYS = HUGO_ROOT / "content/research"
+# Dreams retired 2026-10-19; Essays merged into Research, then Research + Opinions into Nova and
+# Friends (content/nova). Images keep their old static path.
+CONTENT_ESSAYS = HUGO_ROOT / "content/nova"
 IMAGES_ESSAYS = HUGO_ROOT / "static/images/essays"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_publish.log"
 
@@ -49,7 +50,7 @@ def _get_tags(title: str, text: str, category: str) -> list[str]:
         return extract_tags(title, text, category, n=5)
     except Exception as e:
         log(f"Tag extraction failed ({e}) — using defaults")
-        defaults = {"research": ["research", "essay"],
+        defaults = {"nova": ["research", "essay"], "research": ["research", "essay"],
                     "opinions": ["opinion", "tech"], "tech": ["technology", "AI"], "cars": ["cars", "automotive"], "food": ["food", "cooking"],
                     "music": ["music"], "military": ["military"], "screen": ["film", "tv"], "science": ["science"],
                     "mystery": ["mystery"], "crime": ["crime"], "workshop": ["workshop", "diy"], "travel": ["travel"],
@@ -154,15 +155,15 @@ def publish_essay(title: str, source: str, essay_text: str, image_path: str | No
         log(f"Essay image copied: {img_dest.name}")
 
     timestamp = _now_dt().strftime("%Y-%m-%dT%H:%M:%S-07:00")
-    tags = _get_tags(title, essay_text, "research")
+    tags = _get_tags(title, essay_text, "research")   # canonicalised to nova by the tag extractor
     tags_yaml = json.dumps(tags)
-    related_yaml = _get_related(essay_text, "research", slug)
+    related_yaml = _get_related(essay_text, "nova", slug)
 
     front_matter = f"""---
 title: "📝 {title}"
 date: {timestamp}
 draft: false
-categories: ["research"]
+categories: ["nova"]
 tags: {tags_yaml}
 description: "A formal essay on {source_label}"
 """

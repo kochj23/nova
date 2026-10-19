@@ -268,7 +268,8 @@ def _date_range_label(start: date, end: date) -> str:
 
 def generate_summary(section: str, articles: list[dict], start: date, end: date) -> tuple[str, str] | None:
     """Have Nova write the weekly recap for one section. Returns (title, body)."""
-    section_label = section.replace("-", " ").title()
+    section_label = {"burbank-ops": "Burbank and Ops", "nova": "Nova and Friends"}.get(
+        section, section.replace("-", " ").title())
     range_label = _date_range_label(start, end)
     title = f"This Week in {section_label}: {range_label}"
 

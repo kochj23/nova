@@ -23,12 +23,12 @@ BASE_URL = "https://nova.digitalnoise.net"
 
 # Category to URL prefix mapping
 # Live sections (nova_sections.LIVE_SECTIONS) plus the archive-only art/dreams folders, whose
-# old posts are still on the site. essays/synthesis -> research, operations/local -> burbank-ops,
-# tech-today -> tech (2026-10-19).
+# old posts are still on the site. essays/synthesis/research/opinions -> nova (Nova and Friends),
+# operations/local -> burbank-ops, tech-today -> tech (2026-10-19).
 CATEGORY_URLS = {
     "burbank-ops": "/burbank-ops/",
     "dreams": "/dreams/",          # archive only (retired 2026-10-19)
-    "opinions": "/opinions/",
+    "nova": "/nova/",
     "tech": "/tech/",
     "cars": "/cars/",
     "food": "/food/",
@@ -37,7 +37,6 @@ CATEGORY_URLS = {
     "watches": "/watches/",
     "after-dark": "/after-dark/",
     "art": "/art/",
-    "research": "/research/",
     "digests": "/digests/",
     "security": "/security/",
     "pilot": "/pilot/",
@@ -48,7 +47,7 @@ CATEGORY_URLS = {
 CATEGORY_EMOJI = {
     "burbank-ops": "📡",
     "dreams": "🌙",                 # archive only
-    "opinions": "💬",
+    "nova": "💬",
     "tech": "⚡",
     "cars": "🚗",
     "food": "🍳",
@@ -57,7 +56,6 @@ CATEGORY_EMOJI = {
     "watches": "⌚",
     "after-dark": "🌃",
     "art": "🎨",
-    "research": "📄",
     "digests": "📋",
     "security": "🛡️",
     "pilot": "🎬",

@@ -68,7 +68,7 @@ STATE_FILE = Path.home() / ".openclaw/workspace/state/research_paper_state.json"
 GENERATE_IMAGE_SH = Path.home() / ".openclaw/scripts/generate_image.sh"
 
 HUGO_ROOT = (Path.home() / "nova-journal")
-CONTENT_DIR = HUGO_ROOT / "content/research"
+CONTENT_DIR = HUGO_ROOT / "content/nova"   # Nova and Friends (Research + Opinions merged 2026-10-19)
 IMAGES_DIR = HUGO_ROOT / "static/images/research"
 
 MIN_MEMORIES = 100
@@ -789,7 +789,7 @@ def publish_to_hugo(paper: str, outline: dict, cover_image: str | None,
 title: "📄 {title}"
 date: {timestamp}
 draft: false
-categories: ["research"]
+categories: ["nova"]
 tags: ["{outline.get('paper_type', 'analytical')}", "{outline.get('chapters', [{}])[0].get('title', 'research').split()[0].lower()}"]
 description: "{outline.get('thesis', '')[:150]}"
 """
@@ -839,7 +839,7 @@ def post_to_slack(outline: dict, paper_num: int, memory_count: int, web_count: i
         f"*Thesis:* _{thesis}_\n\n"
         f"*Chapters:*\n{ch_list}\n\n"
         f"*Sources:* {memory_count} memories + {web_count} web sources (APA cited)\n"
-        f"*Published:* nova.digitalnoise.net/research/\n\n"
+        f"*Published:* nova.digitalnoise.net/nova/\n\n"
         f":brain: Research complete. Full paper live on the journal."
     )
     # Published-content announcement — info-level journal event.

@@ -1438,7 +1438,8 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
     byline, noon front-matter time) for articles whose publish time would reveal when Jordan
     was home doing something (nova_game_report.py publishes minutes after a game ends).
     """
-    # Jordan 2026-10-19: Essays + Synthesis were merged into Research; one remap here covers every generator.
+    # Jordan 2026-10-19: Essays + Synthesis -> Research, then Research + Opinions -> Nova and Friends (nova);
+    # one remap here covers every generator.
     section = SECTION_REMAP.get(section, section)
     if section in RETIRED_SECTIONS:   # Dreams retired 2026-10-19: nothing publishes there any more
         log(f"[sections] REFUSED publish '{(title or '')[:60]}': section '{section}' is retired")
@@ -2054,10 +2055,10 @@ def notify_slack(section: str, title: str, preview: str):
     """Post a summary to nova-notifications."""
     section = _canon_section(section)
     section_emojis = {
-        "burbank-ops": ":satellite_antenna:", "opinions": ":speech_balloon:", "after-dark": ":night_with_stars:",
+        "burbank-ops": ":satellite_antenna:", "nova": ":speech_balloon:", "after-dark": ":night_with_stars:",
         "pilot": ":movie_camera:", "tech": ":computer:", "cars": ":red_car:", "food": ":fork_and_knife:",
         "music": ":headphones:", "military": ":military_medal:", "screen": ":popcorn:", "science": ":telescope:",
-        "mystery": ":candle:", "crime": ":flashlight:", "workshop": ":hammer:", "travel": ":world_map:", "watches": ":watch:", "research": ":microscope:",
+        "mystery": ":candle:", "crime": ":flashlight:", "workshop": ":hammer:", "travel": ":world_map:", "watches": ":watch:",
         "digests": ":newspaper:", "security": ":shield:", "meta": ":bar_chart:",
         "art": ":art:",
     }

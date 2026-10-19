@@ -185,12 +185,21 @@ def gather_dreams() -> list[dict]:
 
 # ── Section: Essays ──────────────────────────────────────────────────────────
 
+# Research + Opinions merged into Nova and Friends (content/nova) on 2026-10-19; an opinion piece is
+# told apart from an essay/paper by its tags ("opinion"/"opinions") or its 💬 title.
+_OPINION_TAG_RX = re.compile(r'^tags:\s*\[[^\]]*"opinions?"', re.MULTILINE)
+
+
+def _is_opinion(text: str) -> bool:
+    return bool(_OPINION_TAG_RX.search(text)) or bool(re.search(r'^title:\s*"\U0001f4ac', text, re.MULTILINE))
+
+
 def gather_essays() -> list[dict]:
-    """Gather essays/research published this week (content/research since 2026-10-19)."""
+    """Gather essays/research published this week (content/nova, opinion pieces excluded)."""
     start_date, _ = get_week_range()
     start_dt = datetime.strptime(start_date, "%Y-%m-%d")
     essays = []
-    essays_dir = HUGO_ROOT / "content/research"   # Essays + Synthesis merged into Research 2026-10-19
+    essays_dir = HUGO_ROOT / "content/nova"   # Essays + Synthesis -> Research -> Nova and Friends 2026-10-19
     if not essays_dir.exists():
         return essays
 
@@ -205,6 +214,8 @@ def gather_essays() -> list[dict]:
             continue
         if file_date >= start_dt:
             text = f.read_text()
+            if _is_opinion(text):
+                continue
             title_match = re.search(r'^title:\s*"([^"]+)"', text, re.MULTILINE)
             tag_match = re.search(r'^tags:\s*\["([^"]+)"', text, re.MULTILINE)
             title = title_match.group(1).lstrip("\U0001f4dd ").strip() if title_match else f.stem
@@ -221,7 +232,7 @@ def gather_opinions() -> list[dict]:
     start_date, _ = get_week_range()
     start_dt = datetime.strptime(start_date, "%Y-%m-%d")
     opinions = []
-    opinions_dir = HUGO_ROOT / "content/opinions"
+    opinions_dir = HUGO_ROOT / "content/nova"   # Opinions merged into Nova and Friends 2026-10-19
     if not opinions_dir.exists():
         return opinions
 
@@ -235,6 +246,8 @@ def gather_opinions() -> list[dict]:
             continue
         if file_date >= start_dt:
             text = f.read_text()
+            if not _is_opinion(text):
+                continue
             title_match = re.search(r'^title:\s*"([^"]+)"', text, re.MULTILINE)
             desc_match = re.search(r'^description:\s*"([^"]+)"', text, re.MULTILINE)
             title = title_match.group(1).lstrip("\U0001f4ac ").strip() if title_match else f.stem

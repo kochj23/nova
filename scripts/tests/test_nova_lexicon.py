@@ -122,7 +122,7 @@ class TestIntegration(unittest.TestCase):
     def test_horror_shelf_in_pool(self):
         for t in lx.HORROR_POOL:
             self.assertIn(t, lx.POOL)
-        self.assertTrue(lx.FLAVOR_SECTIONS >= {"burbank-ops", "research", "after-dark", "pilot"})
+        self.assertTrue(lx.FLAVOR_SECTIONS >= {"burbank-ops", "nova", "after-dark", "pilot"})
         self.assertNotIn("dreams", lx.FLAVOR_SECTIONS)   # Dreams retired 2026-10-19
 
 

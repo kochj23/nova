@@ -68,8 +68,9 @@ ARTICLE_SCRIPTS = {
     "nova_fishbowl_daily.py":          ("watches",    ("stable", "the-fishbowl")),
     # Was missing until 2026-07-29, so this job's 8-day outage (execve E2BIG, see
     # nova_journal.call_openrouter) was invisible here — the same watchdog gap that hid
-    # nova_rando_daily_ops.py. 'watch-community' is the tag only this job emits into opinions.
-    "nova_opinion_fishbowl.py":        ("opinions",   ("tag", "watch-community")),
+    # nova_rando_daily_ops.py. 'watch-community' is the tag only this job emits. It publishes to
+    # Watches and Friends (publish_hugo(..., "watches")); the Opinions folder is gone (Nova and Friends, 2026-10-19).
+    "nova_opinion_fishbowl.py":        ("watches",    ("tag", "watch-community")),
     "nova_after_dark.py":              ("after-dark", ("slug", "")),
     "nova_art_corner.py":              ("art",        ("slug", "")),
 }

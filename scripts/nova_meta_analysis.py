@@ -88,10 +88,10 @@ def _collect_month_posts() -> list[dict]:
     """All posts from the last 30 days."""
     cutoff = datetime.now() - timedelta(days=30)
     posts = []
-    # Live article sections (2026-10-19: dreams retired; essays/synthesis -> research;
+    # Live article sections (2026-10-19: dreams retired; essays/synthesis/research/opinions -> nova;
     # operations/local -> burbank-ops; tech-today -> tech; art is archive only).
-    categories = ["burbank-ops", "opinions", "tech", "cars", "food", "music", "military", "screen", "science", "mystery", "crime",
-                  "workshop", "travel", "watches", "after-dark", "research",
+    categories = ["burbank-ops", "nova", "tech", "cars", "food", "music", "military", "screen", "science", "mystery", "crime",
+                  "workshop", "travel", "watches", "after-dark",
                   "security", "pilot"]
 
     for cat in categories:

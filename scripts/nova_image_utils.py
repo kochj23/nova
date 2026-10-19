@@ -63,15 +63,14 @@ SECTION_MODEL_MAP = {
     "burbank-ops": "quality",
     "watches": "quality",
     "security": "quality",
-    "research": "quality",
+    "nova": "quality",
     "tech": "quality",
     "cars": "quality",
     "food": "quality",
     "music": "quality", "military": "quality", "screen": "cinematic", "science": "quality",
     "mystery": "cinematic", "crime": "cinematic", "workshop": "quality", "travel": "quality",
-    "opinions": "quality",
     # retired names still passed by older callers (nova_sections.SECTION_REDIRECTS)
-    "operations": "quality", "local": "quality", "essays": "quality", "synthesis": "premium",
+    "research": "quality", "opinions": "quality", "operations": "quality", "local": "quality", "essays": "quality", "synthesis": "premium",
     "digests": "balanced",
     "default": "quality",
 }

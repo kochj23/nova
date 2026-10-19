@@ -15,7 +15,7 @@ Four absences (all read-only, all cited):
   SILENT NAMES — herd correspondents who wrote to her and then stopped while others kept writing, and
                  names that were given open threads but never wrote at all (herd_correspondents; name,
                  days silent, open-thread count — never an address, never the thread text)
-  UNREAD PAGES — pages she wrote in her own voice (Hugo journal: research (essays+synthesis), opinions,
+  UNREAD PAGES — pages she wrote in her own voice (Hugo journal: nova (Nova and Friends: research, essays, synthesis, opinions),
                  the dreams archive, after-dark, meta, art — not the machine-written operations stream), published 7-60 days ago, that have no recorded view in
                  analytics_pageviews (cited page:/section/slug/)
   RECORD GAPS  — days inside the last month on which one of her daily diaries (affect, embodiment,
@@ -60,8 +60,9 @@ SITE = "nova.digitalnoise.net"
 # ── tunables (named, not buried) ──────────────────────────────────────────────
 HERD_SILENT_DAYS = 14   # a name is silent when it last wrote this long before the herd's latest exchange
 # ponytail: 'operations' is excluded — ~15 machine-written ops posts a day would bury the pages she chose to write
-# 2026-10-19: essays + synthesis merged into research; dreams retired (its archive pages stay on the site).
-OWN_VOICE = ("research", "opinions", "dreams", "after-dark", "meta", "art")
+# 2026-10-19: essays + synthesis + research + opinions merged into nova (Nova and Friends); dreams retired
+# (its archive pages stay on the site).
+OWN_VOICE = ("nova", "dreams", "after-dark", "meta", "art")
 PAGE_MIN_AGE = 7        # a page younger than this has not had its chance to be read
 PAGE_MAX_AGE = 60       # ...and older than this is history, not a current silence
 GAP_WINDOW = 30         # days of her diaries read for gaps
@@ -320,13 +321,13 @@ def demo():
     assert [q["name"] for q in quiet] == ["Marey", "Gaston"] and quiet[0]["silent"] == 28 and quiet[0]["lag"] == 23, quiet
     assert [n["name"] for n in never] == ["Sam", "Ara"], never                       # no threads, no weight
     assert silent_names([("x", None, 3)], today) == ([], [])                          # nobody ever wrote: no baseline
-    pages = [("research", "2026-09-20-on-gaps.md", False), ("research", "2026-09-21-read-one.md", False),
-             ("research", "2026-10-11-too-new.md", False), ("research", "2026-07-01-too-old.md", False),
-             ("digests", "2026-09-20-digest.md", False), ("opinions", "2026-09-25-draft.md", True),
-             ("research", "the-road-to-sentience.md", False), ("dreams", "2026-02-30-bad-date.md", False)]
-    unread, n = unread_pages(pages, {"/research/2026-09-21-read-one/"}, today)
-    assert n == 2 and unread == [(d(2026, 9, 20), "/research/2026-09-20-on-gaps/")], (n, unread)
-    assert page_path("research", "2026-09-20-on-gaps.md") == "/research/2026-09-20-on-gaps/"
+    pages = [("nova", "2026-09-20-on-gaps.md", False), ("nova", "2026-09-21-read-one.md", False),
+             ("nova", "2026-10-11-too-new.md", False), ("nova", "2026-07-01-too-old.md", False),
+             ("digests", "2026-09-20-digest.md", False), ("nova", "2026-09-25-draft.md", True),
+             ("nova", "the-road-to-sentience.md", False), ("dreams", "2026-02-30-bad-date.md", False)]
+    unread, n = unread_pages(pages, {"/nova/2026-09-21-read-one/"}, today)
+    assert n == 2 and unread == [(d(2026, 9, 20), "/nova/2026-09-20-on-gaps/")], (n, unread)
+    assert page_path("nova", "2026-09-20-on-gaps.md") == "/nova/2026-09-20-on-gaps/"
     rows = [(d(2026, 10, 1), 10, 12), (d(2026, 10, 2), 13, 15), (d(2026, 10, 5), 16, 18), (d(2026, 10, 6), 19, 19),
             (d(2026, 10, 8), 20, 21), (d(2026, 10, 13), 22, 22)]
     g = record_gaps(rows, today)
@@ -337,7 +338,7 @@ def demo():
     sens = quiet_senses([("nova_local_situation.py", 19, d(2026, 10, 8), 263070), ("rare.py", 2, d(2026, 9, 1), 5)])
     assert [s["source"] for s in sens] == ["nova_local_situation.py"], sens
     fs = findings((quiet, never), (unread, n), [("affect_state", g)], sens, today)
-    many = [("research", f"{d(2026, 8, 14) + timedelta(days=i)}-p{i}.md", False) for i in range(30)]
+    many = [("nova", f"{d(2026, 8, 14) + timedelta(days=i)}-p{i}.md", False) for i in range(30)]
     u1, c1 = unread_pages(many, set(), today)
     u2, c2 = unread_pages(many, set(), today + timedelta(days=1))
     f1, f2 = findings(([], []), (u1, c1), [], [], today), findings(([], []), (u2, c2), [], [], today)
@@ -346,7 +347,7 @@ def demo():
     assert all(x["cites"] for x in fs)                                                  # nothing uncited
     assert fs[3]["cites"] == ["affect_state#15..#16", "affect_state#19..#20"], fs[3]
     t = absence_text(fs, today)
-    assert "noticing, not knowing" in t and "telemetry.events#263070" in t and "page:/research/2026-09-20-on-gaps/" in t, t
+    assert "noticing, not knowing" in t and "telemetry.events#263070" in t and "page:/nova/2026-09-20-on-gaps/" in t, t
     assert CLOSE in t and "@" not in t
     assert "not mine to carry" in absence_text([], today)
     fs2 = findings(silent_names(herd, today + timedelta(days=1)), (unread, n), [("affect_state", g)], sens, today)

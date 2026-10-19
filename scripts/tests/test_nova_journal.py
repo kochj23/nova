@@ -154,8 +154,8 @@ class TestSecurity(unittest.TestCase):
     def test_published_body_is_scrubbed(self):
         body = BODY + "\n\nbox 00:11:22:33:44:55 wrote to " + _HOME + "/secret/notes.txt for bob@example.com"
         with patch.dict(sys.modules, _lazy_stubs()), _quiet():
-            self.assertTrue(nj.publish_hugo("Scrub Check Title", body, "opinions", ["t"], "d"))
-        out = (nj.HUGO_ROOT / "content/opinions").glob("*scrub-check-title.md")
+            self.assertTrue(nj.publish_hugo("Scrub Check Title", body, "opinions", ["t"], "d"))   # remapped to nova
+        out = (nj.HUGO_ROOT / "content/nova").glob("*scrub-check-title.md")
         text = next(out).read_text()
         for leak in ("00:11:22:33:44:55", "/Users/kochj", "bob@example.com"):
             self.assertNotIn(leak, text)
@@ -328,7 +328,7 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(nj._topic_to_tags("2024 Quantum Networking Basics | extra"), ["quantum", "networking"])
         self.assertEqual(nj._topic_to_tags("a to be"), [])
         self.assertEqual(nj._canon_section("rando"), "burbank-ops")
-        self.assertEqual(nj._canon_section("essays"), "research")
+        self.assertEqual(nj._canon_section("essays"), "nova")
         self.assertEqual(nj._canon_section("tech-today"), "tech")   # Tech Today -> Tech and Friends
         self.assertEqual(nj.PROFILES["tech-today"]["section"], "tech")
 
@@ -386,9 +386,13 @@ class TestUnit(unittest.TestCase):
 
 
 class TestSectionRemap(unittest.TestCase):
-    def test_merged_sections_route_to_research(self):
+    def test_merged_sections_route_to_nova(self):
         self.assertEqual(nj.SECTION_REMAP, {"rando": "burbank-ops", "tech-today": "tech", "operations": "burbank-ops",
-                                            "local": "burbank-ops", "essays": "research", "synthesis": "research"})
+                                            "local": "burbank-ops", "research": "nova", "opinions": "nova",
+                                            "essays": "nova", "synthesis": "nova"})
+        self.assertIs(nj.SECTION_REMAP, nj.SECTION_REDIRECTS)
+        for old in ("research", "opinions", "essays", "synthesis"):
+            self.assertEqual(nj._canon_section(old), "nova")
 
 
 class TestIntegration(unittest.TestCase):
@@ -396,30 +400,30 @@ class TestIntegration(unittest.TestCase):
         img = TMP / "cover.webp"; img.write_bytes(b"RIFFxxxxWEBP")
         stubs = _lazy_stubs()
         with patch.dict(sys.modules, stubs), patch("subprocess.run") as r, _quiet():
-            ok = nj.publish_hugo("Night Shift Report", BODY, "opinions", ["dream", "x"], 'desc "q"', image_path=str(img), emoji="🌙")
+            ok = nj.publish_hugo("Night Shift Report", BODY, "nova", ["dream", "x"], 'desc "q"', image_path=str(img), emoji="🌙")
         self.assertTrue(ok)
         r.assert_not_called()                                                     # webp source: copied, no cwebp
-        md = nj.HUGO_ROOT / f"content/opinions/{nj.today_str()}-night-shift-report.md"
+        md = nj.HUGO_ROOT / f"content/nova/{nj.today_str()}-night-shift-report.md"
         text = md.read_text()
         self.assertTrue(text.startswith('---\ntitle: "🌙 Night Shift Report"\n'))
-        self.assertIn('categories: ["opinions"]\ntags: ["dream", "x"]\ndescription: "desc \'q\'"\n', text)
-        self.assertIn(f'cover:\n  image: "/images/opinions/{nj.today_str()}-night-shift-report.webp"', text)
+        self.assertIn('categories: ["nova"]\ntags: ["dream", "x"]\ndescription: "desc \'q\'"\n', text)
+        self.assertIn(f'cover:\n  image: "/images/nova/{nj.today_str()}-night-shift-report.webp"', text)
         self.assertIn("*Published ", text)
         self.assertIn("*Weather: 72F, clear*", text)
-        self.assertTrue((nj.HUGO_ROOT / f"static/images/opinions/{nj.today_str()}-night-shift-report.webp").exists())
+        self.assertTrue((nj.HUGO_ROOT / f"static/images/nova/{nj.today_str()}-night-shift-report.webp").exists())
         stubs["nova_articles_to_memory"].remember_article.assert_called_once_with(str(md))
         stubs["nova_weather_blurb"].weather_dateline_line.assert_called_once()
 
     def test_publish_hugo_stable_slug_degenerate_title_and_guard_block(self):
         stubs = _lazy_stubs()
         with patch.dict(sys.modules, stubs), _quiet():
-            self.assertTrue(nj.publish_hugo("Let me", BODY, "opinions", [], "d", stable_slug="evergreen"))
-        md = nj.HUGO_ROOT / "content/opinions/evergreen.md"
-        self.assertIn(f'title: "Opinions Dispatch — {nj.today_str()}"', md.read_text())
+            self.assertTrue(nj.publish_hugo("Let me", BODY, "nova", [], "d", stable_slug="evergreen"))
+        md = nj.HUGO_ROOT / "content/nova/evergreen.md"
+        self.assertIn(f'title: "Nova Dispatch — {nj.today_str()}"', md.read_text())
         stubs["nova_articles_to_memory"].remember_article.assert_called_once_with(str(md))
         with patch.dict(sys.modules, stubs), patch.object(nj.nova_config, "post_both") as pb, _quiet():
-            self.assertFalse(nj.publish_hugo("Blocked Piece Title", "too short", "opinions", [], "d"))
-        self.assertIn("Suppressed a non-publishable *opinions* article", pb.call_args[0][0])
+            self.assertFalse(nj.publish_hugo("Blocked Piece Title", "too short", "nova", [], "d"))
+        self.assertIn("Suppressed a non-publishable *nova* article", pb.call_args[0][0])
 
     # ── per-article-type length policy + grounded expansion (2026-10-06) ──────────
     def _pub(self, title, body, profile, sources=None, section="essays", replies=None):

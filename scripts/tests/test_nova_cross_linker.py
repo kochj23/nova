@@ -39,8 +39,8 @@ class _Hugo:
         self.td = tempfile.TemporaryDirectory()
         self.root = Path(self.td.name)
         _post(self.root, "dreams", "lighthouse", "The Lighthouse Keeper Dreams", "A lighthouse at the end of the pier glows softly")
-        _post(self.root, "research", "entropy", "Entropy and Gardens", "Gardens fight entropy every single morning")
-        _post(self.root, "research", "_index", "Index", "skip me")
+        _post(self.root, "nova", "entropy", "Entropy and Gardens", "Gardens fight entropy every single morning")
+        _post(self.root, "nova", "_index", "Index", "skip me")
         _post(self.root, "about", "me", "About", "skip")
         self.p = mock.patch.object(cl, "HUGO_ROOT", self.root)
         self.p.start()
@@ -120,7 +120,7 @@ class TestIntegration(unittest.TestCase):
         mems = [{"text": "Gardens fight entropy every single morning and more", "score": 0.9}]
         with _Hugo(), _urlopen_returning(mems):
             rel = cl.find_related("my dream about gardens", "dreams", "lighthouse")
-        self.assertEqual(rel, [{"url": "/research/entropy/", "title": "Entropy and Gardens", "category": "📄 Research"}])
+        self.assertEqual(rel, [{"url": "/nova/entropy/", "title": "Entropy and Gardens", "category": "💬 Nova"}])
         fm = cl.format_related_frontmatter(rel)
         self.assertTrue(fm.startswith("related:\n  - title: \"Entropy and Gardens\""))
 

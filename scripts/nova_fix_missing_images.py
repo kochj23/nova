@@ -41,7 +41,8 @@ CONTENT_DIR = JOURNAL_DIR / "content"
 STATIC_DIR = JOURNAL_DIR / "static/images"
 
 SECTIONS = {
-    "opinions": "editorial cartoon style, satirical, bold colors",
+    # Nova and Friends = Research + Opinions (2026-10-19): opinion columns and research papers share it.
+    "nova": "editorial illustration, bold visual metaphor, thoughtful, academic detail, rich colors",
     "digests": "collage data visualization, editorial layout, modern",
     "tech": "futuristic technology, circuits, neon, cyberpunk",
     "cars": "classic and performance cars, garages, race tracks",
@@ -54,7 +55,6 @@ SECTIONS = {
     "crime": "a noir city street at night, a detective's desk, case files and a single spotlight",
     "workshop": "a woodworking shop bench, hand tools, sawdust and a half-built table",
     "travel": "an open road, an old train yard, a ghost town and a sweeping map",
-    "research": "academic research illustration, technical, detailed",
     "after-dark": "late night talk show set, purple blue neon, moody spotlight",
     # Burbank and Ops = Operations + Local merged 2026-10-19 (Research absorbed Essays + Synthesis;
     # Dreams retired). Older covers keep their static/images/<oldsection>/ paths.

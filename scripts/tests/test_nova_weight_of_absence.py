@@ -67,7 +67,7 @@ class _World:
         if "FROM herd_correspondents" in s:
             rows = [("O.C.", d(2026, 10, 8), 8), ("Marey", d(2026, 9, 15), 6), ("Sam", None, 6)]
         elif "FROM analytics_pageviews" in s:
-            rows = [("/research/2026-09-21-read-one/",)]
+            rows = [("/nova/2026-09-21-read-one/",)]
         elif "FROM affect_state" in s:
             rows = [(d(2026, 10, 1), 10, 12), (d(2026, 10, 2), 13, 15), (d(2026, 10, 5), 16, 18)]
         elif "FROM telemetry.events" in s:
@@ -98,11 +98,11 @@ class _Conn:
 
 def _pages(tmp):
     root = Path(tmp)
-    (root / "research").mkdir(parents=True)
+    (root / "nova").mkdir(parents=True)
     (root / "digests").mkdir()
     for name, draft in (("2026-09-20-on-gaps.md", False), ("2026-09-21-read-one.md", False),
                         ("2026-09-22-a-draft.md", True)):
-        (root / "research" / name).write_text(f"---\ntitle: x\ndraft: {'true' if draft else 'false'}\n---\nbody\n")
+        (root / "nova" / name).write_text(f"---\ntitle: x\ndraft: {'true' if draft else 'false'}\n---\nbody\n")
     (root / "digests" / "2026-09-20-digest.md").write_text("---\n---\n")
     return root
 
@@ -143,7 +143,7 @@ class TestUnit(unittest.TestCase):
         self.assertEqual([(r["days"], r["before"], r["after"]) for r in g], [(2, 2, 7)])
 
     def test_unread_pages_skip_drafts_and_other_sections(self):
-        u, n = wa.unread_pages([("research", "2026-09-20-x.md", True), ("digests", "2026-09-20-y.md", False)], set(), TODAY)
+        u, n = wa.unread_pages([("nova", "2026-09-20-x.md", True), ("digests", "2026-09-20-y.md", False)], set(), TODAY)
         self.assertEqual((u, n), ([], 0))
 
 
@@ -174,7 +174,7 @@ class TestSecurity(unittest.TestCase):
 
 class TestPerformance(unittest.TestCase):
     def test_pure_logic_fast_at_scale(self):
-        pages = [("research", f"{d(2026, 8, 20) + timedelta(days=i % 50)}-p{i}.md", False) for i in range(20000)]
+        pages = [("nova", f"{d(2026, 8, 20) + timedelta(days=i % 50)}-p{i}.md", False) for i in range(20000)]
         rows = [(d(2026, 9, 14) + timedelta(days=i), i, i) for i in range(29) if i % 7]
         t = time.time()
         u, n = wa.unread_pages(pages, set(), TODAY)
@@ -223,7 +223,7 @@ class TestIntegration(unittest.TestCase):
         self.assertEqual(w.inserts(), {("nova_weight_of_absence", "high_water"), ("nova_weight_of_absence", "latest")})
         meta = posted[0][2]
         self.assertEqual(meta["findings"], ["silent_names", "never_spoke", "unread_pages", "record_gap", "quiet_senses"])
-        self.assertIn("page:/research/2026-09-20-on-gaps/", meta["cites"])
+        self.assertIn("page:/nova/2026-09-20-on-gaps/", meta["cites"])
 
     def test_unchanged_picture_is_not_restated(self):
         import tempfile
@@ -259,8 +259,8 @@ class TestFunctional(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             rc, posted, _ = _run([], _World(), _pages(tmp))
         cites = posted[0][2]["cites"]
-        self.assertNotIn("page:/research/2026-09-21-read-one/", cites)
-        self.assertNotIn("page:/research/2026-09-22-a-draft/", cites)
+        self.assertNotIn("page:/nova/2026-09-21-read-one/", cites)
+        self.assertNotIn("page:/nova/2026-09-22-a-draft/", cites)
 
 
 class TestFrame(unittest.TestCase):

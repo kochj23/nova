@@ -317,7 +317,7 @@ class TestIntegration(unittest.TestCase):
         for s in ("nova_voice", "system_prompt(ctx", "nj.publish_hugo(", "nj.git_push(", "nj.new_numbers(",
                   "nova_dsn.pg_dsn(\"nova_ops\")", "profile=PROFILE", "sources=facts_text(facts)"):
             self.assertIn(s, SRC)
-        self.assertEqual((gr.SERVICE, gr.SECTION), ("nova_game_report", "opinions"))
+        self.assertEqual((gr.SERVICE, gr.SECTION), ("nova_game_report", "nova"))
         nj_src = (SCRIPTS / "nova_journal.py").read_text()
         self.assertRegex(nj_src, r'"game-report":\s+\(\d+, \d+, EXPAND_GROUNDED\)')
 
@@ -364,7 +364,7 @@ class TestFunctional(unittest.TestCase):
             (res,), state = self._run(nj, ops, [session()])
             self.assertEqual(res, "published")
             pub = nj.published[0]
-            self.assertEqual((pub["section"], pub["tags"], pub["profile"]), ("opinions", ["games", "gtnw", "opinion"],
+            self.assertEqual((pub["section"], pub["tags"], pub["profile"]), ("nova", ["games", "gtnw", "opinion"],
                                                                             "game-report"))
             self.assertIn("25019519", pub["sources"])           # facts went in as sources
             self.assertNotIn("999,999", pub["body"])            # invented number cut
@@ -374,7 +374,7 @@ class TestFunctional(unittest.TestCase):
             self.assertIs(pub["show_time"], False)  # no time of day on the public post
             rec = ops.rows[("nova_game_report", "reported")][session()["id"]]
             self.assertEqual(rec["status"], "published")
-            self.assertTrue(rec["url"].startswith("https://nova.digitalnoise.net/opinions/2026-10-18-"))
+            self.assertTrue(rec["url"].startswith("https://nova.digitalnoise.net/nova/2026-10-18-"))
             self.assertEqual(nj.pushed, [pub["title"]])
             # exactly once: the next run doesn't touch it
             self.assertFalse(gr.needs_work(rec, dict(gr.DEFAULTS)))
@@ -382,7 +382,7 @@ class TestFunctional(unittest.TestCase):
     def test_crash_after_publish_is_recovered_not_duplicated(self):
         with tempfile.TemporaryDirectory() as d:
             nj, ops = fake_nj(Path(d), draft=DRAFT), FakeOpsCursor()
-            art = Path(d) / "content" / "opinions"
+            art = Path(d) / "content" / "nova"
             art.mkdir(parents=True)
             (art / "2026-10-18-old.md").write_text("...\n*Session ref: 5bceb732.*\n")
             (res,), _ = self._run(nj, ops, [session()], state={session()["id"]: {"status": "claimed",

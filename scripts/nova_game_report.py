@@ -4,7 +4,7 @@
 Every Nova Games title (GTNW Mac + GTNW Lite, CarTest Mac + Web, Blompie web + Mac, the MUSH) writes its play
 sessions to the Games DB on core3, schema `play` (play.sessions + play.events; NovaGames deploy/db/play.sql). This
 job, run by the Nova scheduler every 10 minutes (config/scheduler.yaml `game_report`), finds sessions that finished
-since it last looked and publishes ONE opinion column per session to the journal's `opinions` section: what he
+since it last looked and publishes ONE opinion column per session to the journal's `nova` section (Nova and Friends; was `opinions`): what he
 played, what happened, how he did, the good and bad calls, and how it compares with his earlier sessions of that game.
 
 Grounded only: the column is written from a fact sheet built from the session row, its events and his earlier
@@ -48,7 +48,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 SERVICE = "nova_game_report"
 SITE = "https://nova.digitalnoise.net"
-SECTION = "opinions"
+SECTION = "nova"   # Nova and Friends (Research + Opinions merged 2026-10-19; old /opinions/ URLs aliased)
 PROFILE = "game-report"
 LOCK_KEY = 0x6A6D5250  # pg_try_advisory_lock key for this job in nova_ops
 

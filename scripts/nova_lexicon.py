@@ -34,10 +34,12 @@ DSN = _nova_dsn.pg_dsn("nova_ops")
 # Sections where a flourish is welcome. Breaking emergency posts are handled by an
 # explicit opt-out at the system_prompt layer (flavor=False), never seasoned.
 # Live sections only (nova_sections, 2026-10-19); retired names (operations, local, essays,
-# synthesis, tech-today, rando) are canonicalised to their new home in seasoning() first.
+# synthesis, research, opinions, tech-today, rando) are canonicalised to their new home in seasoning()
+# first (research/opinions/essays/synthesis -> nova, Nova and Friends). Formal research papers stay restrained regardless:
+# nova_research_paper uses epigraph_block() only, never seasoning().
 # Dreams is retired outright. "news"/"weird"/"fishbowl"/"digest" are generator profile aliases.
-FLAVOR_SECTIONS = {"burbank-ops", "opinions", "after-dark", "meta", "digests", "digest", "tech",
-                   "cars", "food", "watches", "art", "research", "security", "pilot",
+FLAVOR_SECTIONS = {"burbank-ops", "nova", "after-dark", "meta", "digests", "digest", "tech",
+                   "cars", "food", "watches", "art", "security", "pilot",
                    "news", "weird", "fishbowl"}
 FLAVOR_SECTIONS |= {"music", "military", "screen", "science", "mystery", "crime", "workshop", "travel"}  # and Friends 2026-10-19
 

@@ -62,7 +62,7 @@ class _Base(unittest.TestCase):
         self.tags, self.linker = tags, linker
         self.git = GitShell()
         patches = [patch.object(pj, "HUGO_ROOT", root),
-                   patch.object(pj, "CONTENT_ESSAYS", root / "content/research"),
+                   patch.object(pj, "CONTENT_ESSAYS", root / "content/nova"),
                    patch.object(pj, "IMAGES_ESSAYS", root / "static/images/essays"),
                    patch.object(pj, "LOG_FILE", Path(self.td.name) / "publish.log"),
                    patch.dict(sys.modules, {"nova_tag_extractor": tags, "nova_cross_linker": linker}),
@@ -93,7 +93,7 @@ class TestSecurity(_Base):
         nova = next(iter(pj.SAFE_EMAILS))          # Nova's own address is the one allowed through
         self.assertEqual(pj.scrub_emails(f"mail {addr} or {nova}"), f"mail [email redacted] or {nova}")
         pj.publish_essay("Scrub Me", "privacy", f"see {Path.home()}/secret.txt\nwrite {addr}\n")
-        post = next((self.root / "content/research").glob("*-scrub-me.md")).read_text()
+        post = next((self.root / "content/nova").glob("*-scrub-me.md")).read_text()
         self.assertNotIn(str(Path.home()), post)
         self.assertNotIn(addr, post)
 
@@ -149,9 +149,9 @@ class TestIntegration(_Base):
     def test_uses_shared_tagger_and_linker(self):
         pj.publish_essay("Orbits", "astronomy", "Body text.")
         self.assertEqual(self.tags.extract_tags.call_args.args[2], "research")
-        self.assertEqual(self.linker.find_related.call_args.args[1:], ("research", "orbits"))
-        post = next((self.root / "content/research").glob("*-orbits.md")).read_text()
-        self.assertIn('categories: ["research"]', post)
+        self.assertEqual(self.linker.find_related.call_args.args[1:], ("nova", "orbits"))
+        post = next((self.root / "content/nova").glob("*-orbits.md")).read_text()
+        self.assertIn('categories: ["nova"]', post)
 
 
 class TestFunctional(_Base):
@@ -175,7 +175,7 @@ class TestFunctional(_Base):
         txt.write_text("An essay body.")
         with patch.object(sys, "argv", ["x", "essay", "Why Orbits Matter!", "deep_space", str(txt)]):
             pj.main()
-        posts = list((self.root / "content/research").glob("*-why-orbits-matter.md"))
+        posts = list((self.root / "content/nova").glob("*-why-orbits-matter.md"))
         self.assertEqual(len(posts), 1)
         self.assertIn('description: "A formal essay on Deep Space"', posts[0].read_text())
 

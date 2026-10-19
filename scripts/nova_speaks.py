@@ -8,7 +8,7 @@ article's cover plus FLUX renders (or any PNG/WEBP you point at), rotated per pa
 Ken Burns move and the current chapter title as a lower-third. Title card + end card with the URL.
 Nothing is uploaded: the mp4 lands in the review folder and a Slack note says where.
 
-  nova_speaks.py --article content/research/2026-10-03-foo.md            # full article
+  nova_speaks.py --article content/nova/2026-10-03-foo.md                # full article
   nova_speaks.py --article ... --sections "Abstract,Chapter 2,Conclusion" --suffix preview
   nova_speaks.py --article ... --images img1.png img2.webp ...        # your own stills
   nova_speaks.py --article ... --generate-images 5                    # FLUX renders from chapter titles

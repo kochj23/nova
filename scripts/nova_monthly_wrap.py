@@ -112,7 +112,7 @@ EMOJI = "\U0001F5D3"   # spiral calendar
 MOTIF = {
     "burbank-ops": "a homelab server room at dusk above Burbank streets and the Verdugo hills, blinking racks and dashboards",
     "watches": "a watchmaker's bench with loupes, movements and a vintage dive watch",
-    "opinions": "an empty soapbox and a vintage microphone under a spotlight",
+    "nova": "an empty soapbox and a vintage microphone beside lab notebooks and annotated manuscripts",
     "cars": "a classic car in a garage under work lights, tools on the bench",
     "food": "a smoker and a cast-iron pan on a backyard cook, ingredients on a board",
     "music": "a turntable and a stack of vinyl under warm stage light",
@@ -124,7 +124,6 @@ MOTIF = {
     "workshop": "a woodworking bench with hand tools and fresh shavings",
     "travel": "an open road at dusk with a folded map on the dashboard",
     "tech": "circuit boards, newspapers and glowing screens on a desk",
-    "research": "lab notebooks, annotated manuscripts, charts and a microscope in soft light",
     "digests": "neatly stacked daily reports and a coffee cup at dawn",
     "security": "a lighthouse sweeping its beam over a dark network of lights",
 }
@@ -197,7 +196,7 @@ def month_label(month: str) -> str:
 
 
 def section_label(section: str) -> str:
-    return {"burbank-ops": "Burbank and Ops"}.get(section, section.replace("-", " ").title())
+    return {"burbank-ops": "Burbank and Ops", "nova": "Nova and Friends"}.get(section, section.replace("-", " ").title())
 
 
 def wrap_slug(month: str, section: str) -> str:

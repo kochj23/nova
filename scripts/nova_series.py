@@ -77,7 +77,7 @@ SERIES_RULES = [
      lambda m: m["section"] == "burbank-ops" and m["title"].startswith("what flew over burbank")),
     ("Week in Intelligence",
      lambda m: m["section"] == "burbank-ops" and m["title"].startswith("week in intelligence")),
-    ("Game Reports", lambda m: m["section"] == "opinions" and "games" in m["tags"]),
+    ("Game Reports", lambda m: m["section"] in ("nova", "opinions") and "games" in m["tags"]),   # nova = Nova and Friends
     (_weekly, None),   # "This Week in <X>" recaps (nova_journal_weekly_summary.py, tag weekly-summary)
 ]
 

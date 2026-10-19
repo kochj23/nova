@@ -125,7 +125,7 @@ MIN_QUOTE_WORDS = 4
 # something she watched (radio digests 'local', alert write-ups 'operations', news 'digests') or a raw
 # transcript; booking those as opinions put "the police feed has a low signal-to-noise ratio" at 0.95 and
 # leaked the prompt's own example into a belief (2026-10-16, beliefs 919-982 deactivated).
-OPINION_SECTIONS = ("opinions", "essays", "research", "synthesis", "meta")
+OPINION_SECTIONS = ("nova", "opinions", "essays", "research", "synthesis", "meta")   # nova = Nova and Friends (2026-10-19)
 
 
 def _norm_ws(s):

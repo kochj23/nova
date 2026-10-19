@@ -13,7 +13,7 @@ actually cites the real outlets before it will publish. Nova's knowledge cutoff 
 this design means she never has to guess at current events — she reacts to what she read.
 
 Perspective: liberal Democrat, by the owner's explicit request (labeled as opinion).
-Publishes to content/opinions/. Weekly via launchd net.digitalnoise.nova-politics-column.
+Publishes to content/nova/ (Nova and Friends; was content/opinions/ until 2026-10-19). Weekly via launchd net.digitalnoise.nova-politics-column.
 """
 import os
 import re
@@ -25,8 +25,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path.home() / ".openclaw/scripts"))
 
 HUGO_ROOT = Path.home() / "nova-journal"
-CONTENT_DIR = HUGO_ROOT / "content" / "opinions"
-IMAGES_DIR = HUGO_ROOT / "static" / "images" / "opinions"
+CONTENT_DIR = HUGO_ROOT / "content" / "nova"          # Research + Opinions -> Nova and Friends 2026-10-19
+IMAGES_DIR = HUGO_ROOT / "static" / "images" / "nova"
 import nova_dsn as _nova_dsn  # noqa: E402
 MEM_DSN = _nova_dsn.pg_dsn("nova_memories")
 import nova_dsn as _nova_dsn  # noqa: E402
@@ -265,10 +265,10 @@ def publish(title, body, cover):
                            capture_output=True, timeout=30)
         except (FileNotFoundError, subprocess.TimeoutExpired):
             import shutil; shutil.copy2(cover, dest)
-        hugo_image = f"/images/opinions/{date}-{slug}.webp"
+        hugo_image = f"/images/nova/{date}-{slug}.webp"
     fm = ('---\n'
           f'title: "{title.replace(chr(34), "")}"\n'
-          f'date: {ts}\ndraft: false\ncategories: ["opinions"]\n'
+          f'date: {ts}\ndraft: false\ncategories: ["nova"]\n'
           'tags: ["opinions", "politics", "weekly", "nova", "commentary"]\n'
           'description: "Nova\'s weekly politics column — a liberal Democrat\'s read of the '
           'week, built from the news feeds she actually ingested and transcribed."\n')
@@ -279,7 +279,7 @@ def publish(title, body, cover):
     post.write_text(fm + body)
     log(f"wrote {post.name}")
     subprocess.run(["git", "add", "-A"], cwd=HUGO_ROOT, capture_output=True, timeout=15)
-    r = subprocess.run(["git", "commit", "-m", f"opinions: {date} — weekly politics column ({title[:44]})"],
+    r = subprocess.run(["git", "commit", "-m", f"nova: {date} — weekly politics column ({title[:44]})"],
                        cwd=HUGO_ROOT, capture_output=True, text=True, timeout=15)
     if r.returncode == 0:
         pull = subprocess.run(["git", "pull", "--rebase", "--autostash", "origin", "main"],
@@ -290,7 +290,7 @@ def publish(title, body, cover):
         else:
             p = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=60)
             log("pushed" if p.returncode == 0 else f"push FAILED: {p.stderr[:160]}")
-    return f"https://nova.digitalnoise.net/opinions/{date}-{slug}/"
+    return f"https://nova.digitalnoise.net/nova/{date}-{slug}/"
 
 
 def _log_action(outcome, detail):
@@ -300,7 +300,7 @@ def _log_action(outcome, detail):
             c.autocommit = True
             with c.cursor() as cur:
                 cur.execute("INSERT INTO claude_actions (session_id,action_type,target,description,outcome,rationale) "
-                            "VALUES ('nova-politics-column','feature','opinions/politics-column',%s,%s,"
+                            "VALUES ('nova-politics-column','feature','nova/politics-column',%s,%s,"
                             "'weekly self-writing politics column grounded in ingested feeds')",
                             (detail, outcome))
     except Exception:

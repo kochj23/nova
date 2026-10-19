@@ -122,7 +122,7 @@ class TestIntegration(unittest.TestCase):
     def test_uses_ledger_and_voice(self):
         self.assertIn("superseded_by", SRC)
         self.assertIn("nova_voice.system_prompt(ctx, section=SECTION, topic=", SRC)
-        self.assertEqual(nc.SECTION, "opinions")
+        self.assertEqual(nc.SECTION, "nova")
 
     def test_ground_orders_by_article_date(self):
         idx = {}
@@ -135,11 +135,11 @@ class TestIntegration(unittest.TestCase):
 
     def test_article_index_from_files(self):
         root = Path(tempfile.mkdtemp())
-        (root / "content/opinions").mkdir(parents=True)
-        (root / "content/opinions/2026-10-01-hello-world.md").write_text('---\ntitle: "💬 Hello World"\n---\n\nBody')
+        (root / "content/nova").mkdir(parents=True)
+        (root / "content/nova/2026-10-01-hello-world.md").write_text('---\ntitle: "💬 Hello World"\n---\n\nBody')
         with patch.object(nc, "_pg", side_effect=RuntimeError("offline")):
             idx = nc.article_index(root)
-        self.assertEqual(idx["hello world"]["url"], "https://nova.digitalnoise.net/opinions/2026-10-01-hello-world/")
+        self.assertEqual(idx["hello world"]["url"], "https://nova.digitalnoise.net/nova/2026-10-01-hello-world/")
         self.assertEqual(idx["hello world"]["date"], "2026-10-01")
 
 
@@ -174,7 +174,7 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(res["status"], "published")
         (title, body, section, *_), kw = published[0]
         self.assertTrue(title.startswith("Nova's Corrections"))
-        self.assertEqual(section, "opinions")
+        self.assertEqual(section, "nova")
         self.assertIn("## The record", body)
         self.assertEqual(kw["cited_memory_ids"], ["m1", "m2"])
 

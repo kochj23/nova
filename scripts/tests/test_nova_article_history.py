@@ -146,9 +146,11 @@ class TestUnit(unittest.TestCase):
 
     def test_content_dir_finds_the_home_candidate(self):
         with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "nova-journal" / "content" / "opinions").mkdir(parents=True)
+            (Path(tmp) / "nova-journal" / "content" / "nova").mkdir(parents=True)
             with patch.object(ah.Path, "home", return_value=Path(tmp)):
-                self.assertEqual(ah._content_dir("opinions"), Path(tmp) / "nova-journal" / "content" / "opinions")
+                self.assertEqual(ah._content_dir("nova"), Path(tmp) / "nova-journal" / "content" / "nova")
+                # retired names (opinions -> Nova and Friends, 2026-10-19) resolve to the merged folder
+                self.assertEqual(ah._content_dir("opinions"), Path(tmp) / "nova-journal" / "content" / "nova")
                 self.assertIsNone(ah._content_dir("fishbowl"))
 
 

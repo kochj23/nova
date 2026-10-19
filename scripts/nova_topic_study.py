@@ -15,7 +15,7 @@ transcripts + frame_vision) and had never studied it directly. This reads ONE to
   4. write — a long-form "What Nova Learned From <topic>" piece in her voice
      (nova_voice.system_prompt(..., section=, topic=) — the sci-fi and faith seasoning comes with it),
      built only from the verified lessons and their passages; a deterministic "Episodes cited" list is
-     appended. Published to Research (a study is research; --section opinions overrides) through
+     appended. Published to Nova and Friends (section nova; research/opinions are accepted and remapped) through
      nova_journal.publish_hugo with cited_memory_ids + sources, so the grounding line shows.
   5. remember — the distilled lessons become one memory (source 'work_lessons', metadata.type
      'work_lessons', privacy local-only, evidence ids), the same shape nova_work_lessons.py writes.
@@ -24,7 +24,7 @@ Requests: nova_topic_study.py "Frasier"            run now
           nova_topic_study.py --request "Frasier"  queue it (claude_queue 'topic study: Frasier')
           nova_topic_study.py --pending            run queued requests (scheduler topic_study_queue, every 30m)
 Any Claude/Nova session can queue one with a claude_queue row whose description starts "topic study:".
-Flags: --show "Cheers (1982)" (exact series), --section research|opinions, --dry-run (no publish/memory).
+Flags: --show "Cheers (1982)" (exact series), --section nova|research|opinions (all land in nova), --dry-run (no publish/memory).
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -50,7 +50,7 @@ MODEL = os.environ.get("NOVA_STUDY_MODEL", "anthropic/claude-sonnet-4.5")
 MEMSRV = os.environ.get("NOVA_MEMORY_SERVER", "http://memory-server.digitalnoise.net:18790")
 SESSION_ID = "nova-topic-study"
 QUEUE_PREFIX = "topic study:"
-SECTIONS = ("research", "opinions")
+SECTIONS = ("nova", "research", "opinions")   # research/opinions -> nova (Nova and Friends, 2026-10-19)
 OWN_OUTPUTS = {"pursuit", "unclaimed", "private_notebook", "dream", "dreams", "film_lessons", "work_lessons",
                "nova_articles", "journal", "association", "reflection", "conversation", "memory_anchor",
                "weight_of_memory", "autobiography", "becoming"}
@@ -348,11 +348,16 @@ def remember(text: str, metadata: dict) -> str | None:
 def article_url(section: str, title: str, day: str | None = None) -> str:
     """The live URL: Hugo keeps the date-prefixed filename as the slug (publish_hugo's dated posts)."""
     slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60]
+    try:   # the URL is where publish_hugo actually writes: retired names go through the one remap
+        from nova_sections import canon
+        section = canon(section)
+    except Exception:  # noqa: BLE001
+        pass
     return f"https://nova.digitalnoise.net/{section}/{day or date.today().isoformat()}-{slug}/"
 
 
 # ─────────────────────────── run ───────────────────────────
-def study(topic: str, show: str | None = None, section: str = "research", dry_run: bool = False,
+def study(topic: str, show: str | None = None, section: str = "nova", dry_run: bool = False,
           llm=None) -> dict:
     llm = llm or _llm
     res = {"topic": topic, "status": "failed"}
@@ -474,7 +479,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("topic", nargs="?")
     ap.add_argument("--show")
-    ap.add_argument("--section", choices=SECTIONS, default="research")
+    ap.add_argument("--section", choices=SECTIONS, default="nova")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--request", metavar="TOPIC")
     ap.add_argument("--pending", action="store_true")

@@ -2358,12 +2358,13 @@ JOURNAL_SECTIONS = {
     # forever); operations + local -> burbank-ops; essays + synthesis -> research. Task ids are
     # the real scheduler-core ids (daily_journal/daily_opinion/research_paper/daily_digest never existed).
     "burbank-ops": ("rando_daily_ops",    26),   # dozens of posts a day; a 26h gap is a real outage
-    "opinions":    ("journal_opinion",    74),   # Tue/Thu/Sat 12:00 -> longest gap Sat->Tue = 72h
+    # Research + Opinions -> Nova and Friends (nova), 2026-10-19: opinion Tue/Thu/Sat 12:00, essay Wed,
+    # research Thu, synthesis Sun -> longest gap well under 72h; the opinion job is the backfill.
+    "nova":        ("journal_opinion",    74),
     # after-dark RETIRED 2026-07-30 — removed so BB stops flagging it stale AND, more
     # importantly, never backfill-regenerates the content we just retired.
     # tech-today RETIRED 2026-10-19 -> Tech and Friends (tech). The Friends sections skip
     # news-less days by design, so they are not staleness-backfilled (same as watches, cars, food).
-    "research":    ("journal_research",   74),   # essay Wed + research Thu + synthesis Sun -> longest gap ~62h
     "digests":     ("journal_digest",     26),
 }
 

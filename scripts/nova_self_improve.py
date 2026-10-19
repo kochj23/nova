@@ -10,6 +10,7 @@ Written by Jordan Koch.
 """
 
 import json
+import re
 import subprocess
 import sys
 import time
@@ -33,8 +34,15 @@ LESSONS_FILE = Path.home() / ".openclaw/workspace/state/writing_lessons.md"
 
 JOURNAL_ROOT = (Path.home() / "nova-journal" / "content")
 DREAMS_DIR = JOURNAL_ROOT / "dreams"
-ESSAYS_DIR = JOURNAL_ROOT / "essays"
-OPINIONS_DIR = JOURNAL_ROOT / "opinions"
+# Essays -> Research -> Nova and Friends; Opinions -> Nova and Friends (2026-10-19). Both read content/nova;
+# when they share a folder, an opinion piece (tag "opinion"/"opinions" or a 💬 title) is told apart from an essay.
+ESSAYS_DIR = JOURNAL_ROOT / "nova"
+OPINIONS_DIR = JOURNAL_ROOT / "nova"
+
+
+def _is_opinion(text: str) -> bool:
+    head = text[:1500]
+    return bool(re.search(r'^tags:\s*\[[^\]]*"opinions?"', head, re.M) or re.search(r'^title:\s*"\U0001f4ac', head, re.M))
 
 SLACK_CHANNEL = "C0ATAF7NZG9"
 
@@ -98,6 +106,8 @@ def collect_essays(dates: list[str]) -> list[dict]:
             if f.name == "_index.md":
                 continue
             content = f.read_text(encoding="utf-8")
+            if ESSAYS_DIR == OPINIONS_DIR and _is_opinion(content):
+                continue
             essays.append({"date": d, "file": f.name, "content": content[:5000]})
     return essays
 
@@ -110,6 +120,8 @@ def collect_opinions(dates: list[str]) -> list[dict]:
             if f.name == "_index.md":
                 continue
             content = f.read_text(encoding="utf-8")
+            if ESSAYS_DIR == OPINIONS_DIR and not _is_opinion(content):
+                continue
             opinions.append({"date": d, "file": f.name, "content": content[:4000]})
     return opinions
 

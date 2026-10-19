@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """nova_corrections.py — "Nova's Corrections": a weekly column where Nova publishes what she got wrong.
 
-Jordan (2026-10-19). Saturday 11:00 (scheduler.yaml corrections_weekly on .6), section Opinions — a
+Jordan (2026-10-19). Saturday 11:00 (scheduler.yaml corrections_weekly on .6), section Nova and Friends (was Opinions) — a
 newspaper runs its corrections beside its opinion pages, and nearly everything Nova revises is a judgment
 (what an alert meant, whether a fix held, what a show or a policy is), i.e. opinion-shaped.
 
@@ -32,7 +32,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-SECTION = "opinions"
+SECTION = "nova"          # Nova and Friends (Research + Opinions merged 2026-10-19)
 SIM_MIN = 0.72
 SIM_MAX = 0.985           # above this the two stances are the same sentence: a restatement
 MAX_SCREEN = 160
@@ -40,7 +40,7 @@ MAX_CORRECTIONS = 6
 ARTICLE_CHARS = 9000
 MAX_ARTICLE_PAIRS = 10
 ARTICLE_DIST_MAX = 0.2
-ARTICLE_SECTIONS = ("opinions", "research", "tech", "cars", "watches", "food", "security",
+ARTICLE_SECTIONS = ("nova", "opinions", "research", "tech", "cars", "watches", "food", "security",
                     "music", "military", "screen", "science", "mystery", "crime", "workshop", "travel")
 MODEL = os.environ.get("NOVA_CORRECTIONS_MODEL", "anthropic/claude-sonnet-4.5")
 HUGO_ROOT = Path.home() / "nova-journal"

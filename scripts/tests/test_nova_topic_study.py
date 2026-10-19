@@ -121,8 +121,11 @@ class TestUnit(unittest.TestCase):
         self.assertIsNone(ts.parse_json("no json"))
 
     def test_article_url_keeps_date_prefix(self):
+        self.assertEqual(ts.article_url("nova", "What Nova Learned From Cheers", "2026-10-19"),
+                         "https://nova.digitalnoise.net/nova/2026-10-19-what-nova-learned-from-cheers/")
+        # old section names go through the one remap (Research + Opinions -> Nova and Friends, 2026-10-19)
         self.assertEqual(ts.article_url("research", "What Nova Learned From Cheers", "2026-10-19"),
-                         "https://nova.digitalnoise.net/research/2026-10-19-what-nova-learned-from-cheers/")
+                         "https://nova.digitalnoise.net/nova/2026-10-19-what-nova-learned-from-cheers/")
 
     def test_display_name(self):
         self.assertEqual(ts.display_name("cheers", "Cheers (1982)"), "Cheers")

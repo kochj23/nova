@@ -41,12 +41,12 @@ JOURNAL_DIR = Path.home() / "nova-journal" / "content"
 TZ = "America/Los_Angeles"
 
 # Display order + names; any other section with posts follows, title-cased.
-SECTIONS = [("burbank-ops", "Burbank and Ops"), ("opinions", "Opinions"), ("watches", "Watches and Friends"),
+SECTIONS = [("burbank-ops", "Burbank and Ops"), ("nova", "Nova and Friends"), ("watches", "Watches and Friends"),
             ("cars", "Cars and Friends"), ("tech", "Tech and Friends"), ("food", "Food and Friends"),
             ("music", "Music and Friends"), ("military", "Military and Friends"), ("screen", "Screen and Friends"),
             ("science", "Science and Friends"), ("mystery", "Mystery and Friends"), ("crime", "Crime and Friends"),
             ("workshop", "Workshop and Friends"), ("travel", "Travel and Friends"),
-            ("research", "Research"), ("digests", "Digests"), ("security", "Security")]
+            ("digests", "Digests"), ("security", "Security")]
 SECTION_NAMES = dict(SECTIONS)
 SKIP_SECTIONS = {"about", "start-here", "search", "series", "tags", "categories"}
 MAX_PER_SECTION = 25

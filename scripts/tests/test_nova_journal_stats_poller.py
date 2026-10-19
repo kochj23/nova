@@ -76,8 +76,8 @@ def _reset_content():
     import shutil
     shutil.rmtree(jp.CONTENT_DIR, ignore_errors=True)
     jp.CONTENT_DIR.mkdir(parents=True)
-    (jp.CONTENT_DIR / "research" / "_index.md").parent.mkdir(exist_ok=True)
-    (jp.CONTENT_DIR / "research" / "_index.md").write_text("---\ntitle: Research\n---\n")
+    (jp.CONTENT_DIR / "nova" / "_index.md").parent.mkdir(exist_ok=True)
+    (jp.CONTENT_DIR / "nova" / "_index.md").write_text("---\ntitle: Nova and Friends\n---\n")
 
 
 VIEWS = {"count": 40, "uniques": 9, "views": [
@@ -113,7 +113,7 @@ class TestSecurity(unittest.TestCase):
         with patch.object(jp.subprocess, "run", _gh_router(paths=evil)):
             out = jp.fetch_top_paths()
         self.assertEqual(out[0]["title"], "{{7*7}}")
-        self.assertEqual(out[0]["section"], "research")   # old /essays/ URLs count for Research (2026-10-19)
+        self.assertEqual(out[0]["section"], "nova")   # old /essays/ URLs count for Nova and Friends (2026-10-19)
 
 
 class TestPerformance(unittest.TestCase):
@@ -180,8 +180,8 @@ class TestUnit(unittest.TestCase):
     def test_section_inference_edges(self):
         with patch.object(jp.subprocess, "run", _gh_router(paths=PATHS)):
             out = jp.fetch_top_paths()
-        # /essays/ -> research (merged); /dreams is retired, so it is "other" now (2026-10-19)
-        self.assertEqual([p["section"] for p in out], ["research", "other", "other"])
+        # /essays/ -> nova (merged); /dreams is retired, so it is "other" now (2026-10-19)
+        self.assertEqual([p["section"] for p in out], ["nova", "other", "other"])
         self.assertEqual(out[2]["title"], "Home")
         with patch.object(jp.subprocess, "run", _gh_router(paths=[{}])):
             self.assertEqual(jp.fetch_top_paths()[0], {"path": "", "title": "", "count": 0, "uniques": 0, "section": "other"})
@@ -208,12 +208,12 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(empty["burbank-ops"], {"post_count": 0, "coverage_7d": [False] * 7, "coverage_titles": [""] * 7,
                                            "latest_ts": None, "latest_title": "", "age_hours": 9999,
                                            "posts_this_week": 0, "posts_last_week": 0, "words_this_week": 0})
-        self.assertEqual(empty["research"]["post_count"], 0)                       # _index.md is not a post
-        _post("research", "a.md", _iso(0), "Today", 30)
-        _post("research", "b.md", _iso(3), "Three days", 20)
-        _post("research", "c.md", _iso(10), "Old", 100)
-        (jp.CONTENT_DIR / "research" / "nodate.md").write_text("no front matter at all")
-        s = jp.scan_content()["research"]
+        self.assertEqual(empty["nova"]["post_count"], 0)                       # _index.md is not a post
+        _post("nova", "a.md", _iso(0), "Today", 30)
+        _post("nova", "b.md", _iso(3), "Three days", 20)
+        _post("nova", "c.md", _iso(10), "Old", 100)
+        (jp.CONTENT_DIR / "nova" / "nodate.md").write_text("no front matter at all")
+        s = jp.scan_content()["nova"]
         self.assertEqual(s["post_count"], 4)
         self.assertEqual(s["coverage_7d"][:4], [True, False, False, True])
         self.assertEqual(s["coverage_titles"][0], "Today")
@@ -224,12 +224,12 @@ class TestUnit(unittest.TestCase):
     def test_scheduler_state_shapes_every_section(self):
         home = TMP / "home"; (home / ".openclaw/config").mkdir(parents=True, exist_ok=True)
         (home / ".openclaw/config/scheduler_state.json").write_text(json.dumps(
-            {"tasks": {"journal_research": {"last_run": 123, "last_exit_code": 0, "consecutive_failures": 2, "run_count": 9}}}))
+            {"tasks": {"journal_opinion": {"last_run": 123, "last_exit_code": 0, "consecutive_failures": 2, "run_count": 9}}}))
         with patch.object(jp.Path, "home", return_value=home):
             st = jp.get_scheduler_state()
         self.assertEqual(set(st), set(jp.SECTIONS))
-        self.assertEqual(st["research"], {"task_id": "journal_research", "last_run_ts": 123, "last_exit_code": 0, "consecutive_failures": 2,
-                                          "run_count": 9, "scheduled_hour": 23, "scheduled_minute": 50})
+        self.assertEqual(st["nova"], {"task_id": "journal_opinion", "last_run_ts": 123, "last_exit_code": 0, "consecutive_failures": 2,
+                                          "run_count": 9, "scheduled_hour": 12, "scheduled_minute": 0})
         self.assertEqual(st["burbank-ops"]["last_run_ts"], None)
 
     def test_schedule_panel_sorted_by_fire_time(self):
@@ -269,7 +269,7 @@ class TestIntegration(unittest.TestCase):
 class TestFunctional(unittest.TestCase):
     def test_golden_path_writes_stats_file(self):
         _reset_content()
-        _post("research", "a.md", _iso(0), "Today", 30)
+        _post("nova", "a.md", _iso(0), "Today", 30)
         _post("burbank-ops", "d.md", _iso(1), "Ops", 10)
         runs = [{"databaseId": 7, "displayTitle": "deploy", "conclusion": "success", "createdAt": "x", "url": "u"}]
         home = TMP / "home"; (home / ".openclaw/config").mkdir(parents=True, exist_ok=True)
@@ -282,11 +282,11 @@ class TestFunctional(unittest.TestCase):
             jp.main()
         stats = json.loads(jp.STATS_FILE.read_text())
         self.assertEqual(stats["traffic"]["total_count"], 40)
-        self.assertEqual(stats["section_views"], {"burbank-ops": 0, "opinions": 0, "after-dark": 0, "tech": 0, "cars": 0, "food": 0, "watches": 0, "research": 12, "digests": 0, "security": 0})
+        self.assertEqual(stats["section_views"], {**{s: 0 for s in jp.SECTIONS}, "nova": 12})
         self.assertEqual(stats["totals"], {"posts": 2, "posts_this_week": 2, "words_this_week": 40})
         self.assertEqual(stats["recent_deploys"][0]["id"], 7)
         self.assertEqual(stats["referrers"][0]["referrer"], "google.com")
-        self.assertEqual(len(stats["schedule"]), 10)
+        self.assertEqual(len(stats["schedule"]), len(jp.SECTION_SCHEDULES))
         self.assertIn(_iso(1), stats["traffic_history"])
         self.assertTrue(jp.HISTORY_FILE.exists())
         self.assertIn("Stats written: 2 posts, 40 total views, 1 deploys", out.getvalue())

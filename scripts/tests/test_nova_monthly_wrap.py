@@ -166,10 +166,10 @@ class TestUnit(unittest.TestCase):
 
     def test_build_sources_lists_every_post_with_url(self):
         for i in range(1, 6):
-            _art("research", f"2026-09-0{i}-e{i}.md", date(2026, 9, i), f"Essay {i}",
+            _art("nova", f"2026-09-0{i}-e{i}.md", date(2026, 9, i), f"Essay {i}",
                  body="deep " * 5000, desc=f"about {i}")
-        arts = mw.collect_month_articles("research", "2026-09")
-        src = mw.build_sources("research", "2026-09", arts)
+        arts = mw.collect_month_articles("nova", "2026-09")
+        src = mw.build_sources("nova", "2026-09", arts)
         self.assertLessEqual(len(src), mw.SOURCES_BUDGET)
         for a in arts:
             self.assertIn(a["url"], src)
@@ -223,7 +223,7 @@ class TestPerformance(unittest.TestCase):
 
     def test_sections_run_concurrently_bounded_by_workers(self):
         _reset()
-        for s in ("digests", "cars", "research", "watches", "opinions"):
+        for s in ("digests", "cars", "nova", "watches", "tech"):
             _art(s, "2026-09-03-x.md", date(2026, 9, 3), f"{s} post")
         live, peak, lock = [0], [0], threading.Lock()
 
@@ -316,19 +316,19 @@ class TestIntegration(unittest.TestCase):
 
     def test_publish_hugo_gets_grounding_args(self):
         _reset()
-        _art("research", "2026-09-15-road.md", date(2026, 9, 15), "The Road to Sentience",
+        _art("nova", "2026-09-15-road.md", date(2026, 9, 15), "The Road to Sentience",
              body="cron jobs in a trenchcoat " * 50)
         with _q():
             mw.run("2026-09")
         kw = mw.publish_hugo.call_args.kwargs
         self.assertEqual(kw["profile"], "monthly-wrap")
         self.assertEqual(kw["min_words"], 5000)
-        self.assertEqual(kw["stable_slug"], "2026-09-research-monthly-wrap")
+        self.assertEqual(kw["stable_slug"], "2026-09-nova-monthly-wrap")
         self.assertIn("The Road to Sentience", kw["sources"])
-        self.assertIn("https://nova.digitalnoise.net/research/2026-09-15-road/", kw["sources"])
+        self.assertIn("https://nova.digitalnoise.net/nova/2026-09-15-road/", kw["sources"])
         self.assertIn("trenchcoat", kw["sources"])
         title = mw.publish_hugo.call_args.args[0]
-        self.assertEqual(title, "Research — September 2026: Five Hundred Posts and a Grudge")
+        self.assertEqual(title, "Nova and Friends — September 2026: Five Hundred Posts and a Grudge")
         self.assertNotIn("SUBTITLE", mw.publish_hugo.call_args.args[1])
         # the draft prompt carried the same sources the expander will see
         self.assertIn(kw["sources"], mw.call_openrouter.call_args.args[1])
