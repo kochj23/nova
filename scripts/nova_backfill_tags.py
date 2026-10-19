@@ -95,7 +95,7 @@ def process_file(md_path: Path, category: str) -> bool:
 
 def main():
     log("Starting tag backfill...")
-    categories = ["dreams", "essays", "opinions", "tech", "cars", "watches", "after-dark",
+    categories = ["dreams", "essays", "opinions", "tech", "cars", "food", "watches", "after-dark",
                   "art", "research", "digests"]
     updated = 0
     skipped = 0

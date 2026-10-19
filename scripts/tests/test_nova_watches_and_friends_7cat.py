@@ -59,7 +59,7 @@ def run_main(argv=(), news=None, fish=None, llm=None, publish=True):
     nj.publish_hugo.return_value = publish
     nj.git_push.return_value = "ok"
     with patch.object(sys, "argv", ["x", *argv]), patch.object(m, "_connect", return_value=conn), \
-            patch.object(m, "nj", nj), patch.object(m.nova_voice, "system_prompt", side_effect=lambda c: c):
+            patch.object(m, "nj", nj), patch.object(m.nova_voice, "system_prompt", side_effect=lambda c, **k: c):
         rc = m.main()
     return rc, nj, cur
 
@@ -139,7 +139,7 @@ class TestRetry(unittest.TestCase):
         nj2.generate_image.side_effect = RuntimeError("SD down")
         nj2.publish_hugo.return_value = True
         with patch.object(sys, "argv", ["x"]), patch.object(m, "_connect", return_value=conn), \
-                patch.object(m, "nj", nj2), patch.object(m.nova_voice, "system_prompt", side_effect=lambda c: c):
+                patch.object(m, "nj", nj2), patch.object(m.nova_voice, "system_prompt", side_effect=lambda c, **k: c):
             self.assertEqual(m.main(), 0)
         self.assertIsNone(nj2.publish_hugo.call_args.kwargs["image_path"])
 
@@ -185,6 +185,8 @@ class TestIntegration(unittest.TestCase):
         calls = []
 
         def llm(system, user, **k):
+            if "very TOP" in system:          # The Big Story call (TestBigStory covers it)
+                return "NONE"
             calls.append(system)
             return "TITLE: Short week\nshort" if len(calls) == 1 else "## Deeper Cuts\nmore"
         run_main(["--dry-run"], fish=[], llm=llm)
@@ -231,7 +233,7 @@ class TestFunctional(unittest.TestCase):
 
 class TestFrame(unittest.TestCase):
     def test_module_shape(self):
-        for n in ("main", "group_videos", "digest", "sources", "split_title", "_connect"):
+        for n in ("main", "group_videos", "digest", "sources", "split_title", "_connect", "featured_block"):
             self.assertTrue(callable(getattr(m, n)))
 
     def test_help(self):
@@ -239,6 +241,92 @@ class TestFrame(unittest.TestCase):
                            capture_output=True, text=True, timeout=60, cwd=str(SCRIPTS))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("--days", r.stdout)
+
+
+
+# ── The Big Story (Jordan 2026-10-19): featured block at the top, grounded, fail closed ───────────
+YT1 = "https://www.youtube.com/watch?v=v1"
+
+
+def story_llm(block_text, seen=None):
+    def llm(system, user, **k):
+        if seen is not None:
+            seen.append((system, user, k))
+        if "block that sits at the very TOP" in system:
+            return block_text
+        if "Fishbowl / Hate Streams' section" in system:
+            return "fish prose"
+        return "TITLE: Big Week\n## News\nThe watch news starts here. " + "word " * 3000
+    return llm
+
+
+GOOD = f"Huge day: [Chan — T]({YT1}) found a dead-stock Speedmaster. " + "tick " * 40
+
+
+def published(nj):
+    return nj.publish_hugo.call_args.args[1]
+
+
+class TestBigStory(unittest.TestCase):
+    def test_big_story_at_the_top_before_news_and_fishbowl(self):
+        rc, nj, _ = run_main(llm=story_llm(GOOD))
+        self.assertEqual(rc, 0)
+        body = published(nj)
+        self.assertTrue(body.startswith("## The Big Story\n\nHuge day"))
+        self.assertLess(body.index("The Big Story"), body.index("The watch news starts here"))
+        self.assertLess(body.index("The Big Story"), body.index("## Fishbowl / Hate Streams"))
+        self.assertIn("## Sources\n\n### Watch News", body)        # the rest of the issue unchanged
+
+    def test_big_story_omitted_without_grounding(self):
+        for text in ("NONE", "tick " * 60, GOOD.replace(YT1, "https://made.up/x"),
+                     GOOD + " posted from 192.168.1.20", GOOD + " " + "w " * 600):
+            rc, nj, _ = run_main(llm=story_llm(text))
+            self.assertEqual(rc, 0)
+            body = published(nj)
+            self.assertNotIn("The Big Story", body, text[-50:])
+            self.assertTrue(body.startswith("## News"))
+
+    def test_big_story_skipped_when_no_linkable_news(self):
+        seen = []
+        rc, nj, _ = run_main(news=[("[Chan] text", D, {"channel": "Chan", "title": "T"})], llm=story_llm(GOOD, seen))
+        self.assertEqual(rc, 0)
+        self.assertFalse(any("very TOP" in s for s, _, _ in seen))
+        self.assertNotIn("The Big Story", published(nj))
+
+    def test_big_story_keeps_known_facts_and_piccolino_billing(self):
+        seen = []
+        with patch.dict(sys.modules, {"nova_fishbowl_summaries": MagicMock(KNOWN_FACTS="GROUND-TRUTH: Franchise Club "
+                                      "crew incl. Curly, Mookie, Pazuzu and Watch Hangout are the GOOD GUYS")}):
+            run_main(["--dry-run"], llm=story_llm("NONE", seen))
+        system = next(s for s, _, _ in seen if "very TOP" in s)
+        self.assertIn("Franchise Club crew incl. Curly, Mookie, Pazuzu and Watch Hangout are the GOOD GUYS", system)
+        self.assertIn("Peter Piccolino episode is in the material, it IS the Big Story", system)
+
+    def test_known_facts_ground_truth_intact(self):
+        from nova_fishbowl_summaries import KNOWN_FACTS
+        for s in ("Franchise Club", "Curly", "Mookie", "Pazuzu", "Watch Hangout", "GOOD GUYS", "Peter Piccolino",
+                  "top billing"):
+            self.assertIn(s, KNOWN_FACTS)
+
+    def test_big_story_failure_never_sinks_the_issue(self):
+        def llm(system, user, **k):
+            if "very TOP" in system:
+                raise RuntimeError("cli died")
+            return "TITLE: Big Week\n## News\n" + "word " * 3000
+        rc, nj, _ = run_main(llm=llm)
+        self.assertEqual(rc, 0)
+        nj.git_push.assert_called_once()
+
+    def test_issue_calls_are_seasoned_with_the_section(self):
+        with patch.object(m.nova_voice, "system_prompt", side_effect=lambda c, **k: c) as sp:
+            cur = Cur([row("[Chan] x", "v1")], [row("[F] d", "f1")])
+            conn = MagicMock(); conn.cursor.return_value = cur
+            nj = MagicMock(); nj.today_str.return_value = "d"; nj.call_openrouter.side_effect = story_llm("NONE")
+            with patch.object(sys, "argv", ["x", "--dry-run"]), patch.object(m, "_connect", return_value=conn), \
+                    patch.object(m, "nj", nj), patch("builtins.print"):
+                m.main()
+        secs = [c.kwargs.get("section") for c in sp.call_args_list if "very TOP" not in c.args[0]]
+        self.assertTrue(secs and all(x == "watches" for x in secs))
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""7-category tests for nova_friends.py — Cars and Friends / Tech and Friends (Security, Performance,
+"""7-category tests for nova_friends.py — Cars / Tech / Food and Friends (Security, Performance,
 Retry, Unit, Integration, Functional, Frame). PostgreSQL, the Claude CLI (call_openrouter), image
 generation, Hugo publish, git push and Slack are all mocked — nothing is published.
 Written by Jordan Koch (via Claude).
@@ -32,24 +32,33 @@ def arow(text, url, feed="Ars Technica", title="A"):
     return (text, D, {"url": url, "feed": feed, "title": title, "type": "gov_rss"})
 
 
-class Cur:
-    """Answers by query shape: the channel query gets videos, the article query gets articles."""
+def recrow(text, url="https://www.meatchurch.com/blogs/recipes/ribs", title="Sweet Honey Ribs", chunk=1):
+    return (text, D, {"url": url, "title": title, "type": "recipe", "source_site": "meatchurch.com", "chunk": chunk})
 
-    def __init__(self, videos, arts):
-        self.videos, self.arts, self.calls, self._r = videos, arts, [], []
+
+class Cur:
+    """Answers by query shape: the channel query gets videos, the article query gets articles,
+    the recipe-memory queries get recipe pages / chunks."""
+
+    def __init__(self, videos, arts, recipes=()):
+        self.videos, self.arts, self.recipes, self.calls, self._r = videos, arts, list(recipes), [], []
 
     def execute(self, sql, params=None):
         self.calls.append((sql, params))
-        self._r = self.arts if "gov_rss" in sql else self.videos
+        if "source = 'recipes'" in sql:
+            self._r = ([(md["url"], md["title"], md["source_site"]) for _, _, md in self.recipes]
+                       if "GROUP BY" in sql else [r for r in self.recipes if r[2]["url"] in params[0]])
+        else:
+            self._r = self.arts if "gov_rss" in sql else self.videos
 
     def fetchall(self):
         return self._r
 
 
-def run_main(argv=("--subject", "cars"), videos=None, arts=None, llm=None, publish=True):
+def run_main(argv=("--subject", "cars"), videos=None, arts=None, llm=None, publish=True, recipes=()):
     videos = [vrow("a rear wing that lifts the nose", "v1")] if videos is None else videos
     arts = [arow("new kernel release", "https://a/1")] if arts is None else arts
-    cur = Cur(videos, arts)
+    cur = Cur(videos, arts, recipes)
     conn = MagicMock(); conn.cursor.return_value = cur
     nj = MagicMock()
     nj.today_str.return_value = "2026-10-19"
@@ -57,7 +66,7 @@ def run_main(argv=("--subject", "cars"), videos=None, arts=None, llm=None, publi
     nj.publish_hugo.return_value = publish
     nj.git_push.return_value = "ok"
     with patch.object(sys, "argv", ["x", *argv]), patch.object(m, "_connect", return_value=conn), \
-            patch.object(m, "nj", nj), patch.object(m.nova_voice, "system_prompt", side_effect=lambda c: c):
+            patch.object(m, "nj", nj), patch.object(m.nova_voice, "system_prompt", side_effect=lambda c, **k: c):
         rc = m.main()
     return rc, nj, cur
 
@@ -126,7 +135,7 @@ class TestRetry(unittest.TestCase):
         nj.call_openrouter.side_effect = lambda *a, **k: "TITLE: Long day here\n" + "w " * 3000
         nj.generate_image.side_effect = RuntimeError("SD down")
         with patch.object(sys, "argv", ["x", "--subject", "cars"]), patch.object(m, "_connect", return_value=conn), \
-                patch.object(m, "nj", nj), patch.object(m.nova_voice, "system_prompt", side_effect=lambda c: c):
+                patch.object(m, "nj", nj), patch.object(m.nova_voice, "system_prompt", side_effect=lambda c, **k: c):
             self.assertEqual(m.main(), 0)
         self.assertIsNone(nj.publish_hugo.call_args.kwargs["image_path"])
 
@@ -188,6 +197,8 @@ class TestIntegration(unittest.TestCase):
         calls = []
 
         def llm(system, user, **k):
+            if "very TOP" in system:          # the featured block call (TestTopBlocks covers it)
+                return "NONE"
             calls.append(system)
             return "TITLE: Short day\nshort" if len(calls) == 1 else "## Deeper Cuts\nmore"
         with patch("builtins.print"):
@@ -238,7 +249,8 @@ class TestFrame(unittest.TestCase):
     def test_module_shape(self):
         for n in ("main", "fetch", "source_list", "norm"):
             self.assertTrue(callable(getattr(m, n)))
-        self.assertEqual(set(m.SUBJECTS), {"cars", "tech"})
+        self.assertEqual(set(m.SUBJECTS), {"cars", "tech", "food"})
+        self.assertEqual(set(m.FEATURES), set(m.SUBJECTS))
 
     def test_watches_script_untouched_by_the_sibling(self):
         self.assertEqual(w.SECTION, "watches")
@@ -249,6 +261,169 @@ class TestFrame(unittest.TestCase):
                            capture_output=True, text=True, timeout=60, cwd=str(SCRIPTS))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("--subject", r.stdout)
+
+
+
+# ── Featured top blocks (Jordan 2026-10-19) ─────────────────────────────────────────────────────
+YT1 = "https://www.youtube.com/watch?v=v1"
+REC = "https://www.meatchurch.com/blogs/recipes/ribs"
+
+
+def block_llm(block_text, seen=None):
+    """News call -> a long issue; the featured-block call -> block_text."""
+    def llm(system, user, **k):
+        if seen is not None:
+            seen.append((system, user))
+        if "block that sits at the very TOP" in system:
+            return block_text
+        return "TITLE: Big Day Out\n## News\nThe roundup starts here. " + "word " * 3000
+    return llm
+
+
+def good_block(url=YT1, extra=""):
+    return f"The day belongs to a wild new build — [Rob Dahm — T]({url}) shows it. " + "punchy " * 40 + extra
+
+
+def published_body(nj):
+    return nj.publish_hugo.call_args.args[1]
+
+
+class TestTopBlocks(unittest.TestCase):
+    def test_each_subject_has_its_block_at_the_top(self):
+        cases = {"cars": ("The Big Story", [vrow("a rear wing", "v1")], (), YT1),
+                 "tech": ("Buying Recommendation", [vrow("a new UniFi gateway", "v1", chan="Lawrence Systems")], None, YT1),
+                 "food": ("Recipe Recommendation", [vrow("smoked ribs", "v1", chan="Meat Church BBQ")], (), REC)}
+        for subj, (heading, vids, arts, url) in cases.items():
+            rc, nj, _ = run_main(["--subject", subj], videos=vids, arts=[] if arts == () else arts,
+                                 recipes=[recrow("Ingredients: ribs, honey. Smoke at 250F.")],
+                                 llm=block_llm(good_block(url)))
+            self.assertEqual(rc, 0, subj)
+            body = published_body(nj)
+            self.assertTrue(body.startswith(f"## {heading}\n\n"), (subj, body[:80]))
+            self.assertLess(body.index(heading), body.index("The roundup starts here"))
+            self.assertIn(url, body.split("## News")[0])
+
+    def test_block_omitted_when_model_says_none(self):
+        for subj in ("cars", "tech", "food"):
+            rc, nj, _ = run_main(["--subject", subj], llm=block_llm("NONE"))
+            self.assertEqual(rc, 0)
+            body = published_body(nj)
+            self.assertTrue(body.startswith("## News"), subj)
+            for h in ("The Big Story", "Buying Recommendation", "Recipe Recommendation"):
+                self.assertNotIn(h, body)
+
+    def test_block_omitted_when_it_links_nothing_real(self):
+        for text in (good_block("https://invented.example/x"),           # link not one of the day's sources
+                     good_block(YT1, " also [x](https://made.up/y)"),     # one real + one invented
+                     "punchy " * 60,                                       # no link at all
+                     good_block(YT1, " " + "w " * 600),                   # far too long
+                     good_block(YT1, " it runs on nova-core3 at 10.0.0.6")):   # privacy
+            rc, nj, _ = run_main(llm=block_llm(text))
+            self.assertEqual(rc, 0)
+            self.assertNotIn("The Big Story", published_body(nj), text[-60:])
+
+    def test_block_omitted_when_nothing_linkable(self):
+        rows = [("t", D, {"show": "Rob Dahm", "title": "Wing", "source_file": "/v/youtube/Rob Dahm/a.mp4"})]
+        seen = []
+        rc, nj, _ = run_main(videos=rows, arts=[], llm=block_llm(good_block(), seen))
+        self.assertEqual(rc, 0)
+        self.assertNotIn("The Big Story", published_body(nj))
+        self.assertFalse(any("very TOP" in s for s, _ in seen))   # no call made without grounding
+
+    def test_block_call_failure_never_sinks_the_issue(self):
+        def llm(system, user, **k):
+            if "very TOP" in system:
+                raise RuntimeError("cli died")
+            return "TITLE: Big Day Out\n## News\n" + "word " * 3000
+        rc, nj, _ = run_main(llm=llm)
+        self.assertEqual(rc, 0)
+        self.assertTrue(published_body(nj).startswith("## News"))
+
+    def test_food_recipe_memory_grounds_and_is_credited(self):
+        seen = []
+        rc, nj, cur = run_main(["--subject", "food"], videos=[vrow("ribs on the smoker", "v1", chan="Chuds BBQ")],
+                               recipes=[recrow("Ingredients: baby back ribs, honey."),
+                                        recrow("Method: smoke at 250F for 3 hours.", chunk=2)],
+                               llm=block_llm(f"Cook the [Meat Church BBQ — Sweet Honey Ribs]({REC}). " + "yum " * 40, seen))
+        self.assertEqual(rc, 0)
+        system, user = next(x for x in seen if "very TOP" in x[0])
+        self.assertIn("RECIPE PAGES", user)
+        self.assertIn("Ingredients: baby back ribs, honey. Method: smoke at 250F", user)
+        self.assertIn("ONLY ingredients, amounts, times and temperatures the source actually", system)
+        body = published_body(nj)
+        self.assertTrue(body.startswith("## Recipe Recommendation"))
+        self.assertIn("### Recipe\n\n- [Meat Church BBQ — Sweet Honey Ribs](" + REC, body)
+
+    def test_tech_block_prompt_uses_public_stack_only(self):
+        seen = []
+        run_main(["--subject", "tech", "--dry-run"], llm=block_llm("NONE", seen))
+        system = next(s for s, _ in seen if "very TOP" in s)
+        for item in ("Mac Studio", "Beelink", "UNAS", "Synology", "Lutron", "Meshtastic", "SDRplay", "Bambu",
+                     "Ubiquiti cameras"):
+            self.assertIn(item, system)
+        self.assertIn("never hostnames, IP addresses, camera or room names", system)
+        self.assertNotRegex(m.HOME_STACK, r"\d+\.\d+\.\d+|nova-|office|kitchen|bedroom|garage|disney|SER\d|GTi")
+
+    def test_issue_calls_are_seasoned_with_the_section(self):
+        for subj in ("cars", "tech", "food"):
+            with patch.object(m.nova_voice, "system_prompt", side_effect=lambda c, **k: c) as sp:
+                cur = Cur([vrow("x", "v1")], [])
+                conn = MagicMock(); conn.cursor.return_value = cur
+                nj = MagicMock(); nj.today_str.return_value = "d"; nj.call_openrouter.side_effect = block_llm("NONE")
+                with patch.object(sys, "argv", ["x", "--subject", subj, "--dry-run"]), \
+                        patch.object(m, "_connect", return_value=conn), patch.object(m, "nj", nj), patch("builtins.print"):
+                    m.main()
+            secs = [c.kwargs.get("section") for c in sp.call_args_list if "very TOP" not in c.args[0]]
+            self.assertTrue(secs and all(x == subj for x in secs), (subj, secs))
+
+    def test_watches_big_story_is_the_shared_helper(self):
+        self.assertIs(m.featured_block, w.featured_block)
+
+
+class TestFoodRouting(unittest.TestCase):
+    def test_food_channels_listed_and_excluded_kept_out(self):
+        food = {m.norm(c) for c in m.FOOD_CHANNELS}
+        for c in ("Meat Church BBQ", "Sam The Cooking Guy", "SONS OF SAM THE COOKING GUY", "America’s Test Kitchen",
+                  "Cooper Abercrombie - Bar-A-BBQ", "Beers & Bars", "James May's Planet Gin", "Whiskey Tribe"):
+            self.assertIn(m.norm(c), food, c)
+        everything = food | {m.norm(c) for c in m.CARS_CHANNELS + m.TECH_CHANNELS}
+        for c in m.FOOD_EXCLUDED:
+            self.assertNotIn(m.norm(c), everything, c)
+        self.assertEqual(len(m.FOOD_CHANNELS), 32)
+
+    def test_food_lists_disjoint_from_cars_and_tech(self):
+        food = {m.norm(c) for c in m.FOOD_CHANNELS}
+        self.assertFalse(food & {m.norm(c) for c in m.CARS_CHANNELS + m.TECH_CHANNELS})
+
+    def test_food_query_routes_by_normalised_channel_no_articles(self):
+        rc, nj, cur = run_main(["--subject", "food", "--dry-run"], videos=[vrow("brisket", "v1", chan="Chuds BBQ")])
+        self.assertEqual(rc, 0)
+        self.assertIn(m.norm("A Cooks Tour with Anthony Bourdain"), cur.calls[0][1][1])
+        self.assertNotIn(m.norm("Peter Santenello"), cur.calls[0][1][1])
+        self.assertFalse(any("gov_rss" in sql for sql, _ in cur.calls))
+
+    def test_golden_food_publishes_to_food(self):
+        rc, nj, _ = run_main(["--subject", "food"], videos=[vrow("brisket", "v1", chan="Chuds BBQ")])
+        self.assertEqual(rc, 0)
+        a = nj.publish_hugo.call_args.args
+        self.assertTrue(a[0].startswith("Food and Friends: "))
+        self.assertEqual(a[2], "food")
+        self.assertEqual(nj.git_push.call_args.args[0], "food")
+
+    def test_recipe_pick_prefers_matching_titles_and_is_stable(self):
+        recs = [recrow("x", url=f"https://r/{i}", title=t) for i, t in
+                enumerate(["Banana Pudding", "Smoked Brisket Chili", "Country Style Ribs", "Turkey Gravy"])]
+        nj = MagicMock(); nj.today_str.return_value = "2026-10-19"
+        with patch.object(m, "nj", nj):
+            vids = [{"title": "Brisket day", "text": "chili on the smoker", "channel": "c", "url": "u", "date": "d"}]
+            got = m.fetch_recipes(Cur([], [], recs), vids, n=1)
+            again = m.fetch_recipes(Cur([], [], recs), vids, n=1)
+        self.assertEqual(got[0]["title"], "Smoked Brisket Chili")
+        self.assertEqual(got[0]["channel"], "Meat Church BBQ")
+        self.assertEqual(got, again)
+
+    def test_no_recipe_memories_is_fine(self):
+        self.assertEqual(m.fetch_recipes(Cur([], [], []), []), [])
 
 
 if __name__ == "__main__":

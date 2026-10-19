@@ -35,6 +35,7 @@ SECTIONS = {
     "digests": "collage data visualization, editorial layout, modern",
     "tech": "futuristic technology, circuits, neon, cyberpunk",
     "cars": "classic and performance cars, garages, race tracks",
+    "food": "barbecue smokers, kitchens, plated dishes and cooking fires",
     "research": "academic research illustration, technical, detailed",
     "after-dark": "late night talk show set, purple blue neon, moody spotlight",
     "operations": "cyberpunk operations center, server racks, holographic displays, dark moody",

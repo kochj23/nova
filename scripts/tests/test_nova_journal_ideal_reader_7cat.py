@@ -90,7 +90,7 @@ def _publish(title, body, profile=None, section="essays", env=None, ir_patch=Non
             for p in reversed(patches):
                 p.stop()
     assert ok, "publish_hugo refused"
-    md = sorted((nj.HUGO_ROOT / f"content/{section}").glob("*.md"), key=lambda p: p.stat().st_mtime)[-1]
+    md = sorted((nj.HUGO_ROOT / f"content/{nj._canon_section(section)}").glob("*.md"), key=lambda p: p.stat().st_mtime)[-1]
     return md.read_text()
 
 
@@ -100,7 +100,7 @@ class TestSecurity(unittest.TestCase):
         import nova_ideal_reader as ir
         body = text.split("---", 2)[2]
         self.assertLessEqual(ir._content_words(body) - ir._content_words(DRAFT + SOURCES_TAIL),
-                             ir._content_words("Published Thursday October PT AM PM 2026 at"
+                             ir._content_words("Published Thursday October PT AM PM 2026 at "
                                                + " ".join(["monday tuesday wednesday thursday friday saturday sunday",
                                                            "january february march april may june july august",
                                                            "september october november december"])))

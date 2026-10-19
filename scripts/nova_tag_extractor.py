@@ -22,6 +22,7 @@ CATEGORY_SEEDS = {
     "opinions":  ["tech", "culture", "commentary"],
     "tech": ["technology", "AI", "infrastructure"],
     "cars": ["cars", "automotive"],
+    "food": ["food", "cooking"],
     "research":  ["research", "academic", "history"],
     "after-dark": ["history", "comedy", "monologue"],
     "art":       ["art", "generative", "visual"],

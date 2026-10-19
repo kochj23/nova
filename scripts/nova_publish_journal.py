@@ -50,7 +50,7 @@ def _get_tags(title: str, text: str, category: str) -> list[str]:
     except Exception as e:
         log(f"Tag extraction failed ({e}) — using defaults")
         defaults = {"dreams": ["dream"], "essays": ["essay", "culture"],
-                    "opinions": ["opinion", "tech"], "tech": ["technology", "AI"], "cars": ["cars", "automotive"],
+                    "opinions": ["opinion", "tech"], "tech": ["technology", "AI"], "cars": ["cars", "automotive"], "food": ["food", "cooking"],
                     "after-dark": ["history", "comedy"], "art": ["art", "generative"],
                     "research": ["research", "academic"]}
         return defaults.get(category, ["journal"])

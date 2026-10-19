@@ -97,6 +97,7 @@ SECTION_MODEL_MAP = {
     "research": "quality",
     "tech": "quality",
     "cars": "quality",
+    "food": "quality",
     "opinions": "quality",
     "synthesis": "premium",
     "digests": "balanced",

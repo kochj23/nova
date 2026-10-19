@@ -23,7 +23,7 @@ HUGO_ROOT = (Path.home() / "nova-journal")
 IMAGES_ROOT = HUGO_ROOT / "static/images"
 CONTENT_ROOT = HUGO_ROOT / "content"
 
-SECTIONS = ["art", "after-dark", "dreams", "essays", "opinions", "research", "tech", "cars", "digests"]
+SECTIONS = ["art", "after-dark", "dreams", "essays", "opinions", "research", "tech", "cars", "food", "digests"]
 
 SECTION_PROMPT_STYLE = {
     "art": "Create a museum-quality artistic painting. Style: {style}. Subject: {title}. {desc}",
@@ -33,6 +33,7 @@ SECTION_PROMPT_STYLE = {
     "opinions": "Create a bold, editorial-style cover image with strong visual metaphor. Topic: {title}. {desc}",
     "research": "Create a sophisticated academic journal cover illustration. Scientific, detailed, precise. Topic: {title}. {desc}",
     "cars": "Create a cinematic automotive cover: classic and performance cars, garages, race tracks. Topic: {title}. {desc}",
+    "food": "Create a warm food cover: barbecue smokers, kitchens, plated dishes. Topic: {title}. {desc}",
     "tech": "Create a modern tech-themed cover image with clean lines, digital aesthetic. Topic: {title}. {desc}",
     "digests": "Create a clean, minimal daily digest cover. Abstract geometric shapes, professional. Theme: {title}.",
 }

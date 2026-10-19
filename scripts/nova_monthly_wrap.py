@@ -114,6 +114,7 @@ MOTIF = {
     "essays": "a writer's desk with stacks of annotated manuscripts",
     "opinions": "an empty soapbox and a vintage microphone under a spotlight",
     "cars": "a classic car in a garage under work lights, tools on the bench",
+    "food": "a smoker and a cast-iron pan on a backyard cook, ingredients on a board",
     "tech": "circuit boards, newspapers and glowing screens on a desk",
     "research": "lab notebooks, charts and a microscope in soft light",
     "synthesis": "threads of light weaving many pages together",

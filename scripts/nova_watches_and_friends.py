@@ -10,6 +10,11 @@ built from the memory rows — every video/stream the piece drew on, linked, gro
 Written in parts so the length is reliable: one call for the news, one for the Fishbowl, and a
 grounded "deeper cuts" call only if the total is still under the minimum. Window: last DAYS days
 (1 = daily issue, 7 = the old weekly sizes). A day with no watch news is skipped quietly (exit 0).
+
+"The Big Story" (Jordan 2026-10-19): a short featured block at the very top, above the roundup — the
+most interesting new watch story of the day, linked. featured_block() is shared with the Cars/Tech/
+Food siblings (nova_friends.py) and fails closed: no grounding, no link to a real source, a link that
+is not one of the day's sources, or a public-journal privacy hit -> the block is simply omitted.
 Usage: nova_watches_and_friends.py [--days 1] [--dry-run]
 """
 import argparse
@@ -97,6 +102,59 @@ def words(s):
     return len(re.findall(r"\w+", s or ""))
 
 
+# Public-journal privacy check for featured blocks: employer, OpenClaw, IPs, home paths, hostnames.
+FEATURE_BANNED = re.compile(r"\bdisney\b|openclaw|\b(?:\d{1,3}\.){3}\d{1,3}\b|/Users/|/Volumes/|"
+                            r"\b[\w-]+\.local\b|\bnova-core\d|\boffice-m4|\bpg-primary\b", re.I)
+URL_RE = re.compile(r"https?://[^\s)\]>\"'<]+")
+
+
+def featured_block(heading, task, material, items, rules, llm=None, max_words=450):
+    """The featured block at the top of an issue ("The Big Story", "Recipe Recommendation",
+    "Buying Recommendation"). One grounded call over the day's material. Fail closed — returns ""
+    (block omitted, issue unchanged) when there is nothing linkable, the call fails, the model says
+    NONE, the block is too short/long, links nothing from `items`, links anything that is NOT one of
+    `items`, or trips FEATURE_BANNED. llm defaults to nj.call_openrouter (the caller's nj is passed
+    in by the siblings so their tests can mock it)."""
+    allowed = {v["url"] for v in items if v.get("url")}
+    if not allowed or not (material or "").strip():
+        log(f"{heading}: nothing linkable in the material — block omitted")
+        return ""
+    llm = llm or nj.call_openrouter
+    ctx = (f"You are writing the '{heading}' block that sits at the very TOP of the issue, above the roundup. "
+           f"{task} Short and punchy: 80-300 words of markdown, no headers, no title line, start directly with "
+           "the prose. Credit the source by name and link it with a markdown link, using ONLY URLs from the "
+           "LINKABLE SOURCES list — never any other URL. Use only facts that are actually in the material. "
+           "If the material cannot support this block, reply with exactly NONE and nothing else. " + rules)
+    linkable = "\n".join(f"- {v['channel']} — {v['title'] or 'video'}: {v['url']}" for v in items if v.get("url"))
+    try:
+        raw = llm(nova_voice.system_prompt(ctx), f"--- LINKABLE SOURCES ---\n{linkable}\n\n--- MATERIAL ---\n\n"
+                  f"{material}\n\nWrite the {heading} block, or NONE.",
+                  model=MODEL, max_tokens=2000, temperature=0.6, timeout=600)
+    except Exception as e:  # noqa: BLE001 — a failed block never sinks the issue
+        log(f"{heading}: call failed ({e}) — block omitted")
+        return ""
+    text = (raw or "").strip()
+    while text.startswith("#"):                       # a stray heading line: drop it, we add our own
+        text = text.split("\n", 1)[1].strip() if "\n" in text else ""
+    reason = None
+    if not text or text.upper().startswith("NONE"):
+        reason = "model said NONE / empty"
+    elif not 25 <= words(text) <= max_words:
+        reason = f"{words(text)} words"
+    else:
+        urls = {u.rstrip(".,;:!?*_") for u in URL_RE.findall(text)}
+        if not urls & allowed:
+            reason = "links none of the day's sources"
+        elif urls - allowed:
+            reason = f"links outside the day's sources: {sorted(urls - allowed)[:3]}"
+        elif FEATURE_BANNED.search(text):
+            reason = f"privacy check tripped on {FEATURE_BANNED.search(text).group(0)!r}"
+    if reason:
+        log(f"{heading}: {reason} — block omitted (fail closed)")
+        return ""
+    return f"## {heading}\n\n{text}\n"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=1)
@@ -152,7 +210,7 @@ def main():
                 "the market and prices, dealers and the grey market, brands, vintage, collecting advice, the industry. "
                 "Where several channels covered the same thing, compare their takes. Give real depth: {news_w} "
                 f"words (the whole issue must stay under {cap_w}). {rules}\nFirst line exactly: TITLE: <a punchy title for the whole {period} issue>")
-    raw = nj.call_openrouter(nova_voice.system_prompt(news_ctx), f"--- THIS {'DAY' if daily else 'WEEK'}'S WATCH-NEWS TRANSCRIPTS ---\n\n"
+    raw = nj.call_openrouter(nova_voice.system_prompt(news_ctx, section=SECTION), f"--- THIS {'DAY' if daily else 'WEEK'}'S WATCH-NEWS TRANSCRIPTS ---\n\n"
                              + digest(news) + "\n\nWrite the Watch News section.",
                              model=MODEL, max_tokens=16000, temperature=0.75, timeout=1200)
     title, news_body = split_title(raw)
@@ -168,7 +226,7 @@ def main():
                     f"superchat wars. A few sharp paragraphs to a few pages: {fish_w} words. Lead with what is NEW "
                     f"this {'day' if daily else 'week'}, name names and catchphrases as observational data, be honest that the scene is toxic "
                     f"and that Nova tracks it as data, not endorsement. {rules} Start directly with the prose (no title line).")
-        fish_body = nj.call_openrouter(nova_voice.system_prompt(fish_ctx),
+        fish_body = nj.call_openrouter(nova_voice.system_prompt(fish_ctx, section=SECTION),
                                        f"--- THE CAST (dossiers) ---\n{dossier_block}\n\n--- THE STREAMS ---\n\n"
                                        + digest(fish) + "\n\nWrite the Fishbowl / Hate Streams section.",
                                        model=MODEL, max_tokens=6000, temperature=0.85, timeout=900) or ""
@@ -177,13 +235,23 @@ def main():
         more_ctx = (f"Continue 'Watches and Friends' with a 'Deeper Cuts' part: {more_w} more words on the watch-news "
                     "videos below that the main piece covered least — specifics, comparisons, what it means for "
                     f"collectors. Do not repeat the existing text. {rules} Start with '## Deeper Cuts'.")
-        more = nj.call_openrouter(nova_voice.system_prompt(more_ctx),
+        more = nj.call_openrouter(nova_voice.system_prompt(more_ctx, section=SECTION),
                                   "--- ALREADY WRITTEN ---\n" + news_body[:12000] + "\n\n--- TRANSCRIPTS ---\n\n"
                                   + digest(news), model=MODEL, max_tokens=8000, temperature=0.75, timeout=900)
         if more:
             news_body += "\n\n" + more.strip()
 
-    body = news_body
+    # The Big Story (Jordan 2026-10-19): featured block at the top, from the day's watch news only.
+    block_rules = ("Never invent prices, references, model numbers or quotes that are not in the transcripts. "
+                   "This is a PUBLIC page: never mention Jordan's employer or his work, never mention 'OpenClaw', "
+                   "no IP addresses, no file paths, no names of people in Jordan's household, nothing about when "
+                   "anyone is home or asleep, no sexual content.\n\n" + KNOWN_FACTS)
+    big = featured_block("The Big Story",
+                         f"Pick the single most interesting NEW watch story in this {'day' if daily else 'week'}'s "
+                         "material (a release, a market move, a find, a scoop) and write it up: what happened, why "
+                         "it matters, who covered it. If a new Peter Piccolino episode is in the material, it IS the "
+                         "Big Story — he gets top billing.", digest(news), news, block_rules, llm=nj.call_openrouter)
+    body = (big + "\n" if big else "") + news_body
     if fish_body:
         fish_body = re.sub(r"^#+\s*Fishbowl[^\n]*\n", "", fish_body.strip())
         fish_body = re.sub(r"^(#{2,5}) ", r"#\1 ", fish_body, flags=re.M)   # nest under the section header

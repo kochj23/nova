@@ -1,7 +1,15 @@
 #!/opt/homebrew/bin/python3
-"""nova_friends.py — "Cars and Friends" and "Tech and Friends", the sibling sections of
-Watches and Friends (Jordan 2026-10-19). Same schedule, same rules, same shape — minus the
-Fishbowl / Hate Streams part, which has no equivalent outside the watch world.
+"""nova_friends.py — "Cars and Friends", "Tech and Friends" and "Food and Friends", the sibling
+sections of Watches and Friends (Jordan 2026-10-19). Same schedule, same rules, same shape — minus
+the Fishbowl / Hate Streams part, which has no equivalent outside the watch world.
+
+Featured block at the TOP of every issue, above the roundup (Jordan 2026-10-19), built by the shared
+nova_watches_and_friends.featured_block (grounded, fail closed — no grounding = no block):
+  * cars  — "The Big Story": the day's most interesting new car story, linked.
+  * tech  — "Buying Recommendation": one device from the day's tech material that fits the publicly
+            known home stack (HOME_STACK — the About page's list, nothing private).
+  * food  — "Recipe Recommendation": one recipe from the day's food videos or Nova's recipe memories
+            (source 'recipes', type 'recipe' — full recipe pages with URLs), credited and linked.
 
 Shape: one grounded NEWS call over the window's transcripts/articles, a grounded "deeper cuts"
 call only if the issue is still under the minimum, then a code-built Sources list from the
@@ -19,20 +27,21 @@ Rules carried over from Watches and Friends: grounded only, fail closed (no publ
 news call fails, if nothing is in the window, or if the draft trips the public-journal privacy
 check below). Never anything about Jordan's employer or work, no "OpenClaw", no sexual content.
 
-Reuses group_videos / digest / sources / split_title / words / _connect from
-nova_watches_and_friends.py (which stays byte-identical).
-Usage: nova_friends.py --subject cars|tech [--days 1] [--dry-run]
+Reuses group_videos / digest / sources / split_title / words / _connect / featured_block from
+nova_watches_and_friends.py.
+Usage: nova_friends.py --subject cars|tech|food [--days 1] [--dry-run]
 """
 import argparse
 import re
 import sys
+import zlib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_journal as nj          # noqa: E402
 import nova_voice                  # noqa: E402
-from nova_watches_and_friends import (MEM_DSN, MODEL, _connect, digest, group_videos,  # noqa: E402
-                                      sources, split_title, words)
+from nova_watches_and_friends import (MEM_DSN, MODEL, _connect, digest, featured_block,  # noqa: E402
+                                      group_videos, sources, split_title, words)
 
 VID_PER, VID_MAX = 1600, 30         # ~48k chars of video transcript
 ART_PER, ART_MAX = 700, 24          # + ~17k of articles: under the size that hangs claude -p
@@ -96,6 +105,27 @@ TECH_CHANNELS = (
     "Mark Rober", "Real Engineering", "Veritasium",   # Jordan 2026-10-19: engineering/science -> Tech
     "Honest HiFi",                                    # Jordan 2026-10-19: HiFi -> Tech
 )
+FOOD_CHANNELS = (   # Jordan 2026-10-19. Undecided, so NOT here: Peter Santenello, Miha's Life in Japan,
+    #                   Bacon 28, fonki cheff, The Stock Pot.
+    "Meat Church BBQ", "HowToBBQRight", "Chuds BBQ", "Mad Scientist BBQ", "allthingsbbq",
+    "Cooper Abercrombie - Bar-A-BBQ", "Sous Vide Everything", "Binging with Babish", "SAM THE COOKING GUY",
+    "SONS OF SAM THE COOKING GUY", "Gordon Ramsay", "Alton Brown", "MATTY MATHESON", "NOT ANOTHER COOKING SHOW",
+    "America's Test Kitchen", "French Cooking Academy", "Christian Puglisi", "Iron Chef Dad", "Buzz Cooks",
+    "Abuela's Table", "A Cooks Tour with Anthony Bourdain", "Andrew Zimmern", "Eater", "First We Feast",
+    "The Immigrant Table", "Jimmy Tries World", "Tasting History with Max Miller", "Whiskey Tribe", "Still It",
+    "James May's Planet Gin", "City Steading Brews", "Beers & Bars",
+)
+FOOD_EXCLUDED = ("Peter Santenello", "Miha's Life in Japan", "Bacon 28", "fonki cheff", "The Stock Pot")
+RECIPE_SITES = {"meatchurch.com": "Meat Church BBQ"}   # recipe-memory source_site -> credit name
+RECIPES_MAX, RECIPE_CHARS = 4, 4000
+RECIPE_STOP = {"with", "this", "that", "from", "your", "recipe", "style", "best", "easy", "make", "homemade"}
+
+# The publicly known home stack (it is on the site's About page) — the ONLY stack detail a Buying
+# Recommendation may use. Never hostnames, IPs, camera/room names or anything about Jordan's employer.
+HOME_STACK = ("a Mac Studio plus Mac minis; Linux mini-PCs (Beelink); UniFi networking and a UNAS; a Synology "
+              "NAS; a HomeKit / Hue / Lutron smart home; Meshtastic LoRa radios; SDRplay and RTL-SDR software "
+              "radios; Bambu 3D printers; Ubiquiti cameras")
+
 # Space/astronomy feeds share the computing vector; they are not tech news. Forum chatter neither.
 TECH_FEED_EXCLUDE = re.compile(r"astro|nasa|space|earthsky|hirise|galaxy|sky|planetary|universe|eso\b|nrao|"
                                r"nautilus|aura|community", re.I)
@@ -122,6 +152,36 @@ SUBJECTS = {
         "tags": ["tech", "technology", "tech-news"],
         "desc": "Nova's {period} tech roundup: the {span}'s tech news from Jordan's tech channels and feeds — with every source linked.",
     },
+    "food": {
+        "name": "Food and Friends", "section": "food", "noun": "food", "emoji": "🍳",
+        "channels": FOOD_CHANNELS, "article_vectors": (), "feed_exclude": None,
+        "beats": "barbecue and live fire, recipes and technique, chefs and restaurants, food travel and culture, "
+                 "food history, and drinks — whiskey, distilling, gin, brewing and bars",
+        "audience": "home cooks and pitmasters",
+        "image_topic": "barbecue smokers, kitchens, plated dishes and cooking fires",
+        "tags": ["food", "cooking", "food-news"],
+        "desc": "Nova's {period} food roundup: the {span}'s food news from Jordan's food channels — with every source linked.",
+    },
+}
+
+# The featured block at the top of each issue: (heading, task). Grounded, fail closed (featured_block).
+FEATURES = {
+    "cars": ("The Big Story",
+             "Pick the single most interesting NEW car story in the material (a reveal, a build milestone, a race "
+             "result, an auction, an industry move) and write it up: what happened, why it matters, who covered it."),
+    "tech": ("Buying Recommendation",
+             "Recommend ONE device worth buying, chosen from products actually covered in the material, that fits "
+             f"Nova's publicly known home stack: {HOME_STACK}. Name the device, say what the source said about it, "
+             "why it fits that stack and what it would replace or add. Talk about the stack only in those general "
+             "terms — never hostnames, IP addresses, camera or room names, device inventories, or anything about "
+             "Jordan's employer or work. Never state a price, spec or availability the material does not give. If "
+             "no device in the material genuinely fits, reply NONE."),
+    "food": ("Recipe Recommendation",
+             "Recommend ONE recipe Nova would cook, taken from the day's food videos or the RECIPE PAGES in the "
+             "material: the dish name, a line on why, then a short **Ingredients** bullet list and a short "
+             "**Method** (numbered) — ONLY ingredients, amounts, times and temperatures the source actually "
+             "states; leave out anything it doesn't give, never fill gaps. Credit and link the channel/video or "
+             "recipe page it comes from. If no source gives enough of a real recipe, reply NONE."),
 }
 
 # Public-journal fail-closed check. Inputs mentioning these are dropped; a draft that still
@@ -188,6 +248,52 @@ def fetch(cur, cfg, days):
     return videos, arts
 
 
+def fetch_recipes(cur, videos, n=RECIPES_MAX):
+    """Nova's recipe memories (source 'recipes', type 'recipe': full recipe pages with URLs) for the
+    Recipe Recommendation — the ones whose titles best match the day's videos, else a date-seeded
+    pick so the block still has grounding on a thin day. -> [{channel,title,url,date,text}]."""
+    cur.execute("""SELECT metadata->>'url', max(metadata->>'title'), max(metadata->>'source_site')
+                   FROM memories
+                   WHERE source = 'recipes' AND metadata->>'type' = 'recipe' AND metadata->>'url' LIKE 'https://%%'
+                     AND coalesce(metadata->>'privacy', 'public') NOT IN ('private', 'local-only')
+                   GROUP BY 1""")
+    pages = [(u, t or "", site or "") for u, t, site in cur.fetchall() if u]
+    if not pages:
+        return []
+    day = set(re.findall(r"[a-z]{4,}", " ".join(f"{v['title']} {v['text']}" for v in videos).lower())) - RECIPE_STOP
+    seed = nj.today_str()          # same pick all day, a different one tomorrow
+
+    def score(p):
+        return (len(set(re.findall(r"[a-z]{4,}", p[1].lower())) & day), zlib.crc32(f"{seed}{p[0]}".encode()))
+    pick = sorted(pages, key=score, reverse=True)[:n]
+    cur.execute("""SELECT text, created_at, metadata FROM memories
+                   WHERE source = 'recipes' AND metadata->>'type' = 'recipe' AND metadata->>'url' = ANY(%s)
+                   ORDER BY metadata->>'url',
+                            CASE WHEN metadata->>'chunk' ~ '^[0-9]+$' THEN (metadata->>'chunk')::int END""",
+                ([p[0] for p in pick],))
+    rows = []
+    for text, created, md in cur.fetchall():
+        md = dict(md or {})
+        if BANNED.search(text or ""):
+            continue
+        md["channel"] = RECIPE_SITES.get(md.get("source_site") or "", md.get("source_site") or "recipe")
+        rows.append((text, created, md))
+    return group_videos(rows, RECIPE_CHARS, n)
+
+
+def top_block(subj, videos, arts, recipes=()):
+    """The featured block for this subject ("" = omitted, fail closed)."""
+    heading, task = FEATURES[subj]
+    material = digest([*videos, *arts])
+    if recipes:
+        material += "\n\n--- RECIPE PAGES (Nova's recipe memories) ---\n\n" + digest(list(recipes))
+    rules = ("This is a PUBLIC page: never mention Jordan's employer or his work, never mention 'OpenClaw', no "
+             "IP addresses, no hostnames, no file paths, no names of people in Jordan's household, nothing about "
+             "when anyone is home or asleep, no sexual content. Never invent prices, specs, model numbers, "
+             "ingredients, amounts or quotes that are not in the material.")
+    return featured_block(heading, task, material, [*videos, *arts, *recipes], rules, llm=nj.call_openrouter)
+
+
 def source_list(items):
     """Linked items via the Watches helper, plus unlinked (downloaded-episode) ones listed plainly."""
     linked = [v for v in items if v["url"]]
@@ -197,7 +303,7 @@ def source_list(items):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Cars and Friends / Tech and Friends roundup")
+    ap = argparse.ArgumentParser(description="Cars and Friends / Tech and Friends / Food and Friends roundup")
     ap.add_argument("--subject", choices=sorted(SUBJECTS), required=True)
     ap.add_argument("--days", type=int, default=1)
     ap.add_argument("--dry-run", action="store_true")
@@ -235,7 +341,7 @@ def main():
                 f"organise by STORY, not by channel: {cfg['beats']}. Where several sources covered the same "
                 f"thing, compare their takes. Give real depth: {news_w} words (the whole issue must stay under "
                 f"{cap_w}). {rules}\nFirst line exactly: TITLE: <a punchy title for the whole {period} issue>")
-    raw = nj.call_openrouter(nova_voice.system_prompt(news_ctx),
+    raw = nj.call_openrouter(nova_voice.system_prompt(news_ctx, section=section),
                              f"--- THIS {unit.upper()}'S {noun.upper()} SOURCES ---\n\n{src}\n\nWrite the issue.",
                              model=MODEL, max_tokens=16000, temperature=0.75, timeout=1200)
     title, body = split_title(raw)
@@ -247,17 +353,31 @@ def main():
         more_ctx = (f"Continue '{name}' with a 'Deeper Cuts' part: {more_w} more words on the sources below "
                     f"that the main piece covered least — specifics, comparisons, what it means for {cfg['audience']}. "
                     f"Do not repeat the existing text. {rules} Start with '## Deeper Cuts'.")
-        more = nj.call_openrouter(nova_voice.system_prompt(more_ctx),
+        more = nj.call_openrouter(nova_voice.system_prompt(more_ctx, section=section),
                                   "--- ALREADY WRITTEN ---\n" + body[:12000] + "\n\n" + src,
                                   model=MODEL, max_tokens=8000, temperature=0.75, timeout=900)
         if more:
             body += "\n\n" + more.strip()
+
+    recipes = []
+    if a.subject == "food":
+        try:
+            recipes = fetch_recipes(mc, videos)
+        except Exception as e:  # noqa: BLE001 — recipe memories are optional grounding
+            log(f"recipe memories unavailable ({e})")
+    block = top_block(a.subject, videos, arts, recipes)
+    if block:
+        body = block + "\n" + body
+        log(f"{FEATURES[a.subject][0]}: {words(block)} words at the top")
 
     body += "\n\n## Sources\n\n"
     if videos:
         body += "### Videos\n\n" + source_list(videos) + "\n\n"
     if arts:
         body += "### Articles\n\n" + source_list(arts) + "\n"
+    linked = [r for r in recipes if r["url"] in block]
+    if linked:
+        body += "\n### Recipe\n\n" + source_list(linked) + "\n"
     body = body.rstrip() + "\n"
     if not title or len(title) < 8:
         title = f"{name} — {week}" if daily else f"{name} — Week Ending {week}"

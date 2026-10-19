@@ -1914,7 +1914,7 @@ def notify_slack(section: str, title: str, preview: str):
     section = _canon_section(section)
     section_emojis = {
         "essays": ":pencil:", "opinions": ":speech_balloon:", "after-dark": ":night_with_stars:",
-        "pilot": ":movie_camera:", "tech": ":computer:", "cars": ":red_car:", "watches": ":watch:", "research": ":microscope:",
+        "pilot": ":movie_camera:", "tech": ":computer:", "cars": ":red_car:", "food": ":fork_and_knife:", "watches": ":watch:", "research": ":microscope:",
         "synthesis": ":thread:", "digests": ":newspaper:", "dreams": ":crescent_moon:",
         "art": ":art:",
     }

@@ -79,7 +79,7 @@ def _collect_month_posts() -> list[dict]:
     """All posts from the last 30 days."""
     cutoff = datetime.now() - timedelta(days=30)
     posts = []
-    categories = ["dreams", "essays", "opinions", "tech", "cars", "watches", "after-dark", "art", "research"]
+    categories = ["dreams", "essays", "opinions", "tech", "cars", "food", "watches", "after-dark", "art", "research"]
 
     for cat in categories:
         cat_dir = HUGO_ROOT / "content" / cat
