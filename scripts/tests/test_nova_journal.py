@@ -740,12 +740,26 @@ class TestIntegration(unittest.TestCase):
 
     def test_citations_are_recorded_parameterized(self):
         cur = MagicMock(); conn = MagicMock(); conn.cursor.return_value.__enter__.return_value = cur
-        with patch.dict(sys.modules, _lazy_stubs()), patch("psycopg2.connect", return_value=conn), _quiet():
+        grounding = types.ModuleType("nova_grounding"); grounding.add_to_body = lambda b, ids, src: b   # footer tested below
+        with patch.dict(sys.modules, dict(_lazy_stubs(), nova_grounding=grounding)), \
+             patch("psycopg2.connect", return_value=conn), _quiet():
             nj.publish_hugo("Cited Article Title", BODY, "dreams", [], "d", cited_memory_ids=[11, 22])
         self.assertEqual(cur.execute.call_count, 2)
         sql, params = cur.execute.call_args_list[0][0]
         self.assertIn("INSERT INTO article_citations", sql)
         self.assertEqual(params, ("cited-article-title", "11"))              # bare slug, no date prefix
+
+    def test_grounding_footer_appended_only_when_cited(self):
+        grounding = types.ModuleType("nova_grounding")
+        grounding.add_to_body = lambda b, ids, src: b + ("\n\nGROUNDED-%d" % len(ids) if ids else "")
+        with patch.dict(sys.modules, dict(_lazy_stubs(), nova_grounding=grounding)), \
+             patch("psycopg2.connect", side_effect=RuntimeError("offline")), _quiet():
+            nj.publish_hugo("Grounded Footer Article", BODY, "pilot", [], "d", cited_memory_ids=[1, 2, 3])
+            nj.publish_hugo("Uncited Footer Article", BODY, "pilot", [], "d")
+        cited = next((nj.HUGO_ROOT / "content/pilot").glob("*grounded-footer-article.md")).read_text()
+        uncited = next((nj.HUGO_ROOT / "content/pilot").glob("*uncited-footer-article.md")).read_text()
+        self.assertIn("GROUNDED-3", cited)
+        self.assertNotIn("GROUNDED", uncited)
 
     def test_git_push_scrubs_staged_macs_commits_and_pushes(self):
         (nj.HUGO_ROOT / ".git").mkdir(parents=True, exist_ok=True)

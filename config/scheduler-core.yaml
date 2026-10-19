@@ -1046,9 +1046,10 @@ tasks:
     overlap: skip
     group: llm
 
-  rando_weird_memories:
-    script: nova_rando_weird_memories.py
-    schedule: cron 30 21 * * *
+  rando_weird_memories:              # 2026-10-19: folded into the 21:15 digest (nova_digest_fold), so it runs before it
+    script: nova_digest_fold.py
+    args: ["nova_rando_weird_memories.py"]
+    schedule: cron 0 20 * * *
     timeout: 600
     overlap: skip
     group: llm
@@ -1208,9 +1209,9 @@ tasks:
     overlap: skip
     group: llm
 
-  journal_emergency_daily:
-    script: nova_journal_emergency.py
-    args: ["daily"]
+  journal_emergency_daily:           # 2026-10-19: the daily recap folds into the digest; breaking stays standalone
+    script: nova_digest_fold.py
+    args: ["nova_journal_emergency.py", "--call", "generate_daily_recap"]
     schedule: cron 0 18 * * *
     timeout: 900
     overlap: skip
@@ -1233,6 +1234,7 @@ tasks:
 
   rando_daily_ops:
     script: nova_rando_daily_ops.py
+    enabled: false  # 2026-10-19: DUPLICATE of .6's rando_daily_ops (17:10) — two daily ops posts a day; .6's run folds into the digest
     schedule: cron 0 18 * * *
     timeout: 900
     overlap: skip
@@ -1245,8 +1247,9 @@ tasks:
     overlap: skip
     group: llm
 
-  vector_audit:
-    script: nova_vector_audit.py
+  vector_audit:                      # 2026-10-19: folded into the digest (nova_digest_fold) — same diary shape daily
+    script: nova_digest_fold.py
+    args: ["nova_vector_audit.py"]
     schedule: cron 0 6 * * *
     timeout: 9112
     overlap: skip

@@ -686,8 +686,9 @@ tasks:
     schedule: cron 0 5 * * *
     timeout: 600
     overlap: skip
-  copenhagen:                      # was overnight_review — the alert verifier (renamed 2026-08-13)
-    script: nova_copenhagen.py
+  copenhagen:                      # was overnight_review — the alert verifier (renamed 2026-08-13); 2026-10-19 folded into the digest
+    script: nova_digest_fold.py
+    args: ["nova_copenhagen.py"]
     schedule: cron 30 6 * * *
     timeout: 600
     overlap: skip
@@ -856,7 +857,8 @@ tasks:
     group: llm
 
   rando_daily_ops:                       # THE daily operations report — "Day in the Life of My Infrastructure", covers everything done today (30 sources) in Nova's sassy voice -> /operations
-    script: nova_rando_daily_ops.py
+    script: nova_digest_fold.py
+    args: ["nova_rando_daily_ops.py"]   # 2026-10-19: folded into the 21:15 digest instead of a standalone post
     enabled: true  # re-enabled on .6 2026-07-30 (was orphaned: disabled here, never landed on .2). Runs here reliably — journal repo + OpenRouter key + git creds all present. .2 migration deferred until those exist there.
     schedule: cron 10 17 * * *  # 5:10pm daily (moved from 6pm 2026-07-30 per Little Mister; +10min offset so it pushes AFTER daily_digest's 17:00 journal push — that git-push race was the exit=1 failures)
     timeout: 900
@@ -1367,6 +1369,21 @@ tasks:
     schedule: cron 45 17 * * *
     timeout: 900
     overlap: skip
+
+  # === Journal: corrections column + topic studies (Jordan 2026-10-19) ===
+  corrections_weekly:              # Sat 11:00 — Nova's Corrections (opinions): later articles / belief revisions that contradict earlier ones; skips when none
+    script: nova_corrections.py
+    schedule: cron 0 11 * * 6
+    timeout: 1800
+    overlap: skip
+    group: llm
+  topic_study_queue:               # every 30m — runs requested topic studies (claude_queue 'topic study: <topic>' or nova_topic_study.py --request)
+    script: nova_topic_study.py
+    args: ["--pending"]
+    schedule: every 30m
+    timeout: 3000
+    overlap: skip
+    group: llm
 
   fix_missing_images:                # 2026-10-19 (Jordan: covers LOCAL only, OpenRouter retired for images). Backfills any journal post that published without a cover (or with a missing/0-byte one) on the Studio's ComfyUI FLUX.1 dev; explicit-path commit under the journal push lock. Big Brother also runs it hourly with a 540 s budget, but BB died 2026-10-16 (EX_CONFIG) and no cover was backfilled for 3 days — this keeps it scheduler-owned. flock = single instance.
     script: nova_fix_missing_images.py
