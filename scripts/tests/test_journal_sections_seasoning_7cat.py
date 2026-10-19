@@ -22,9 +22,10 @@ sys.path.insert(0, str(SCRIPTS))
 import nova_sections as ns  # noqa: E402
 import nova_lexicon as lx  # noqa: E402
 
-RETIRED = {"dreams", "operations", "local", "essays", "synthesis", "tech-today", "rando"}
-LIVE = {"burbank-ops", "opinions", "watches", "cars", "tech", "food", "research", "digests",
-        "security", "meta", "after-dark", "pilot", "start-here"}
+RETIRED = {"dreams", "operations", "local", "essays", "synthesis", "tech-today", "rando", "research", "opinions"}
+LIVE = {"burbank-ops", "nova", "watches", "cars", "tech", "food", "digests",
+        "security", "meta", "after-dark", "pilot", "start-here",
+        "music", "military", "screen", "science", "mystery", "crime", "workshop", "travel"}
 
 
 def _src(name):
@@ -46,7 +47,7 @@ RAW_SEASONED = {
 # Generators that call nova_voice.system_prompt and now pass section= explicitly.
 SECTION_PASSED = {
     "nova_capabilities_inventory_article.py": "burbank-ops", "nova_fishbowl_daily.py": "watches",
-    "nova_iot_scout.py": "burbank-ops", "nova_ledger_of_changed_minds.py": "burbank-ops",
+    "nova_iot_scout.py": "tech", "nova_ledger_of_changed_minds.py": "burbank-ops",
     "nova_local_airwaves.py": "burbank-ops", "nova_new_organs_article.py": "burbank-ops",
     "nova_opinion_fishbowl.py": "watches", "nova_opinion_fishbowl_roster.py": "watches",
     "nova_unclaimed_digest.py": "burbank-ops", "nova_weekly_media_wrap.py": "burbank-ops",
@@ -110,7 +111,9 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(set(ns.SECTION_REDIRECTS) | set(ns.RETIRED_SECTIONS), RETIRED)
         self.assertTrue(set(ns.SECTION_REDIRECTS.values()) <= LIVE)
         self.assertEqual(ns.canon("Operations"), "burbank-ops")
-        self.assertEqual(ns.canon("essays"), "research")
+        self.assertEqual(ns.canon("essays"), "nova")
+        self.assertEqual(ns.canon("research"), "nova")
+        self.assertEqual(ns.canon("opinions"), "nova")
         self.assertEqual(ns.canon("tech-today"), "tech")
         self.assertEqual(ns.canon("cars"), "cars")
         self.assertTrue(ns.is_retired("dreams"))
@@ -120,7 +123,7 @@ class TestUnit(unittest.TestCase):
         self.assertNotIn("dreams", lx.FLAVOR_SECTIONS)
         for live in LIVE - {"start-here"}:
             self.assertIn(live, lx.FLAVOR_SECTIONS, live)
-        for old in ("operations", "local", "essays", "synthesis", "tech-today", "rando"):
+        for old in ("operations", "local", "essays", "synthesis", "tech-today", "rando", "research", "opinions"):
             self.assertNotIn(old, lx.FLAVOR_SECTIONS)
             self.assertIn("FAITHS", _season(old))             # still seasoned via canon
 
@@ -163,12 +166,12 @@ class TestIntegration(unittest.TestCase):
         self.assertFalse(set(bb.JOURNAL_SECTIONS) & RETIRED)
         self.assertIn("burbank-ops", bb.JOURNAL_SECTIONS)
         self.assertFalse(set(sp.SECTIONS) & RETIRED)
-        self.assertTrue({"burbank-ops", "research", "cars", "tech", "food"} <= set(sp.SECTIONS))
+        self.assertTrue({"burbank-ops", "nova", "cars", "tech", "food"} <= set(sp.SECTIONS))
         self.assertEqual(set(sp.SECTION_SCHEDULES), set(sp.SECTIONS))
         for m in (cl.CATEGORY_URLS, cl.CATEGORY_EMOJI):
-            self.assertTrue({"burbank-ops", "research", "cars", "tech", "food"} <= set(m))
+            self.assertTrue({"burbank-ops", "nova", "cars", "tech", "food"} <= set(m))
             self.assertFalse(set(m) & (RETIRED - {"dreams"}))   # dreams = archive links only
-        self.assertTrue({"burbank-ops", "research", "cars", "tech", "food"} <= set(te.CATEGORY_SEEDS))
+        self.assertTrue({"burbank-ops", "nova", "cars", "tech", "food"} <= set(te.CATEGORY_SEEDS))
         self.assertFalse(set(te.CATEGORY_SEEDS) & RETIRED)
 
     def test_watchdog_and_recaps_skip_retired_dirs(self):
@@ -176,8 +179,10 @@ class TestIntegration(unittest.TestCase):
         import nova_journal_weekly_summary as ws
         import nova_monthly_wrap as mw
         self.assertFalse({sec for sec, _ in aw.ARTICLE_SCRIPTS.values()} & RETIRED)
-        self.assertEqual(aw._journal_section("essay"), "research")
-        self.assertEqual(aw._journal_section("synthesis"), "research")
+        self.assertEqual(aw._journal_section("essay"), "nova")
+        self.assertEqual(aw._journal_section("synthesis"), "nova")
+        self.assertEqual(aw._journal_section("opinion"), "nova")
+        self.assertEqual(aw._journal_section("research"), "nova")
         self.assertTrue(RETIRED <= ws.SKIP_DIRS)
         self.assertTrue(RETIRED <= mw.SKIP_DIRS)
         self.assertFalse(set(mw.MOTIF) & RETIRED)

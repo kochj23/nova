@@ -8,7 +8,7 @@ Each day she looks at the hottest trending Home-Automation / IoT repo *in her wh
 occupancy, energy monitoring, cameras / Frigate, smart plugs, the whole self-hosted
 smart-home stack), does a DESK REVIEW (reads it, reasons about fit against her actual
 home setup — no flashing, no installing), and writes a verdict in her own voice to the
-`operations` section of the journal — WITH a generated cover image.
+Tech and Friends (`tech`) section of the journal — WITH a generated cover image.
 
 Decisions (mirrors the AI scout, locked with Jordan 2026-06-26):
   - Cadence : publish EVERY day, always a verdict (most days are "PASS", and that's honest)
@@ -279,7 +279,7 @@ def evaluate(repo: dict, readme: str) -> tuple[str, str, str] | None:
             f"--- TODAY'S REPO ---\n{meta}\n"
             f"--- README (truncated) ---\n{readme or '(no README available)'}\n\n"
             f"Write the review.")
-    system = nova_voice.system_prompt(SCOUT_CONTEXT, section="burbank-ops")
+    system = nova_voice.system_prompt(SCOUT_CONTEXT, section="tech")  # Tech and Friends (Jordan 2026-10-19)
     raw = nj.call_openrouter(system, user, max_tokens=3000, temperature=0.75)
     if not raw:
         return None
@@ -305,8 +305,8 @@ def make_image(title: str, repo: dict) -> str | None:
     """Generate a cover image for the article (non-fatal). Returns a local path or None."""
     try:
         topic = f"home automation / smart-home / IoT — {repo['full_name']}"
-        iprompt = nj.get_image_prompt(title, topic[:100], "operations")
-        path = nj.generate_image(iprompt, width=1024, height=768, section="operations")
+        iprompt = nj.get_image_prompt(title, topic[:100], "tech")
+        path = nj.generate_image(iprompt, width=1024, height=768, section="tech")
         if path:
             nj.log(f"[iot-scout] cover image: {path}")
         return path
@@ -355,9 +355,9 @@ def run(dry_run: bool = False, force_repo: str | None = None) -> int:
     image_path = make_image(title, repo)
 
     if dry_run:
-        nj.publish_hugo(title, full_body, "operations", tags, desc,
+        nj.publish_hugo(title, full_body, "tech", tags, desc,
                         image_path=image_path, emoji=emoji, profile="iot-scout")
-        nj.log(f"[iot-scout] DRY RUN — wrote '{title}' [{verdict}] to operations/, "
+        nj.log(f"[iot-scout] DRY RUN — wrote '{title}' [{verdict}] to tech/, "
                f"NOT pushed, NOT logged (repo stays eligible).")
         print(f"\n===== {emoji} {title}  [{verdict}] =====")
         print(f"repo: {repo['full_name']}  ({repo.get('stargazers_count')}★, {repo.get('language')})")
@@ -366,7 +366,7 @@ def run(dry_run: bool = False, force_repo: str | None = None) -> int:
         conn.close()
         return 0
 
-    nj.publish_hugo(title, full_body, "operations", tags, desc,
+    nj.publish_hugo(title, full_body, "tech", tags, desc,
                     image_path=image_path, emoji=emoji, profile="iot-scout")
     cur.execute(
         "INSERT INTO iot_scout_log (full_name,url,stars,language,verdict,title) "
@@ -382,10 +382,10 @@ def run(dry_run: bool = False, force_repo: str | None = None) -> int:
     except Exception as e:
         nj.log(f"[iot-scout] telemetry skipped: {e}")
 
-    _push = nj.git_push("operations", title)
+    _push = nj.git_push("tech", title)
     # git_push returns 'pushed'/'committed_not_pushed'/'nothing'/'failed' — only a real push is PUBLISHED
     _pub = {"committed_not_pushed": "COMMITTED (not yet pushed)", "failed": "NOT COMMITTED (git failed)"}.get(_push, "PUBLISHED")
-    nj.notify_slack("operations", f"{emoji} {title} [{verdict}]",
+    nj.notify_slack("tech", f"{emoji} {title} [{verdict}]",
                     f"Scouted {repo['full_name']} ({repo.get('stargazers_count')}★) — {verdict}.")
     nj.log(f"[iot-scout] {_pub} '{title}' [{verdict}] on {repo['full_name']}")
     conn.close()

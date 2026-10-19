@@ -302,7 +302,7 @@ class TestFunctional(unittest.TestCase):
         pg.assert_called_once_with(rs.DSN)
         self.assertIn("CREATE TABLE IF NOT EXISTS repo_scout_log", cur.sql[0])
         title, body, section, tags, desc = rs.nj.publish_hugo.call_args[0]
-        self.assertEqual((title, section), ("Neat, Not Mine", "operations"))
+        self.assertEqual((title, section), ("Neat, Not Mine", "tech"))
         self.assertTrue(body.startswith("body text\n\n---\n\n*Scouted repo: [acme/local-rag]"))
         self.assertIn("Verdict: PASS", body)
         self.assertEqual(tags, ["ai", "github", "repo-scout", "pass", "python"])
@@ -310,8 +310,8 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(cur.ran("INSERT INTO repo_scout_log")[0][1],
                          ("acme/local-rag", "https://github.com/acme/local-rag", 1200, "Python", "PASS", "Neat, Not Mine"))
         self.assertEqual(cur.ran("INSERT INTO telemetry.events")[0][1], ("Repo scout [PASS]: acme/local-rag", "Neat, Not Mine"))
-        rs.nj.git_push.assert_called_once_with("operations", "Neat, Not Mine")
-        rs.nj.notify_slack.assert_called_once_with("operations", "🪦 Neat, Not Mine [PASS]", "Scouted acme/local-rag (1200★) — PASS.")
+        rs.nj.git_push.assert_called_once_with("tech", "Neat, Not Mine")
+        rs.nj.notify_slack.assert_called_once_with("tech", "🪦 Neat, Not Mine [PASS]", "Scouted acme/local-rag (1200★) — PASS.")
 
     def test_dry_run_writes_hugo_but_never_logs_pushes_or_posts(self):
         gh = _gh({"repos/acme/local-rag": (0, json.dumps(_repo())), "/readme": (0, "readme")})

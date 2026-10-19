@@ -5,7 +5,7 @@ nova_repo_scout.py — the daily AI-repo scout.
 At noon, Nova looks at the hottest trending AI repo *in her wheelhouse* (local LLM /
 inference, agents, RAG & vector memory, MLX / Apple-silicon, automation, observability),
 does a DESK REVIEW (reads it, reasons about fit against her actual stack — no cloning),
-and writes a verdict in her own voice to the `operations` section of the journal.
+and writes a verdict in her own voice to the Tech and Friends (`tech`) section of the journal.
 
 Decisions (locked with Jordan 2026-06-22):
   - Cadence : publish EVERY day, always a verdict (most days are "PASS", and that's honest)
@@ -262,7 +262,7 @@ def evaluate(repo: dict, readme: str) -> tuple[str, str, str] | None:
             f"--- TODAY'S REPO ---\n{meta}\n"
             f"--- README (truncated) ---\n{readme or '(no README available)'}\n\n"
             f"Write the review.")
-    system = nova_voice.system_prompt(SCOUT_CONTEXT, section="operations")  # seasoning like other ops articles
+    system = nova_voice.system_prompt(SCOUT_CONTEXT, section="tech")  # Tech and Friends (Jordan 2026-10-19)
     raw = nj.call_openrouter(system, user, max_tokens=3000, temperature=0.75)
     if not raw:
         return None
@@ -322,8 +322,8 @@ def run(dry_run: bool = False, force_repo: str | None = None) -> int:
     desc = f"Nova's daily scout of a trending AI repo: {repo['full_name']} — verdict {verdict}."
 
     if dry_run:
-        nj.publish_hugo(title, full_body, "operations", tags, desc, emoji=emoji, profile="repo-scout")
-        nj.log(f"[scout] DRY RUN — wrote '{title}' [{verdict}] to operations/, "
+        nj.publish_hugo(title, full_body, "tech", tags, desc, emoji=emoji, profile="repo-scout")
+        nj.log(f"[scout] DRY RUN — wrote '{title}' [{verdict}] to tech/, "
                f"NOT pushed, NOT logged (repo stays eligible).")
         print(f"\n===== {emoji} {title}  [{verdict}] =====")
         print(f"repo: {repo['full_name']}  ({repo.get('stargazers_count')}★, {repo.get('language')})")
@@ -331,7 +331,7 @@ def run(dry_run: bool = False, force_repo: str | None = None) -> int:
         conn.close()
         return 0
 
-    nj.publish_hugo(title, full_body, "operations", tags, desc, emoji=emoji, profile="repo-scout")
+    nj.publish_hugo(title, full_body, "tech", tags, desc, emoji=emoji, profile="repo-scout")
     cur.execute(
         "INSERT INTO repo_scout_log (full_name,url,stars,language,verdict,title) "
         "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (full_name) DO UPDATE SET "
@@ -346,10 +346,10 @@ def run(dry_run: bool = False, force_repo: str | None = None) -> int:
     except Exception as e:
         nj.log(f"[scout] telemetry skipped: {e}")
 
-    _push = nj.git_push("operations", title)
+    _push = nj.git_push("tech", title)
     # git_push returns 'pushed'/'committed_not_pushed'/'nothing'/'failed' — only a real push is PUBLISHED
     _pub = {"committed_not_pushed": "COMMITTED (not yet pushed)", "failed": "NOT COMMITTED (git failed)"}.get(_push, "PUBLISHED")
-    nj.notify_slack("operations", f"{emoji} {title} [{verdict}]",
+    nj.notify_slack("tech", f"{emoji} {title} [{verdict}]",
                     f"Scouted {repo['full_name']} ({repo.get('stargazers_count')}★) — {verdict}.")
     nj.log(f"[scout] {_pub} '{title}' [{verdict}] on {repo['full_name']}")
     conn.close()
