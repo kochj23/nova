@@ -13,6 +13,9 @@ nova_journal. nova_journal.SECTION_REDIRECTS / SECTION_REMAP ARE this dict.
 LIVE_SECTIONS = ("burbank-ops", "opinions", "watches", "cars", "tech", "food", "research",
                  "digests", "security", "meta", "after-dark", "pilot", "start-here")
 
+# The eight *and Friends* sections added 2026-10-19 (nova_friends.py --subject <slug>).
+LIVE_SECTIONS += ("music", "military", "screen", "science", "mystery", "crime", "workshop", "travel")
+
 # Kept on the site, no new posts.
 ARCHIVE_SECTIONS = ("art",)
 

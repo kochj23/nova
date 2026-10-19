@@ -67,6 +67,8 @@ SERIES_RULES = [
     ("Cars and Friends", lambda m: m["section"] == "cars" and m["title"].startswith("cars and friends")),
     ("Tech and Friends", lambda m: m["section"] == "tech" and m["title"].startswith("tech and friends")),
     ("Food and Friends", lambda m: m["section"] == "food" and m["title"].startswith("food and friends")),
+    *[(f"{s.title()} and Friends", (lambda s: lambda m: m["section"] == s and m["title"].startswith(f"{s} and friends"))(s))
+      for s in ("music", "military", "screen", "science", "mystery", "crime", "workshop", "travel")],   # 2026-10-19
     ("The Fishbowl",
      lambda m: m["section"] == "watches" and {"fishbowl", "opinion"} <= m["tags"]),
     ("LA County Emergency Recap",
@@ -81,7 +83,12 @@ SERIES_RULES = [
 
 # ── top_block ────────────────────────────────────────────────────────────────
 TOP_BLOCK_KINDS = {"watches": "The Big Story", "cars": "The Big Story",
-                   "tech": "Buying Recommendation", "food": "Recipe Recommendation"}
+                   "tech": "Buying Recommendation", "food": "Recipe Recommendation",
+                   # the eight 2026-10-19 sections (headings carry their emoji, as nova_friends.FEATURES writes them)
+                   "music": "🎧 Track of the Day", "military": "📜 This Day in Military History",
+                   "screen": "🍿 What to Watch Tonight", "science": "🌌 The Coolest Thing I Learned",
+                   "mystery": "🕯️ The Rabbit Hole of the Day", "crime": "🔦 Case of the Day",
+                   "workshop": "🔨 Project Worth Stealing", "travel": "🗺️ Place of the Day"}
 # Public-journal scrub for anything we lift into front matter (it surfaces on the homepage).
 _SCRUB = [(re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), "[redacted]"),
           (re.compile(r"(?i)\b(?:nova-core\d*|office-m4[\w-]*|pg-primary)\b"), "the cluster"),

@@ -1091,6 +1091,62 @@ tasks:
     timeout: 3600
     overlap: skip
 
+  music_and_friends:            # Jordan 2026-10-19: music channels -> /music/ ("Track of the Day" on top); 5-min stagger after food (journal push race)
+    script: nova_friends.py
+    args: ["--subject", "music", "--days", "1"]
+    schedule: cron 20 7 * * *
+    timeout: 3600
+    overlap: skip
+
+  military_and_friends:         # Jordan 2026-10-19: military channels -> /military/ ("This Day in Military History" on top); 5-min stagger after food (journal push race)
+    script: nova_friends.py
+    args: ["--subject", "military", "--days", "1"]
+    schedule: cron 25 7 * * *
+    timeout: 3600
+    overlap: skip
+
+  screen_and_friends:           # Jordan 2026-10-19: film/TV/late-night channels -> /screen/ ("What to Watch Tonight"; never Plex); 5-min stagger after food (journal push race)
+    script: nova_friends.py
+    args: ["--subject", "screen", "--days", "1"]
+    schedule: cron 30 7 * * *
+    timeout: 3600
+    overlap: skip
+
+  science_and_friends:          # Jordan 2026-10-19: science channels -> /science/ ("The Coolest Thing I Learned"); 5-min stagger after food (journal push race)
+    script: nova_friends.py
+    args: ["--subject", "science", "--days", "1"]
+    schedule: cron 35 7 * * *
+    timeout: 3600
+    overlap: skip
+
+  mystery_and_friends:          # Jordan 2026-10-19: mystery/lore channels -> /mystery/ ("The Rabbit Hole of the Day"); 5-min stagger after food (journal push race)
+    script: nova_friends.py
+    args: ["--subject", "mystery", "--days", "1"]
+    schedule: cron 40 7 * * *
+    timeout: 3600
+    overlap: skip
+
+  crime_and_friends:            # Jordan 2026-10-19: true-crime/scam channels -> /crime/ ("Case of the Day"); 5-min stagger after food (journal push race)
+    script: nova_friends.py
+    args: ["--subject", "crime", "--days", "1"]
+    schedule: cron 45 7 * * *
+    timeout: 3600
+    overlap: skip
+
+  workshop_and_friends:         # Jordan 2026-10-19: woodworking/DIY channels -> /workshop/ ("Project Worth Stealing"); 5-min stagger after food (journal push race)
+    script: nova_friends.py
+    args: ["--subject", "workshop", "--days", "1"]
+    schedule: cron 50 7 * * *
+    timeout: 3600
+    overlap: skip
+
+  travel_and_friends:           # Jordan 2026-10-19: travel/exploration channels -> /travel/ ("Place of the Day"); 5-min stagger after food (journal push race)
+    script: nova_friends.py
+    args: ["--subject", "travel", "--days", "1"]
+    schedule: cron 55 7 * * *
+    timeout: 3600
+    overlap: skip
+
   opinion_fishbowl:                  # Nova's daily OPINION column on Watch Fishbowl updates -> /opinions
     script: nova_opinion_fishbowl.py
     schedule: cron 0 6 * * *         # daily 6:00 AM — dated opinion piece, operations voice

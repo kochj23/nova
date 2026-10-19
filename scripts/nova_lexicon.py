@@ -39,6 +39,7 @@ DSN = _nova_dsn.pg_dsn("nova_ops")
 FLAVOR_SECTIONS = {"burbank-ops", "opinions", "after-dark", "meta", "digests", "digest", "tech",
                    "cars", "food", "watches", "art", "research", "security", "pilot",
                    "news", "weird", "fishbowl"}
+FLAVOR_SECTIONS |= {"music", "military", "screen", "science", "mystery", "crime", "workshop", "travel"}  # and Friends 2026-10-19
 
 
 def _canon(section: str) -> str:

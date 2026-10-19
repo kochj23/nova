@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""7-category tests for nova_friends.py — Cars / Tech / Food and Friends (Security, Performance,
+"""7-category tests for nova_friends.py — Cars / Tech / Food and Friends + the eight 2026-10-19
+sections (Music, Military, Screen, Science, Mystery, Crime, Workshop, Travel) (Security, Performance,
 Retry, Unit, Integration, Functional, Frame). PostgreSQL, the Claude CLI (call_openrouter), image
 generation, Hugo publish, git push and Slack are all mocked — nothing is published.
 Written by Jordan Koch (via Claude).
@@ -40,12 +41,18 @@ class Cur:
     """Answers by query shape: the channel query gets videos, the article query gets articles,
     the recipe-memory queries get recipe pages / chunks."""
 
-    def __init__(self, videos, arts, recipes=()):
+    def __init__(self, videos, arts, recipes=(), history=(), lore=()):
         self.videos, self.arts, self.recipes, self.calls, self._r = videos, arts, list(recipes), [], []
+        self.history, self.lore = list(history), list(lore)
 
     def execute(self, sql, params=None):
         self.calls.append((sql, params))
-        if "source = 'recipes'" in sql:
+        if "on_this_day" in sql:
+            self._r = self.history
+        elif "esoteric_library" in sql:
+            self._r = ([(md["url"], md.get("title"), src) for _, _, md, src in self.lore] if "GROUP BY" in sql
+                       else [r for r in self.lore if r[2]["url"] in params[1]])
+        elif "source = 'recipes'" in sql:
             self._r = ([(md["url"], md["title"], md["source_site"]) for _, _, md in self.recipes]
                        if "GROUP BY" in sql else [r for r in self.recipes if r[2]["url"] in params[0]])
         else:
@@ -61,10 +68,11 @@ RULES = {"rules": "HOUSE-RULE-SENTINEL: pick the smokiest, spiciest fit.", "priv
          "prefer": ["smoked", "salmon"], "avoid": ["pudding"]}
 
 
-def run_main(argv=("--subject", "cars"), videos=None, arts=None, llm=None, publish=True, recipes=(), rules=RULES):
+def run_main(argv=("--subject", "cars"), videos=None, arts=None, llm=None, publish=True, recipes=(), rules=RULES,
+             history=(), lore=()):
     videos = [vrow("a rear wing that lifts the nose", "v1")] if videos is None else videos
     arts = [arow("new kernel release", "https://a/1")] if arts is None else arts
-    cur = Cur(videos, arts, recipes)
+    cur = Cur(videos, arts, recipes, history, lore)
     conn = MagicMock(); conn.cursor.return_value = cur
     nj = MagicMock()
     nj.today_str.return_value = "2026-10-19"
@@ -256,7 +264,7 @@ class TestFrame(unittest.TestCase):
     def test_module_shape(self):
         for n in ("main", "fetch", "source_list", "norm", "load_food_rules", "private_hit", "fetch_recipes"):
             self.assertTrue(callable(getattr(m, n)))
-        self.assertEqual(set(m.SUBJECTS), {"cars", "tech", "food"})
+        self.assertEqual(set(m.SUBJECTS), {"cars", "tech", "food", *NEW})
         self.assertEqual(set(m.FEATURES), set(m.SUBJECTS))
 
     def test_watches_script_untouched_by_the_sibling(self):
@@ -535,6 +543,239 @@ class TestFoodRouting(unittest.TestCase):
 
     def test_no_recipe_memories_is_fine(self):
         self.assertEqual(m.fetch_recipes(Cur([], [], []), []), [])
+
+
+# ── The eight 2026-10-19 sections ───────────────────────────────────────────────────────────────
+NEW = ("music", "military", "screen", "science", "mystery", "crime", "workshop", "travel")
+LISTS = {"cars": m.CARS_CHANNELS, "tech": m.TECH_CHANNELS, "food": m.FOOD_CHANNELS, "music": m.MUSIC_CHANNELS,
+         "military": m.MILITARY_CHANNELS, "screen": m.SCREEN_CHANNELS, "science": m.SCIENCE_CHANNELS,
+         "mystery": m.MYSTERY_CHANNELS, "crime": m.CRIME_CHANNELS, "workshop": m.WORKSHOP_CHANNELS,
+         "travel": m.TRAVEL_CHANNELS}
+SAMPLE = {"music": "Rick Beato", "military": "Forgotten Weapons", "screen": "RedLetterMedia", "science": "PBS Space Time",
+          "mystery": "Wendigoon", "crime": "Kitboga", "workshop": "Blacktail Studio", "travel": "Peter Santenello"}
+HEADINGS = {"music": "🎧 Track of the Day", "military": "📜 This Day in Military History",
+            "screen": "🍿 What to Watch Tonight", "science": "🌌 The Coolest Thing I Learned",
+            "mystery": "🕯️ The Rabbit Hole of the Day", "crime": "🔦 Case of the Day",
+            "workshop": "🔨 Project Worth Stealing", "travel": "🗺️ Place of the Day"}
+WIKI = "https://en.wikipedia.org/wiki/Battle_of_X"
+
+
+def hrow(text, url=WIKI, title="Battle of X", source="military_history"):
+    return (text, D, {"url": url, "title": title, "source": source})
+
+
+def lrow(text, url, title, source, **md):
+    return (text, D, {"url": url, "title": title, **md}, source)
+
+
+class TestNewSectionRouting(unittest.TestCase):
+    def test_every_list_disjoint_from_every_other(self):
+        seen = {}
+        for subj, chans in LISTS.items():
+            for c in chans:
+                k = m.norm(c)
+                self.assertNotIn(k, seen, f"{c} in both {seen.get(k)} and {subj}")
+                seen[k] = subj
+
+    def test_tech_and_science_do_not_overlap(self):
+        tech, sci = {m.norm(c) for c in m.TECH_CHANNELS}, {m.norm(c) for c in m.SCIENCE_CHANNELS}
+        self.assertFalse(tech & sci)
+        for c in ("Veritasium", "Real Engineering", "Mark Rober"):
+            self.assertIn(m.norm(c), tech)
+            self.assertNotIn(m.norm(c), sci)
+        for c in ("PBS Space Time", "SciShow Space", "minutephysics", "T. Folse Nuclear", "YaleCourses"):
+            self.assertIn(m.norm(c), sci)
+
+    def test_jordans_picks_are_in_their_sections(self):
+        picks = {"music": ("Rick Beato 2", "HÖR BERLIN", "Marc Rebillet - Topic", "Rock N’ Rewind", "DnB Portal"),
+                 "military": ("VASAviation -", "U.S. Navy", "Airforceproud95", "Task & Purpose"),
+                 "screen": ("How Did This Get Made?", "Late Night With Conan O'Brien", "LastWeekTonight", "Kevin Smith"),
+                 "mystery": ("Dark5 Ancient Mysteries", "ESOTERICA", "Brain Blaze"),
+                 "crime": ('Salvatore "Sammy The Bull" Gravano', "Matthew Cox | Inside True Crime", "Scammer Payback"),
+                 "workshop": ("A R Pond Maintenance And Supplies.", "Bertha's House Hacks", "This Old House"),
+                 "travel": ("Miha's Life in Japan", "Away Together w/ Nik and Allie", "Deep Sea Explorer YT")}
+        for subj, names in picks.items():
+            keys = {m.norm(c) for c in LISTS[subj]}
+            for n in names:
+                self.assertIn(m.norm(n), keys, (subj, n))
+        self.assertNotIn(m.norm("Peter Santenello"), {m.norm(c) for c in m.FOOD_EXCLUDED})
+
+    def test_each_subject_queries_only_its_own_channels(self):
+        for subj in NEW:
+            rc, nj, cur = run_main(["--subject", subj, "--dry-run"], videos=[vrow("x", "v1", chan=SAMPLE[subj])])
+            self.assertEqual(rc, 0, subj)
+            keys = set(cur.calls[0][1][1])
+            self.assertEqual(keys, {m.norm(c) for c in LISTS[subj]}, subj)
+            self.assertFalse(any("gov_rss" in sql for sql, _ in cur.calls), subj)
+
+    def test_each_subject_publishes_to_its_own_section(self):
+        for subj in NEW:
+            rc, nj, _ = run_main(["--subject", subj], videos=[vrow("x", "v1", chan=SAMPLE[subj])])
+            self.assertEqual(rc, 0, subj)
+            a = nj.publish_hugo.call_args.args
+            self.assertTrue(a[0].startswith(m.SUBJECTS[subj]["name"] + ": "), a[0])
+            self.assertEqual(a[2], subj)
+            self.assertEqual(nj.git_push.call_args.args[0], subj)
+
+    def test_thin_day_widens_new_subjects_only(self):
+        rc, nj, cur = run_main(["--subject", "travel", "--dry-run"], videos=[vrow("x", "v1", chan="Smarty Van")])
+        days = [p[0] for sql, p in cur.calls if "yt_subs_audio" in sql]
+        self.assertEqual(days, [1, m.WIDEN_DAYS])
+        rc, nj, cur = run_main(["--subject", "cars", "--dry-run"], videos=[vrow("x", "v1")], arts=[])
+        self.assertEqual([p[0] for sql, p in cur.calls if "yt_subs_audio" in sql], [1])
+
+    def test_live_names_match_jordans_subscriptions(self):
+        try:
+            conn = m._connect(m.OPS_DSN, attempts=1)
+            cur = conn.cursor()
+            cur.execute("SELECT value FROM service_config WHERE service = %s AND key = %s",
+                        ("yt_subs_audio", "subscriptions"))
+            row = cur.fetchone()
+            conn.close()
+        except Exception as e:  # noqa: BLE001
+            self.skipTest(f"PG unavailable: {e}")
+        if not row:
+            self.skipTest("no subscription cache")
+        subs = {m.norm(r[2] if isinstance(r, list) else r) for r in row[0]}
+        for subj in NEW:
+            missing = [c for c in LISTS[subj] if m.norm(c) not in subs]
+            self.assertEqual(missing, [], subj)
+
+
+class TestNewSectionTopBlocks(unittest.TestCase):
+    def test_each_new_block_sits_on_top_and_matches_the_homepage_kind(self):
+        import nova_series
+        for subj in NEW:
+            self.assertEqual(m.FEATURES[subj][0], HEADINGS[subj])
+            self.assertEqual(nova_series.TOP_BLOCK_KINDS[subj], HEADINGS[subj])
+            rc, nj, _ = run_main(["--subject", subj], videos=[vrow("x", "v1", chan=SAMPLE[subj])],
+                                 llm=block_llm(good_block()))
+            self.assertEqual(rc, 0, subj)
+            body = published_body(nj)
+            self.assertTrue(body.startswith(f"## {HEADINGS[subj]}\n\n"), (subj, body[:60]))
+            tb = nova_series.extract_top_block(subj, body)
+            self.assertEqual(tb["kind"], HEADINGS[subj])
+
+    def test_each_new_block_omitted_on_none(self):
+        for subj in NEW:
+            rc, nj, _ = run_main(["--subject", subj], videos=[vrow("x", "v1", chan=SAMPLE[subj])],
+                                 llm=block_llm("NONE"))
+            self.assertEqual(rc, 0, subj)
+            self.assertTrue(published_body(nj).startswith("## News"), subj)
+
+    def test_military_history_notes_ground_and_link(self):
+        seen = []
+        notes = [hrow("The fleet engaged off the cape on October 19, 1944, and the battle turned. More text.")]
+        nj_today = "2026-10-19"
+        text = f"On this day the fleet fought — [Battle of X]({WIKI}). " + "history " * 40
+        with patch.object(m.nj, "today_str", return_value=nj_today):
+            rc, nj, cur = run_main(["--subject", "military"], videos=[vrow("x", "v1", chan="Forgotten Weapons")],
+                                   history=notes, llm=block_llm(text, seen))
+        self.assertEqual(rc, 0)
+        system, user = next(x for x in seen if "very TOP" in x[0])
+        self.assertIn("THIS DAY IN HISTORY", user)
+        self.assertIn("October 19, 1944", user)
+        self.assertIn("October 19", system)
+        body = published_body(nj)
+        self.assertTrue(body.startswith("## 📜 This Day in Military History"))
+        self.assertIn("### This Day in History", body)
+        self.assertIn(WIKI, body.split("## Sources")[1])
+
+    def test_history_needs_a_military_event_in_the_dated_sentence(self):
+        rows = [hrow("The army crossed the river on 19 October 1805. Then peace.", url="https://w/1"),
+                hrow("A poem was published on October 19, 1840. The army later marched.", url="https://w/2"),
+                hrow("JP 3-01, Joint Doctrine for Air Defense, 19 October 1999. Army.", url="https://w/3"),
+                hrow("The navy sailed on October 20, 1944.", url="https://w/4")]
+        with patch.object(m.nj, "today_str", return_value="2026-10-19"):
+            got = m.fetch_history(Cur([], [], history=rows), today="2026-10-19")
+        self.assertEqual([g["url"] for g in got], ["https://w/1"])
+
+    def test_military_falls_back_to_the_days_story_without_notes(self):
+        seen = []
+        rc, nj, _ = run_main(["--subject", "military"], videos=[vrow("x", "v1", chan="LazerPig")],
+                             llm=block_llm(good_block(), seen))
+        self.assertEqual(rc, 0)
+        system, user = next(x for x in seen if "very TOP" in x[0])
+        self.assertNotIn("THIS DAY IN HISTORY ---", user)
+        self.assertIn("day's single most interesting military story", system)
+        self.assertTrue(published_body(nj).startswith("## 📜 This Day in Military History"))
+
+    def test_mystery_library_keeps_fiction_and_esoteric_labels(self):
+        lore = [lrow("Abdul Alhazred's book...", "https://www.gutenberg.org/ebooks/1", "Necronomicon Tales",
+                     "necronomicon", fiction=True),
+                lrow("A 13th-century compendium...", "https://archive.org/details/shams", "Shams al-Ma'arif grimoire",
+                     "shams_al_maarif", framing="Historical esoteric text (history, not instructions)")]
+        seen = []
+        rc, nj, _ = run_main(["--subject", "mystery"], lore=lore, llm=block_llm(good_block(), seen),
+                             videos=[vrow("x", "v1", chan="ESOTERICA", title="The Necronomicon and the grimoire Shams al-Ma'arif")])
+        self.assertEqual(rc, 0)
+        system, user = next(x for x in seen if "very TOP" in x[0])
+        self.assertIn("ESOTERIC LIBRARY", user)
+        self.assertIn("FICTION (H. P. Lovecraft's mythos)", user)
+        self.assertIn("Historical esoteric text (history, not instructions)", user)
+        self.assertIn("never as instructions", system)
+
+    def test_mystery_library_needs_a_real_topic_match(self):
+        lore = [lrow("t", "https://en.wikipedia.org/wiki/Third_Epistle_of_John", "Third Epistle of John", "occult")]
+        vids = [{"title": "The Soul Frequency they describe", "text": "", "channel": "c", "url": "u", "date": "d"}]
+        with patch.object(m.nj, "today_str", return_value="2026-10-19"):
+            self.assertEqual(m.fetch_lore(Cur([], [], lore=lore), vids), [])
+
+    def test_crime_block_with_an_address_is_omitted_and_body_redacted(self):
+        text = good_block(extra=" The victim lived at 1234 Elm Street in town.")
+        def llm(system, user, **k):
+            if "very TOP" in system:
+                return text
+            return "TITLE: Big Day Out\n## News\nThe house at 55 North Oak Avenue was raided. " + "word " * 3000
+        rc, nj, _ = run_main(["--subject", "crime"], videos=[vrow("x", "v1", chan="Kitboga")], llm=llm)
+        self.assertEqual(rc, 0)
+        body = published_body(nj)
+        self.assertNotIn("Case of the Day", body)
+        self.assertNotIn("Oak Avenue", body)
+        self.assertIn("[address withheld]", body)
+
+    def test_screen_never_reads_plex_or_viewing_history(self):
+        seen = []
+        rc, nj, cur = run_main(["--subject", "screen"], videos=[vrow("x", "v1", chan="RedLetterMedia")],
+                               llm=block_llm(good_block(), seen))
+        self.assertEqual(rc, 0)
+        for sql, _ in cur.calls:
+            self.assertNotRegex(sql.lower(), r"plex|watch_history|viewing")
+        system = next(s for s, _ in seen if "very TOP" in s)
+        self.assertIn("never a Plex library or viewing history", system)
+
+    def test_military_stance_block_in_every_military_prompt(self):
+        seen = []
+        rc, nj, _ = run_main(["--subject", "military"], videos=[vrow("drones over the front", "v1", chan="Task & Purpose")],
+                             llm=block_llm(good_block(), seen))
+        self.assertEqual(rc, 0)
+        news = [s for s, _ in seen if "very TOP" not in s]
+        top = [s for s, _ in seen if "very TOP" in s]
+        self.assertTrue(news and top)
+        for system in news + top:
+            self.assertIn(m.MILITARY_STANCE, system)
+        for phrase in ("unprovoked aggression", "Ukraine is the defender", "call it propaganda",
+                       "never at Russian people", "no battlefield facts, casualty numbers or quotes"):
+            self.assertIn(phrase, m.MILITARY_STANCE)
+
+    def test_stance_reaches_screen_and_travel_only_when_the_war_comes_up(self):
+        for subj, chan in (("screen", "The Daily Show"), ("travel", "Peter Santenello")):
+            for text, want in (("a quiet sitcom review", False), ("a trip to Kyiv during the Russian invasion", True)):
+                seen = []
+                run_main(["--subject", subj], videos=[vrow(text, "v1", chan=chan)], llm=block_llm(good_block(), seen))
+                got = any(m.MILITARY_STANCE in s for s, _ in seen)
+                self.assertEqual(got, want, (subj, text))
+        seen = []
+        run_main(["--subject", "cars"], videos=[vrow("a Ukrainian-built kit car", "v1")], llm=block_llm(good_block(), seen))
+        self.assertFalse(any(m.MILITARY_STANCE in s for s, _ in seen))
+
+    def test_new_sections_are_seasoned_and_series_assigned(self):
+        import nova_lexicon
+        import nova_series
+        for subj in NEW:
+            self.assertIn(subj, nova_lexicon.FLAVOR_SECTIONS, subj)
+            name = m.SUBJECTS[subj]["name"]
+            self.assertEqual(nova_series.assign_series(subj, f"{name}: Some Day", []), name)
 
 
 if __name__ == "__main__":

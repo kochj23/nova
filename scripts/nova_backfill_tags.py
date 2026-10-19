@@ -97,7 +97,8 @@ def main():
     log("Starting tag backfill...")
     # Live sections + the art archive (2026-10-19: dreams retired; essays/synthesis -> research;
     # operations/local -> burbank-ops; tech-today -> tech).
-    categories = ["burbank-ops", "opinions", "tech", "cars", "food", "watches", "after-dark",
+    categories = ["burbank-ops", "opinions", "tech", "cars", "food", "music", "military", "screen", "science", "mystery",
+                  "crime", "workshop", "travel", "watches", "after-dark",
                   "art", "research", "digests", "security", "pilot"]
     updated = 0
     skipped = 0

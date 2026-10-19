@@ -2055,7 +2055,9 @@ def notify_slack(section: str, title: str, preview: str):
     section = _canon_section(section)
     section_emojis = {
         "burbank-ops": ":satellite_antenna:", "opinions": ":speech_balloon:", "after-dark": ":night_with_stars:",
-        "pilot": ":movie_camera:", "tech": ":computer:", "cars": ":red_car:", "food": ":fork_and_knife:", "watches": ":watch:", "research": ":microscope:",
+        "pilot": ":movie_camera:", "tech": ":computer:", "cars": ":red_car:", "food": ":fork_and_knife:",
+        "music": ":headphones:", "military": ":military_medal:", "screen": ":popcorn:", "science": ":telescope:",
+        "mystery": ":candle:", "crime": ":flashlight:", "workshop": ":hammer:", "travel": ":world_map:", "watches": ":watch:", "research": ":microscope:",
         "digests": ":newspaper:", "security": ":shield:", "meta": ":bar_chart:",
         "art": ":art:",
     }
