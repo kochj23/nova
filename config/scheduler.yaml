@@ -321,6 +321,12 @@ tasks:
     timeout: 600
     overlap: skip
 
+  ukraine_causes:                    # WEEKLY Sunday 10:00 — PRIVATE Ukraine cause watch (Jordan: "keep on the lookout for worthy causes"). Scans 7d of news/geopolitics/military YT for fundraisers, vets vs nova_ops.ukraine_cause_allowlist, DMs Jordan up to 5 items (unverified = flagged). Posts nothing if nothing new+credible. NEVER journal/public. Never donates.
+    script: nova_ukraine_causes.py
+    schedule: cron 0 10 * * 0
+    timeout: 300
+    overlap: skip
+
 
   unas_status_refresh:                 # .6 runs the daily-ops article, which reads the LOCAL nova_unas_status.json; the alerting monitor runs on nova-core, so .6's copy went stale (froze on the old "setup" state). --json refreshes the file and returns BEFORE any alert/memory, so no double-alerting. Keeps rando reading current, normalized UNAS state.
     script: nova_unas_monitor.py
