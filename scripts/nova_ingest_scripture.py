@@ -96,7 +96,8 @@ WORKS = [
       id_re=r"rv(?P<mandala>\d\d)(?P<hymn>\d{3})\.htm"),
     W("sama_veda", "Hinduism", "Sama Veda", "Ralph T. H. Griffith", 1895, "hin/sv.htm", 50, "chapter",
       split_re=r"^((BOOK|CHAPTER|PART) [IVXL]+\.?)$", parent_re=r"^(BOOK|PART) ", label="{}"),
-    W("yajur_veda", "Hinduism", "White Yajur Veda", "Ralph T. H. Griffith", 1899, "hin/wyv/index.htm", 40, "book"),
+    W("yajur_veda", "Hinduism", "White Yajur Veda", "Ralph T. H. Griffith", 1899, "hin/wyv/index.htm", 40, "book",
+      force_index=True, path_re=r"wyvbk\d\d\.htm"),  # index page carries an epigraph + prose, so is_index_page misses it
     W("atharva_veda", "Hinduism", "Atharva Veda", "Ralph T. H. Griffith", 1895, "hin/av/index.htm", 731, "hymn"),
     W("upanishads_1", "Hinduism", "Upanishads, part 1 (SBE 1)", "F. Max Müller", 1879, "hin/sbe01/index.htm", 50, "section"),
     W("upanishads_2", "Hinduism", "Upanishads, part 2 (SBE 15)", "F. Max Müller", 1884, "hin/sbe15/index.htm", 120, "section"),
@@ -138,6 +139,10 @@ WORKS = [
     W("macauliffe", "Sikhism", "The Sikh Religion: Gurus, Sacred Writings and Authors (translations from the Guru Granth Sahib)",
       "Max Arthur Macauliffe", 1909, "skh/tsr1/index.htm", 25, "section",
       note="Only volume 1 of 6 survives in the archived sacred-texts copy; Khalsa's full Granth translation skipped (no free license)"),
+    W("macauliffe_v2_6", "Sikhism", "The Sikh Religion, vols. II-VI (Lives and hymns of Gurus Angad through Gobind Singh, Bhagats)",
+      "Max Arthur Macauliffe", 1909, "sikhreligionitsg02unse sikhreligionitsg03unse sikhreligionitsg04unse "
+      "sikhreligionitsg05unse sikhreligionitsg06unse", 1100, "passage-group", kind="ia",
+      note="Internet Archive OCR (Princeton Theological Seminary scan, Oxford 1909); vol. I comes from sacred-texts (key macauliffe)"),
     # ── Zoroastrianism ──
     W("avesta_vendidad", "Zoroastrianism", "Zend-Avesta part 1: Vendidad (SBE 4)", "James Darmesteter", 1880,
       "zor/sbe04/index.htm", 22, "fargard"),
@@ -363,7 +368,8 @@ def crawl_st(work: dict, max_pages: int = 0, fetch=None):
             return
         text = page_text(html)
         title = page_title(html)
-        if depth < 3 and not work.get("split_re") and is_index_page(html, text, len(local_links(html, path))):
+        if depth < 3 and not work.get("split_re") and ((depth == 0 and work.get("force_index"))
+                                                       or is_index_page(html, text, len(local_links(html, path)))):
             for p in local_links(html, path):
                 if path_re and not path_re.search(p) and depth == 0:
                     continue
@@ -469,8 +475,68 @@ def build_items(work: dict, uid_base: str, section: str, text: str, extra: dict)
     return out
 
 
+IA = "https://archive.org/"
+_IA_HEAD = re.compile(r"^(?:\d{1,3} )?(THE SIKH RELIGION|(LIFE|HYMNS|SLOKS|COMPOSITIONS|WRITINGS) OF [A-Z ,.’']+|SIKH[.,]? [IVXHL1]+( [A-Z]| P\. [IVX1]+)?|[A-Z]-?|[\divxlc ]{1,6})(?: \d{1,3})?$")
+
+
+def fetch_ia(ident: str) -> str:
+    """OCR text (_djvu.txt) of an Internet Archive item, cached under /Volumes/Data."""
+    cp = CACHE / "ia" / f"{ident}.txt"
+    if not cp.exists() or cp.stat().st_size == 0:
+        cp.parent.mkdir(parents=True, exist_ok=True)
+        cp.write_bytes(http_get(f"{IA}download/{ident}/{ident}_djvu.txt"))
+    return cp.read_bytes().decode("utf-8", "replace")
+
+
+def ia_units(raw: str, size: int = 6000) -> list:
+    """-> [(section, text)] for one OCR'd volume: library front matter and the closing index dropped, running
+    heads / page numbers / printer signatures removed, hyphenations re-joined, grouped into ~`size`-char units
+    on paragraph boundaries. section = the most recent running head (e.g. 'Life of Guru Angad'). Pure."""
+    m = re.search(r"(?m)^https://archive\.org/details/\S+\s*$", raw)
+    raw = raw[m.end():] if m else raw
+    ends = [x.start() for x in re.finditer(r"(?m)^\s*INDEX\s*$", raw)]
+    if ends and ends[-1] > len(raw) * 0.8:
+        raw = raw[:ends[-1]]
+    raw = re.sub(r"¬\s*\n\s*", "", raw)
+    out, buf, head, cur_head = [], [], "", ""
+    for para in re.split(r"\n\s*\n", raw):
+        lines = []
+        for ln in para.splitlines():
+            t = re.sub(r"\s{2,}", " ", ln).strip()
+            if not t:
+                continue
+            if _IA_HEAD.match(t):
+                h = re.sub(r"^\d+ | \d+$", "", t)
+                if re.match(r"^(LIFE|HYMNS|SLOKS|COMPOSITIONS|WRITINGS) OF", h):
+                    cur_head = h.rstrip(" .,").title().replace("’S", "’s")
+                continue
+            if len(re.sub(r"[^A-Za-z]", "", t)) < 3 and len(t) < 8:
+                continue
+            lines.append(t)
+        if not lines:
+            continue
+        p = "\n".join(lines)
+        if not buf:
+            head = cur_head
+        buf.append(p)
+        if sum(len(x) for x in buf) >= size:
+            out.append((head, "\n\n".join(buf))); buf = []
+    if buf:
+        out.append((head, "\n\n".join(buf)))
+    return out
+
+
 def units(work: dict, max_pages: int = 0):
     """Yield (uid_base, section, text, extra_meta) for a work."""
+    if work["kind"] == "ia":
+        for ident in work["index"].split():
+            vol = int(re.search(r"(\d+)\D*$", ident).group(1))
+            for k, (head, text) in enumerate(ia_units(fetch_ia(ident)), 1):
+                if max_pages and k > max_pages:
+                    break
+                yield f"v{vol}u{k:04d}", f"Vol. {vol}" + (f", {head}" if head else ""), text, {
+                    "volume": vol, "order": k, "url": f"{IA}details/{ident}", "via": "Internet Archive OCR"}
+        return
     if work["kind"] == "bilara":
         for f in bilara_files(work["index"]):
             uid, title, text = sutta_units(f)
@@ -496,6 +562,7 @@ def manifest_upsert(work: dict, **fields):
     cols = {"tradition": work["tradition"], "vector": work["vector"], "work": work["work"],
             "translator": work["translator"], "year": work["year"], "license": work["license"],
             "source_url": (ST + work["index"]) if work["kind"] == "st" else
+            f"{IA}details/{work['index'].split()[0]} (+{len(work['index'].split()) - 1} more volumes)" if work["kind"] == "ia" else
             f"https://github.com/suttacentral/bilara-data/tree/published/{BILARA_SUB}/{work['index']}",
             "expected_units": work["expected"], "unit_kind": work["unit"], **fields}
     keys = list(cols)
