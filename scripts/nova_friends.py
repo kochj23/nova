@@ -77,7 +77,7 @@ CARS_CHANNELS = (
     "That Racing Channel", "The Automotive Advantage", "The Backspeed Boys", "The Bearded Mechanic",
     "The Carmudgeon Show", "The Dirthead Shed", "The Gearhead Lounge", "The Hooptie Lot!",
     "The Questionable Garage", "TheSilverBuick", "TheSmokingTire", "TheSmokingTirePodcast", "Throttle House",
-    "Torco USA", "Toys4Life C5", "Uncle Tony's Garage", "Valley Racing", "Vice Grip Garage", "VINwiki",
+    "Torco USA", "Toys4Life C5", "Uncle Tony's Garage", "Valley Racing", "Vice Grip Garage", "VINwiki", "MISTER ZACHARY",
     "Viper Vlogs", "Vortech Superchargers", "Watts Performance Solutions", "WaxedClassics",
     "WestCoast Grudge Racing Media", "Wheeler Dealers", "Zack Klapman's Drivers' Test",
     "Zero To Sixty Automotive", "ᴢᴇʀᴏ ᴛᴏ ꜱɪxᴛʏ", "Zip Tie Tuning", "Bikes and Beards",
