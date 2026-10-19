@@ -383,6 +383,11 @@ class TestUnit(unittest.TestCase):
         self.assertEqual((kw["level"], kw["category"], kw["meta"]), ("info", "journal", {"section": "operations"}))
 
 
+class TestSectionRemap(unittest.TestCase):
+    def test_merged_sections_route_to_research(self):
+        self.assertEqual(nj.SECTION_REMAP, {"essays": "research", "synthesis": "research"})
+
+
 class TestIntegration(unittest.TestCase):
     def test_publish_hugo_writes_front_matter_cover_and_dateline(self):
         img = TMP / "cover.webp"; img.write_bytes(b"RIFFxxxxWEBP")
@@ -420,7 +425,7 @@ class TestIntegration(unittest.TestCase):
                 patch.object(nj, "call_openrouter", side_effect=list(replies or [])) as co, _quiet():
             self.assertTrue(nj.publish_hugo(title, body, section, [], "d", sources=sources, profile=profile))
         slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
-        return next((nj.HUGO_ROOT / f"content/{section}").glob(f"*{slug}.md")).read_text(), co
+        return next((nj.HUGO_ROOT / f"content/{nj.SECTION_REMAP.get(section, section)}").glob(f"*{slug}.md")).read_text(), co
 
     GROUNDED = ("The scheduler restarted on Tuesday at the memory host, as the source log says. " * 130).strip()  # ~1820w
     SOURCES = "[1] (ops_log) SRC-FACT-42: the scheduler restarted on Tuesday at the memory host."
