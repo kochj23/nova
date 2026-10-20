@@ -153,10 +153,34 @@ def build(conn, clients):
                     "ON CONFLICT (mac) DO UPDATE SET ip=EXCLUDED.ip, updated_at=now()",
                     (mac, name, ip))
         out.append((f"{name}.{DOMAIN}", ip))
+    # cluster nodes follow the address their minion heartbeat actually came from (Ethernet when up, Wi-Fi
+    # backdoor while the NIC is down) instead of UniFi's stale per-MAC record. 2026-10-20: nova-core7's dead
+    # AQC113 kept nova-core7 -> .125 while the box was alive on Wi-Fi .197.
+    for node, ip in (live_nodes(conn) if conn else {}).items():
+        out = [e for e in out if e[0] != f"{node}.{DOMAIN}"] + [(f"{node}.{DOMAIN}", ip)]
     # static service aliases (always emitted, re-pointable)
     for alias, ip in SERVICE_ALIASES.items():
         out.append((f"{alias}.{DOMAIN}", ip))
     return out
+
+
+def live_nodes(conn, fresh_s: int = 300) -> dict:
+    """{node: ip} for cluster nodes heartbeating to the minion hub in the last fresh_s seconds."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT node, ip FROM minion_nodes WHERE ip IS NOT NULL AND node LIKE 'nova-core%%' "
+                    "AND last_seen > now() - %s * interval '1 second'", (fresh_s,))
+        return dict(cur.fetchall())
+
+
+def sync_registry(conn, nodes: dict) -> int:
+    """service_registry.host is inet (no names), so point each cluster node's LAN rows at its live address."""
+    n = 0
+    with conn.cursor() as cur:
+        for node, ip in nodes.items():
+            cur.execute("UPDATE service_registry SET host=%s::inet WHERE node_name=%s AND host <> %s::inet "
+                        "AND NOT host <<= '127.0.0.0/8'::inet", (ip, node, ip))
+            n += cur.rowcount
+    return n
 
 
 def tsig_secret():
@@ -168,6 +192,7 @@ def tsig_secret():
 # .10 answer for the full 300s and needed a manual dscacheutil flush). Everything else
 # keeps the 300s default.
 FAILOVER_ALIASES = {"pg-primary", "memory-server"}
+NODE_TTL = 60   # cluster nodes flip Ethernet <-> Wi-Fi; clients should follow within a minute
 FAILOVER_TTL = 60
 
 
@@ -177,7 +202,8 @@ def push_bind(entries, ttl=300):
     secret = tsig_secret()
     script_lines = [f"server {BIND_PRIMARY}", f"zone {DOMAIN}."]
     for fqdn, ip in entries:
-        rec_ttl = FAILOVER_TTL if fqdn.split(".")[0] in FAILOVER_ALIASES else ttl
+        host = fqdn.split(".")[0]
+        rec_ttl = FAILOVER_TTL if host in FAILOVER_ALIASES else NODE_TTL if host.startswith("nova-core") else ttl
         script_lines.append(f"update delete {fqdn}. A")
         script_lines.append(f"update add {fqdn}. {rec_ttl} A {ip}")
     script_lines.append("send")
@@ -250,6 +276,9 @@ def main():
             print(f"  {ip:<15} {fqdn}")
         print(f"\n  {len(entries)} records ({len(clients)} clients + {len(SERVICE_ALIASES)} service aliases)")
     else:
+        moved = sync_registry(conn, live_nodes(conn))
+        if moved:
+            print(f"[nova-dns] service_registry: {moved} row(s) re-pointed to live node addresses", flush=True)
         ok = push_bind(entries)
         status = "OK (primary, secondary picks it up via AXFR/NOTIFY)" if ok else "FAILED"
         print(f"[nova-dns] {len(entries)} records ({len(clients)} clients) pushed to BIND primary {BIND_PRIMARY}: {status}")

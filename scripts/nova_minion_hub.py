@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import collections
 import hashlib
+import ipaddress
 import socket
 import subprocess
 import urllib.request
@@ -115,7 +116,16 @@ def clean_hb(d: dict) -> dict:
     return {"state": state, "ollama_url": url.rstrip("/") or None, "models": models, "info": info}
 
 
-def heartbeat(cur, node: str, hb: dict):
+def lan_addr(addr: str | None) -> str | None:
+    """The heartbeat's source address if it is a usable LAN address (not loopback), else None. Pure."""
+    try:
+        ip = ipaddress.ip_address(addr or "")
+    except ValueError:
+        return None
+    return str(ip) if ip.is_private and not ip.is_loopback and not ip.is_link_local else None
+
+
+def heartbeat(cur, node: str, hb: dict, addr: str | None = None):
     cur.execute("SELECT state, dedicated, coalesce(role,'minion') FROM minion_nodes WHERE node=%s", (node,))
     prev = cur.fetchone()
     if prev and prev[2] == "viewer":
@@ -125,8 +135,10 @@ def heartbeat(cur, node: str, hb: dict):
         state = "dedicated"            # a dedicated node is always available; its agent may still say idle
     cur.execute("""UPDATE minion_nodes SET state=%s, ollama_url=coalesce(%s, ollama_url), models=%s::jsonb,
                    last_seen=now(), since=CASE WHEN state IS DISTINCT FROM %s OR since IS NULL THEN now() ELSE since END,
-                   info = info || %s::jsonb WHERE node=%s""",
-                (state, hb["ollama_url"], json.dumps(hb["models"]), state, json.dumps(hb["info"]), node))
+                   info = info || %s::jsonb, ip = coalesce(%s, ip) WHERE node=%s""",
+                (state, hb["ollama_url"], json.dumps(hb["models"]), state, json.dumps(hb["info"]), lan_addr(addr), node))
+    # 2026-10-20: ip follows the address the node actually reached us from -- Ethernet when it is up (lower route
+    # metric), Wi-Fi while it is down -- so work stops going to a dead NIC (nova-core7, AQC113 failing)
     if prev and prev[0] != state:
         log(f"{node}: {prev[0]} -> {state}")
     return state
@@ -885,7 +897,7 @@ class Handler(BaseHTTPRequestHandler):
             cur = db()
             if not authed(cur, node, self.headers.get("X-Minion-Token")):
                 return self._send(403, {"error": "unknown node or bad token"})
-            state = heartbeat(cur, node, clean_hb(d))
+            state = heartbeat(cur, node, clean_hb(d), self.client_address[0])
             return self._send(200, {"ok": True, "state": state})
         except ValueError as e:
             return self._send(400, {"error": str(e)})

@@ -45,7 +45,7 @@ def _run_main(place, get, post, argv=("x",)):
 class TestSecurity(unittest.TestCase):
     def test_only_private_lan_ollama_endpoints(self):
         for url in mw.DEFAULT_PLACEMENT:
-            self.assertRegex(url, r"^http://192\.168\.1\.\d+:11434$")
+            self.assertRegex(url, r"^http://nova-core\d+\.digitalnoise\.net:11434$")   # internal zone only
 
     def test_no_user_paths_or_secrets(self):
         self.assertNotRegex(SRC, r"/Users/[a-z]")
@@ -100,8 +100,10 @@ class TestRetry(unittest.TestCase):
 
     def test_pg_connect_retries(self):
         conn = MagicMock(); conn.cursor.return_value = _Cur({})
+        loaded = {"models": [{"name": m} for ms in mw.DEFAULT_PLACEMENT.values() for m in ms]}
         with patch.object(mw.psycopg2, "connect", side_effect=[OSError("x"), conn]) as c, patch.object(mw.time, "sleep"), \
-                patch.object(sys, "argv", ["x"]), redirect_stdout(io.StringIO()):
+                patch.object(mw, "_get", MagicMock(return_value=loaded)), patch.object(mw, "_post", MagicMock()), \
+                patch.object(sys, "argv", ["x"]), redirect_stdout(io.StringIO()):   # never warm the live fleet
             self.assertEqual(mw.main(), 0)
         self.assertEqual(c.call_count, 2)
         self.assertEqual(c.call_args.kwargs.get("connect_timeout"), 5)

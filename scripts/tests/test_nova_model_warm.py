@@ -78,7 +78,7 @@ class TestSecurity(unittest.TestCase):
         pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", re.I)
         self.assertIsNone(pat.search(SRC))
         self.assertNotIn("Authorization", SRC)
-        self.assertTrue(all(u.startswith("http://192.168.1.") for u in mw.DEFAULT_PLACEMENT))   # LAN only
+        self.assertTrue(all(re.match(r"^http://nova-core\d+\.digitalnoise\.net:11434$", u) for u in mw.DEFAULT_PLACEMENT))   # LAN only, by name
 
     def test_sql_is_parameterized_and_writes_only_its_config_row(self):
         self.assertIsNone(re.search(r'execute\(\s*f"', SRC))

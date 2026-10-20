@@ -23,14 +23,14 @@ DSN = os.environ.get("NOVA_OPS_DSN", "host=localhost dbname=nova_ops user=kochj"
 # Order matters: models warm serially, so the tiny embed model goes FIRST — after an Ollama restart it used to wait
 # behind ~4 min of big-model loads and the prober's embedding probe timed out (coagency #117, 2026-10-07).
 DEFAULT_PLACEMENT = {                                   # seeded into service_config on first run; edit it there
-    "http://192.168.1.6:11434":   ["nomic-embed-text:latest", "qwen3:8b", "nova:latest", "qwen3:30b-a3b", "deepseek-r1:8b", "qwen3-vl:4b"],  # Studio 512G
-    "http://192.168.1.77:11434":  ["nomic-embed-text:latest", "qwen3:8b", "nova:latest"],        # M4 Pro mini 64G (30b-a3b = cold backup only)
-    "http://192.168.1.7:11434":   ["llama3.2:3b", "qwen3:8b"],                                    # M2 Pro mini 32G
-    "http://192.168.1.252:11434": ["llama3.2:3b", "qwen3:8b"],                                    # M1 mini 16G
-    "http://192.168.1.5:11434":   ["llama3.2:3b", "qwen3:8b"],                                    # nova-core3 27G
-    "http://192.168.1.86:11434":  ["llama3.2:3b", "qwen3:8b", "nomic-embed-text:latest"],        # nova-core2 26G
-    "http://192.168.1.125:11434": ["llama3.2:3b", "qwen3:8b", "nomic-embed-text:latest"],        # nova-core7 27G
-    "http://192.168.1.10:11434":  ["nomic-embed-text:latest"],                                    # nova-core5 15G, embeddings only
+    "http://nova-core8.digitalnoise.net:11434":   ["nomic-embed-text:latest", "qwen3:8b", "nova:latest", "qwen3:30b-a3b", "deepseek-r1:8b", "qwen3-vl:4b"],  # Studio 512G
+    "http://nova-core10.digitalnoise.net:11434": ["nomic-embed-text:latest", "qwen3:8b", "nova:latest"],        # M4 Pro mini 64G (30b-a3b = cold backup only)
+    "http://nova-core9.digitalnoise.net:11434":  ["llama3.2:3b", "qwen3:8b"],                                    # M2 Pro mini 32G
+    "http://nova-core6.digitalnoise.net:11434": ["llama3.2:3b", "qwen3:8b"],                                    # M1 mini 16G
+    "http://nova-core3.digitalnoise.net:11434":  ["llama3.2:3b", "qwen3:8b"],                                    # nova-core3 27G
+    "http://nova-core2.digitalnoise.net:11434": ["llama3.2:3b", "qwen3:8b", "nomic-embed-text:latest"],        # nova-core2 26G
+    "http://nova-core7.digitalnoise.net:11434": ["llama3.2:3b", "qwen3:8b", "nomic-embed-text:latest"],        # nova-core7 27G
+    "http://nova-core5.digitalnoise.net:11434": ["nomic-embed-text:latest"],                                    # nova-core5 15G, embeddings only
 }
 
 

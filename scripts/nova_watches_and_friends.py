@@ -194,6 +194,7 @@ def main():
     mc.execute("""SELECT text, created_at, metadata FROM memories
                   WHERE created_at > now() - make_interval(days => %s)
                     AND coalesce(metadata->>'part', 'transcript') = 'transcript'
+                    AND NOT metadata ?| array['supersedes', 'skipping_needle']   -- re-transcriptions/loop junk aren't news
                     AND (metadata->>'video_id' = ANY(%s)
                          OR source = 'horology'   -- 2026-10-11 run matched 0 via yt_ingest_seen alone
                          OR (metadata->>'pipeline' = 'yt_subs_audio' AND metadata->>'channel' = ANY(%s)))
@@ -203,6 +204,9 @@ def main():
     mc.execute("""SELECT text, created_at, metadata FROM memories
                   WHERE source = 'fishbowl' AND created_at > now() - make_interval(days => %s)
                     AND coalesce(metadata->>'part', 'transcript') = 'transcript'
+                    -- 2026-10-20: a June Watch Nicholas stream, re-transcribed on 10-19, ran as "today's" stream and
+                    -- its loop junk ("I don't know. [loop x18]") was reported as what he said
+                    AND NOT metadata ?| array['supersedes', 'skipping_needle'] AND text NOT LIKE '%%[loop x%%'
                   ORDER BY created_at DESC""", (a.days,))
     fish = group_videos(mc.fetchall(), FISH_PER_VIDEO, FISH_MAX_VIDEOS)
     log(f"{len(news)} news videos, {len(fish)} fishbowl streams in the last {a.days} days")

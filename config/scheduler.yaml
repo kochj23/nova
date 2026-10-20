@@ -358,7 +358,7 @@ tasks:
     # which is how the fleet's canonical names drifted (2026-07-24 "which IP is
     # nova-core2" episode). Canonical fleet names live in dns_records with locked=true.
     script: nova_dns_sync.py
-    schedule: every 1h
+    schedule: every 5m   # was 1h; cluster node names follow Ethernet <-> Wi-Fi (2026-10-20)
     timeout: 120
     overlap: skip
 

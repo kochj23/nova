@@ -46,6 +46,7 @@ from nova_dns_sync import (
     SERVICE_ALIASES,
     FAILOVER_ALIASES,
     FAILOVER_TTL,
+    NODE_TTL,
     BIND_PRIMARY,
     TSIG_KEY_NAME,
     PUBLIC_MIRRORS,
@@ -345,7 +346,8 @@ class TestNsupdateInjectionInvariant(unittest.TestCase):
         expected = set()
         for fqdn, ip in entries:
             expected.add(f"update delete {fqdn}. A")
-            ttl = FAILOVER_TTL if fqdn.split(".")[0] in FAILOVER_ALIASES else 300
+            host = fqdn.split(".")[0]
+            ttl = FAILOVER_TTL if host in FAILOVER_ALIASES else NODE_TTL if host.startswith("nova-core") else 300
             expected.add(f"update add {fqdn}. {ttl} A {ip}")
         self.assertEqual({l for l in lines if l.startswith("update")}, expected)
 
@@ -575,6 +577,9 @@ class _Cur:
         n = self.names.get(self._mac)
         return (n, False) if n else None
 
+    def fetchall(self):   # live_nodes(): no heartbeating cluster nodes in these fakes
+        return []
+
 
 class _Conn:
     def __init__(self, cur):
@@ -611,7 +616,7 @@ class TestSecurity(unittest.TestCase):
         self.assertIsNone(re.search(r'execute\(\s*f"', SRC))
         self.assertIsNone(re.search(r'execute\([^)]*%\s*\(', SRC))
         writes = {m.group(1) for m in re.finditer(r"\b(?:INSERT INTO|(?<!DO )UPDATE|DELETE FROM)\s+([\w.]+)", SRC)}
-        self.assertEqual(writes, {"dns_records"})
+        self.assertEqual(writes, {"dns_records", "service_registry"})   # registry: live node addresses (2026-10-20)
         cur = _Cur()
         dns.build(_Conn(cur), [_client(1, name=_INJ)])
         for sql, params in cur.sql:
@@ -728,7 +733,7 @@ class TestIntegration(unittest.TestCase):
         out = dns.build(_Conn(cur), [_client(1, name="new-name")])
         self.assertEqual(out[0][0], f"kept-name.{DOMAIN}")
         tables = {re.search(r"(?:FROM|INTO|EXISTS)\s+(\w+)", s).group(1) for s, _ in cur.sql}
-        self.assertEqual(tables, {"dns_records"})
+        self.assertEqual(tables, {"dns_records", "minion_nodes"})   # minion_nodes: read-only live node addresses
         self.assertEqual([p for s, p in cur.sql if s.startswith("INSERT")][0], ("aa:bb:cc:dd:00:01", "kept-name", "10.0.0.1"))
 
     def test_both_secrets_go_through_the_one_secret_helper(self):

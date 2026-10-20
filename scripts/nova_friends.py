@@ -828,6 +828,7 @@ def fetch(cur, cfg, days):
     cur.execute(f"""SELECT text, created_at, metadata FROM memories
                     WHERE created_at > now() - make_interval(days => %s)
                       AND coalesce(metadata->>'privacy', 'public') NOT IN ('private', 'local-only')
+                      AND NOT metadata ?| array['supersedes', 'skipping_needle']   -- re-transcribed old video / loop junk
                       AND (metadata->>'pipeline' = 'yt_subs_audio'
                            OR metadata->>'source_file' LIKE '%%/videos/youtube/%%')
                       AND {NORM_SQL} = ANY(%s)
