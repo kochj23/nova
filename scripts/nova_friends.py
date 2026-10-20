@@ -254,7 +254,8 @@ def belief_sources(oc=None):
     shared = tuple(r["name"] for r in rows if r["topic_only"] or r["owned_by_section"])
     _BELIEF = {"channels": tuple(r["name"] for r in rows if r["name"] not in shared), "shared": shared,
                "capped": (tuple(r["name"] for r in rows if r["nrm"]), NRM_MAX),
-               "family_of": {norm(r["name"]): r["family"] for r in rows}, "families": families, "rows": rows}
+               "family_of": {norm(r["name"]): r["family"] for r in rows},
+               "tradition_of": {norm(r["name"]): r["tradition"] for r in rows}, "families": families, "rows": rows}
     return _BELIEF
 
 
@@ -264,6 +265,136 @@ def apply_belief_sources(cfg, oc=None):
     cfg.update(channels=b["channels"], shared_channels=b["shared"], capped_channels=b["capped"],
                family_of=b["family_of"])
     return cfg
+
+
+# ── Theme days (Jordan 2026-10-19: "an overall story ... with supporting and disagreeing viewpoints of the various
+# religions. Not all the time but about half the time. Pick a random topic and go from there.") ───────────────
+# About half the days (a coin per date, never three of a kind in a row) Belief is ONE essay on a Big Question from
+# nova_ops.belief_themes, built from material across every family and any date, instead of the day's roundup.
+THEME_EPOCH = "2026-10-01"          # the streak rule is replayed from here, so a date's answer never changes
+THEME_REPEAT_DAYS = 30              # a theme is not reused within this many days
+THEME_LOOKBACK_DAYS = 365           # theme material may come from any video ingested in the last year
+THEME_MIN_TRADITIONS = 3            # fewer traditions with material -> roundup that day (logged)
+THEME_PASSAGES = 3
+
+
+def _theme_coin(day):
+    import hashlib
+    return int(hashlib.sha256(f"belief-theme:{day}".encode()).hexdigest(), 16) % 2 == 1
+
+
+def is_theme_day(day):
+    """True on theme days: a coin per date, flipped whenever it would make a third theme (or roundup) day in a
+    row. Deterministic — replayed from THEME_EPOCH."""
+    from datetime import date, timedelta
+    d, cur = date.fromisoformat(day[:10]), date.fromisoformat(THEME_EPOCH)
+    if d < cur:
+        return _theme_coin(d.isoformat())
+    hist = []
+    while cur <= d:
+        v = _theme_coin(cur.isoformat())
+        if len(hist) >= 2 and hist[-1] == hist[-2] == v:
+            v = not v
+        hist.append(v)
+        cur += timedelta(days=1)
+    return hist[-1]
+
+
+def pick_theme(oc, today, want=None):
+    """{theme, question, keywords}: `want` if given, else random (seeded by date) among the least-used half of the
+    active themes not used in THEME_REPEAT_DAYS; if all were used recently, the one used longest ago."""
+    import random
+    oc.execute("""SELECT theme, question, keywords, last_used, times_used FROM belief_themes WHERE active
+                  ORDER BY last_used NULLS FIRST, times_used, theme""")
+    rows = [dict(zip(("theme", "question", "keywords", "last_used", "times_used"), r)) for r in oc.fetchall()]
+    if want:
+        return next((r for r in rows if r["theme"] == want), None)
+    from datetime import date, timedelta
+    cutoff = date.fromisoformat(today[:10]) - timedelta(days=THEME_REPEAT_DAYS)
+    fresh = [r for r in rows if r["last_used"] is None or r["last_used"] <= cutoff]
+    if not fresh:
+        return rows[0] if rows else None
+    pool = fresh[:max(5, len(fresh) // 2)]   # least-recently-used half
+    return random.Random(f"belief-theme-pick:{today}").choice(pool)
+
+
+def mark_theme_used(oc, theme, today):
+    oc.execute("UPDATE belief_themes SET last_used = %s, times_used = times_used + 1 WHERE theme = %s",
+               (today[:10], theme))
+
+
+def theme_regex(keywords):
+    """Postgres ARE whole-word alternation for a theme's keywords."""
+    return r"\m(" + "|".join(re.escape(k) for k in keywords) + r")\M"
+
+
+def theme_material(cur, cfg, keywords, days=THEME_LOOKBACK_DAYS):
+    """Belief videos from any date whose transcript chunks mention the theme, best-matching first, dealt
+    round-robin by family and NRM-capped like a roundup. Only the matching chunks are kept as each video's text."""
+    shared = {norm(c) for c in cfg.get("shared_channels", ())}
+    keys = sorted({norm(c) for c in cfg["channels"]} | shared)
+    cur.execute(f"""/* theme_material */ SELECT text, created_at, metadata FROM memories
+                    WHERE created_at > now() - make_interval(days => %s)
+                      AND coalesce(metadata->>'privacy', 'public') NOT IN ('private', 'local-only')
+                      AND metadata->>'pipeline' = 'yt_subs_audio' AND {NORM_SQL} = ANY(%s) AND text ~* %s
+                    ORDER BY created_at DESC""", (days, keys, theme_regex(keywords)))
+    rx = re.compile(r"\b(?:" + "|".join(re.escape(k) for k in keywords) + r")\b", re.I)
+    vrows = []
+    for text, created, md in cur.fetchall():
+        md = dict(md or {})
+        if BANNED.search(text or "") or BANNED.search(md.get("title") or ""):
+            continue
+        md["channel"] = md.get("channel") or md.get("show")
+        vrows.append((text, created, md))
+    videos = group_videos(vrows, VID_PER, len(vrows))
+    videos = [v for v in videos if norm(v["channel"] or "") not in shared
+              or is_belief_topic(f"{v['title']} {v.get('text', '')[:3000]}")]
+    for v in videos:
+        v["_hits"] = len({m.group(0).lower() for m in rx.finditer(f"{v['title']} {v.get('text', '')}")})
+    videos.sort(key=lambda v: v["_hits"], reverse=True)
+    capped, cap = cfg.get("capped_channels", ((), 0))
+    capped, kept, n = {norm(c) for c in capped}, [], 0
+    for v in videos:
+        if norm(v["channel"] or "") in capped:
+            if n >= cap:
+                continue
+            n += 1
+        kept.append(v)
+    videos = round_robin(kept, cfg.get("family_of", {}))[:VID_MAX] if cfg.get("family_of") else kept[:VID_MAX]
+    for v in videos:
+        v.pop("_hits", None)
+    return videos
+
+
+def traditions_in(videos, tradition_of):
+    """Base traditions ('Islam', not 'Islam (Shia)') with at least one video."""
+    return sorted({tradition_of[norm(v["channel"] or "")].split(" (")[0] for v in videos
+                   if norm(v["channel"] or "") in tradition_of})
+
+
+def theme_context(name, question, week, words_, cap, rules):
+    """The theme-day writing brief: one narrative on the question, agreement and disagreement (between and
+    inside traditions), the skeptic's view, a synthesis that never rules on which is true."""
+    return (f"You are writing '{name}', Nova's THEME-DAY issue for {week} — THE BIG QUESTION: '{question}'. This is "
+            "NOT a roundup of the day's videos: it is ONE narrative essay on that question, built from the transcripts "
+            "below (many traditions, many dates). Structure it with ## headers, in this order: "
+            "1) The question — why people have asked it, in a short opening. "
+            "2) How the traditions answer — only where the material speaks; name the channel and the video for every "
+            "claim. "
+            "3) Where they AGREE — the real common ground, said explicitly. "
+            "4) Where they DISAGREE — between traditions AND inside them (Sunni and Shia, Orthodox and Reform "
+            "Judaism, Theravada and Mahayana, Catholic and Protestant, Latter-day Saints and Community of Christ...) "
+            "whenever the material shows it. "
+            "5) The skeptic's and non-theist view, from the material. "
+            "6) Nova's closing synthesis — what the comparison reveals about the question; NO verdict on which "
+            f"tradition is true and no ranking of doctrines. Give real depth: {words_} words (under {cap}). {rules}\n"
+            "First line exactly: TITLE: <anything — it is replaced>")
+
+
+THEME_TOP_TASK = (" TODAY IS A THEME DAY on the question '{question}': choose TWO passages from DIFFERENT traditions "
+                  "in the library that answer it differently (one may be a non-theist philosopher). Quote each EXACTLY "
+                  "as its own markdown blockquote, each followed on its own line by its citation; then put both in "
+                  "context and say plainly where they agree and where they part. If only one passage fits, use one.")
 
 
 def belief_coverage(oc, mc, days=7):
@@ -946,10 +1077,31 @@ def _bible_verses(text):
 
 
 def verse_ok(block, items):
-    """Fail-closed check for Text in Context: the block's blockquote must be a word-for-word run from
-    ONE scripture passage, the block must carry that passage's citation stem, and a Bible citation's
-    verse numbers must contain the quoted words. -> (ok, reason)."""
-    quote_lines = [ln[1:].strip() for ln in (block or "").splitlines() if ln.startswith(">")]
+    """Fail-closed check for Text in Context: EVERY blockquote in the block (a theme day may contrast two) must be
+    a word-for-word run from one scripture passage, the block must carry that passage's citation stem, and a
+    Bible citation's verse numbers must contain the quoted words. -> (ok, reason: the cited titles joined ' + ')."""
+    groups, cur = [], []
+    for ln in (block or "").splitlines():
+        if ln.startswith(">"):
+            cur.append(ln[1:].strip())
+        elif cur:
+            groups.append(cur)
+            cur = []
+    if cur:
+        groups.append(cur)
+    if not groups:
+        return False, "no quoted passage"
+    cites = []
+    for g in groups:
+        ok, why = _quote_ok(g, block, items)
+        if not ok:
+            return False, why
+        if why not in cites:
+            cites.append(why)
+    return True, " + ".join(cites)
+
+
+def _quote_ok(quote_lines, block, items):
     quote = " ".join(q for q in quote_lines if q and not re.match(r"^[—–-]", q))
     quote = re.sub(r"[—–-]\s*[A-Z][^\n]*\d[^\n]*$", "", quote).strip()   # trailing attribution on the quote line
     fq = _flat(quote)
@@ -1029,14 +1181,16 @@ EXTRA_SOURCE_HEADINGS = {"military": "This Day in History", "history": "This Day
                          "belief": "Scripture", "mystery": "Library"}
 
 
-def top_block(subj, videos, arts, recipes=(), food_rules=None, extra=()):
+def top_block(subj, videos, arts, recipes=(), food_rules=None, extra=(), theme=None):
     """The featured block for this subject ("" = omitted, fail closed). Food needs its house rules
     (food_rules) and a block free of every private term, or there is no block. `extra` = the
     military history notes / mystery library excerpts (linkable grounding, labelled)."""
     heading, task = FEATURES[subj]
     if subj in ("military", "history"):
         task = task.replace("{today}", month_day())
-    if subj == "belief":
+    if subj == "belief" and theme:
+        task += THEME_TOP_TASK.format(question=theme["question"])
+    elif subj == "belief":
         fam, srcs = focus_family()
         task += (f" BALANCE: today's focus is the {fam} traditions — " +
                  ("choose a passage from them when one connects at all, even if the day's videos are mostly about "
@@ -1104,6 +1258,9 @@ def main():
     ap.add_argument("--subject", choices=sorted(SUBJECTS), required=True)
     ap.add_argument("--days", type=int, default=1)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--mode", choices=("auto", "theme", "roundup"), default="auto",
+                    help="belief: auto = theme on is_theme_day() dates, roundup otherwise")
+    ap.add_argument("--theme", help="belief: this belief_themes.theme instead of a random pick (implies --mode theme)")
     a = ap.parse_args()
     cfg = SUBJECTS[a.subject]
     name, section, noun = cfg["name"], cfg["section"], cfg["noun"]
@@ -1111,7 +1268,9 @@ def main():
     mc = _connect(MEM_DSN).cursor()
     if a.subject == "belief":
         try:
-            oc = _connect(OPS_DSN, attempts=2).cursor()
+            ops = _connect(OPS_DSN, attempts=2)
+            ops.autocommit = True   # mark_theme_used() writes through this cursor
+            oc = ops.cursor()
         except Exception as e:  # noqa: BLE001 — belief_sources() logs the fallback loudly
             oc = None
             log(f"ERROR nova_ops unreachable for belief_sources ({e})")
@@ -1122,8 +1281,24 @@ def main():
                     log(line)
             except Exception as e:  # noqa: BLE001 — the coverage report never sinks an issue
                 log(f"coverage report failed ({e})")
-    videos, arts = fetch(mc, cfg, a.days)
-    if cfg.get("widen") and a.days == 1 and len(videos) + len(arts) < THIN_MIN:
+    theme = None
+    if a.subject == "belief" and (a.theme or a.mode == "theme" or (a.mode == "auto" and is_theme_day(nj.today_str()))):
+        theme = pick_theme(oc, nj.today_str(), a.theme) if oc is not None else None
+        if theme is None:
+            log("theme day: no theme available (belief_themes unreadable or unknown --theme) — roundup instead")
+        else:
+            videos, arts = theme_material(mc, cfg, theme["keywords"]), []
+            trads = traditions_in(videos, belief_sources()["tradition_of"])
+            fams = sorted({cfg["family_of"].get(norm(v["channel"] or ""), "?") for v in videos})
+            log(f"theme day: '{theme['question']}' ({theme['theme']}) — {len(videos)} videos, "
+                f"{len(trads)} traditions ({', '.join(trads)}), {len(fams)} families ({', '.join(fams)})")
+            if len(trads) < THEME_MIN_TRADITIONS:
+                log(f"theme day FALLBACK: only {len(trads)} traditions have material on '{theme['theme']}' "
+                    f"(need {THEME_MIN_TRADITIONS}) — roundup instead")
+                theme = None
+    if theme is None:
+        videos, arts = fetch(mc, cfg, a.days)
+    if theme is None and cfg.get("widen") and a.days == 1 and len(videos) + len(arts) < THIN_MIN:
         log(f"{name}: only {len(videos)} videos today — looking back {WIDEN_DAYS} days")
         videos, arts = fetch(mc, cfg, WIDEN_DAYS)
     log(f"{name}: {len(videos)} videos, {len(arts)} articles in the window")
@@ -1154,7 +1329,8 @@ def main():
     stance = stance_for(a.subject, src)
     if stance:
         rules += "\n\n" + stance
-    news_ctx = (f"You are writing '{name}', Nova's {period} {noun} roundup {span}. Voice: Nova — sharp, funny, "
+    news_ctx = theme_context(name, theme["question"], week, news_w, cap_w, rules) if theme else (
+                f"You are writing '{name}', Nova's {period} {noun} roundup {span}. Voice: Nova — sharp, funny, "
                 f"opinionated, but the {noun} content is the point. Open with a short intro to the {unit}, then "
                 f"organise by STORY, not by channel: {cfg['beats']}. Where several sources covered the same "
                 f"thing, compare their takes. Give real depth: {news_w} words (the whole issue must stay under "
@@ -1166,6 +1342,8 @@ def main():
     if not body:
         log("news generation produced nothing — aborting")
         return 1
+    if theme:   # theme days carry their own title format, distinct from the roundups
+        title = f"{name} — The Big Question: {theme['question']}"
 
     if words(body) < min_words:
         more_ctx = (f"Continue '{name}' with a 'Deeper Cuts' part: {more_w} more words on the sources below "
@@ -1192,12 +1370,13 @@ def main():
         elif a.subject == "history":
             extra = fetch_history(mc, military=False)
         elif a.subject == "belief":
-            extra = fetch_scripture(mc, videos)
+            lead = [{"title": " ".join(theme["keywords"]) * 2, "text": theme["question"]}] if theme else []
+            extra = fetch_scripture(mc, lead + videos, n=SCRIPTURE_MAX + (THEME_PASSAGES if theme else 0))
         elif a.subject == "mystery":
             extra = fetch_lore(mc, videos)
     except Exception as e:  # noqa: BLE001
         log(f"top-block library unavailable ({e})")
-    block = top_block(a.subject, videos, arts, recipes, food_rules, extra)
+    block = top_block(a.subject, videos, arts, recipes, food_rules, extra, theme=theme)
     if not title or len(title) < 8:
         title = f"{name} — {week}" if daily else f"{name} — Week Ending {week}"
     title = title if title.lower().startswith(name.lower()) else f"{name}: {title}"
@@ -1216,9 +1395,9 @@ def main():
     if linked:
         body += "\n### Recipe\n\n" + source_list(linked) + "\n"
     linked = [r for r in extra if r["url"] and r["url"] in block]
-    if a.subject == "belief" and block:   # the verified passage is listed even when its page is not linked
+    if a.subject == "belief" and block:   # the verified passages are listed even when their pages are not linked
         ok, cite = verse_ok(block, extra)
-        linked = [r for r in extra if (ok and r["title"] == cite) or (r["url"] and r["url"] in block)][:2]
+        linked = [r for r in extra if (ok and r["title"] in cite.split(" + ")) or (r["url"] and r["url"] in block)][:3]
     if linked:
         body += "\n### " + EXTRA_SOURCE_HEADINGS.get(a.subject, "Library") + "\n\n" + \
             source_list([{k: v for k, v in r.items() if not k.startswith("_")} for r in linked]) + "\n"
@@ -1240,11 +1419,17 @@ def main():
                                 width=1024, height=768, section=section)
     except Exception as e:
         log(f"image failed (non-fatal): {e}")
-    if not nj.publish_hugo(title, body, section, [*cfg["tags"], period],
-                           cfg["desc"].format(period=period, span=unit),
-                           image_path=img, emoji=cfg["emoji"], profile=None):
+    front = None
+    if a.subject == "belief":
+        front = {"edition": "theme", "theme": theme["theme"]} if theme else {"edition": "roundup"}
+    desc = (f"The Big Question — {theme['question']} How the world's traditions, their scholars and their skeptics "
+            "answer it, where they agree and where they part." if theme else cfg["desc"].format(period=period, span=unit))
+    if not nj.publish_hugo(title, body, section, [*cfg["tags"], "theme" if theme else period], desc,
+                           image_path=img, emoji=cfg["emoji"], profile=None, extra_front=front):
         log("NOT PUBLISHED — quality guard rejected")
         return 1
+    if theme and oc is not None:
+        mark_theme_used(oc, theme["theme"], nj.today_str())
     push = nj.git_push(section, title)
     nj.notify_slack(section, f"{cfg['emoji']} {title}", f"{name} is out ({words(body)} words, {len(videos)} videos, "
                     f"{len(arts)} articles). Push: {push}")

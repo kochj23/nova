@@ -1417,8 +1417,12 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
                  stable_slug: str | None = None,
                  cited_memory_ids: list | None = None,
                  sources: str | None = None, profile: str | None = None,
-                 min_words: int | None = None, show_time: bool = True) -> bool:
+                 min_words: int | None = None, show_time: bool = True,
+                 extra_front: dict | None = None) -> bool:
     """Write a Hugo markdown post and copy cover image.
+
+    extra_front: additional front-matter fields (JSON-encoded scalars), e.g. Belief and Friends' theme-day
+    {"edition": "theme", "theme": "afterlife"}.
 
     stable_slug: if set, the post uses a FIXED filename ("<slug>.md", no date prefix) so
     repeated runs overwrite the same evergreen article instead of creating a new dated post.
@@ -1567,6 +1571,9 @@ categories: ["{section}"]
 tags: {tags_yaml}
 description: "{description.replace('"', "'")}"
 """
+    for k, v in (extra_front or {}).items():
+        if re.fullmatch(r"[a-z_]{1,32}", k) and isinstance(v, (str, int, float, bool)):
+            front_matter += f"{k}: {json.dumps(v)}\n"
     if hugo_image:
         front_matter += f'cover:\n  image: "{hugo_image}"\n  alt: "{safe_title}"\n  relative: false\n'
     front_matter += "---\n\n"

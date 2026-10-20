@@ -1175,3 +1175,105 @@ class TestSoundNote(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ── Belief theme days (Jordan 2026-10-19: one Big Question about half the time) ───────────────────────────
+THEME = {"theme": "afterlife", "question": "What Happens When We Die?", "keywords": ["afterlife", "heaven", "rebirth"],
+         "last_used": None, "times_used": 0}
+
+
+def tvids(chans):
+    return [{"channel": c, "title": f"{c} on the afterlife", "url": f"https://www.youtube.com/watch?v={i:011d}",
+             "date": "2026-10-01", "text": "heaven and rebirth and the afterlife " * 20} for i, c in enumerate(chans)]
+
+
+class TestThemeDays(unittest.TestCase):
+    def test_about_half_the_days_and_never_three_in_a_row(self):
+        from datetime import date, timedelta
+        seq = "".join("T" if m.is_theme_day((date(2026, 10, 1) + timedelta(days=i)).isoformat()) else "r"
+                      for i in range(365))
+        self.assertNotIn("TTT", seq)
+        self.assertNotIn("rrr", seq)
+        self.assertTrue(0.4 <= seq.count("T") / len(seq) <= 0.6)
+        self.assertEqual(m.is_theme_day("2026-11-05"), m.is_theme_day("2026-11-05"))   # deterministic
+
+    def test_pick_theme_skips_recent_and_prefers_least_used(self):
+        from datetime import date
+
+        class C:
+            def __init__(self, rows): self.rows = rows
+            def execute(self, sql, params=None): pass
+            def fetchall(self): return self.rows
+        recent = ("fasting", "Fasting?", ["fast", "lent", "ramadan"], date(2026, 10, 10), 3)
+        old = ("afterlife", "Death?", ["heaven", "hell", "rebirth"], date(2026, 8, 1), 1)
+        never = ("creation", "Creation?", ["genesis", "creation", "cosmos"], None, 0)
+        picks = {m.pick_theme(C([never, old, recent]), f"2026-10-{d:02d}")["theme"] for d in range(19, 31)}
+        self.assertNotIn("fasting", picks)                        # used 9 days ago
+        self.assertTrue(picks <= {"creation", "afterlife"})
+        self.assertEqual(m.pick_theme(C([recent]), "2026-10-19")["theme"], "fasting")   # all recent: oldest
+        self.assertEqual(m.pick_theme(C([never, old]), "2026-10-19", want="afterlife")["theme"], "afterlife")
+
+    def _run_theme(self, chans, argv=("--subject", "belief", "--mode", "theme")):
+        seen = []
+
+        def llm(system, user, **k):
+            seen.append((system, user))
+            return "TITLE: ignored\n## The question\n" + "word " * 2500
+        with patch.object(m, "pick_theme", return_value=dict(THEME)), \
+                patch.object(m, "theme_material", return_value=tvids(chans)), \
+                patch.object(m, "mark_theme_used") as used:
+            rc, nj, _ = run_main(list(argv), llm=llm)
+        return rc, nj, seen, used
+
+    def test_theme_day_issue_structure_title_and_front_matter(self):
+        rc, nj, seen, used = self._run_theme(["Yaqeen Institute", "Chabad.org", "Plum Village App",
+                                              "Vedanta Society of New York", "Alex O'Connor"])
+        self.assertEqual(rc, 0)
+        a = nj.publish_hugo.call_args
+        self.assertEqual(a.args[0], "Belief and Friends — The Big Question: What Happens When We Die?")
+        self.assertEqual(a.kwargs["extra_front"], {"edition": "theme", "theme": "afterlife"})
+        system = seen[0][0]
+        for need in ("THE BIG QUESTION", "Where they AGREE", "Where they DISAGREE", "inside them", "Sunni and Shia",
+                     "skeptic's and non-theist view", "NO verdict on which", "historian and anthropologist"):
+            self.assertIn(need, system)
+        used.assert_called_once()
+
+    def test_too_few_traditions_falls_back_to_roundup(self):
+        rc, nj, seen, used = self._run_theme(["Yaqeen Institute", "Yasir Qadhi"])
+        self.assertEqual(rc, 0)
+        self.assertFalse(nj.publish_hugo.call_args.args[0].startswith("Belief and Friends — The Big Question"))
+        self.assertEqual(nj.publish_hugo.call_args.kwargs["extra_front"], {"edition": "roundup"})
+        self.assertTrue(any("FALLBACK" in str(c) for c in nj.log.call_args_list))
+        used.assert_not_called()
+        self.assertNotIn("THE BIG QUESTION", seen[0][0])
+
+    def test_roundup_days_never_pick_a_theme(self):
+        with patch.object(m, "pick_theme") as pick:
+            rc, nj, _ = run_main(["--subject", "belief", "--mode", "roundup"])
+        pick.assert_not_called()
+        self.assertEqual(nj.publish_hugo.call_args.kwargs["extra_front"], {"edition": "roundup"})
+
+    def test_two_contrasting_passages_verified_each(self):
+        items = [{"_source": "bible", "_md": PSALM_MD, "text": PSALM, "title": "Psalms 23:1-4 (KJV)"},
+                 {"_source": "buddhism", "_md": DHP_MD, "text": DHP, "title": "Dhammapada — Chapter 1"}]
+        two = ("> he leadeth me beside the still waters.\n\nPsalms 23:2 (KJV)\n\n"
+               "> All that we are is the result of what we have thought\n\n— Dhammapada, ch. 1\n\nThey part here.")
+        ok, why = m.verse_ok(two, items)
+        self.assertTrue(ok)
+        self.assertEqual(why, "Psalms 23:1-4 (KJV) + Dhammapada — Chapter 1")
+        bad = two.replace("All that we are is the result", "All that we are is the outcome")
+        self.assertFalse(m.verse_ok(bad, items)[0])   # one invented quote sinks the block
+
+    def test_theme_material_query_is_bounded_and_parameterised(self):
+        cur = Cur([], [])
+        m.theme_material(cur, m.SUBJECTS["belief"], ["afterlife", "heaven's gate"])
+        sql, params = cur.calls[0]
+        self.assertIn("theme_material", sql)
+        self.assertEqual(params[0], m.THEME_LOOKBACK_DAYS)
+        self.assertEqual(params[2], m.theme_regex(["afterlife", "heaven's gate"]))
+        self.assertTrue(params[2].startswith(r"\m(") and params[2].endswith(r")\M"))
+
+    def test_publish_hugo_takes_extra_front(self):
+        import inspect
+        import nova_journal
+        self.assertIn("extra_front", inspect.signature(nova_journal.publish_hugo).parameters)
