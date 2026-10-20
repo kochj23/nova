@@ -962,7 +962,7 @@ class TestHistoryBelief(unittest.TestCase):
         self.assertIn("nontheism", m.SCRIPTURE_SOURCES)
 
     def test_belief_scope_is_balanced(self):
-        feeds = {m.norm(c) for c in m.SUBJECTS["belief"]["channels"]}
+        feeds = {m.norm(c) for c in (*m.SUBJECTS["belief"]["channels"], *m.SUBJECTS["belief"]["shared_channels"])}
         for n in ("ReligionForBreakfast", "Dan McClellan", "Alex O'Connor", "Bishop Robert Barron"):
             self.assertIn(m.norm(n), feeds, n)   # scholars, a skeptic and the theological counter-case
         self.assertFalse({m.norm(c) for c in m.BELIEF_DIRECT_CHANNELS} & {m.norm(c) for c in m.BELIEF_CHANNELS})
