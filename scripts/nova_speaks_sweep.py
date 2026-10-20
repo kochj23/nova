@@ -213,10 +213,14 @@ def reap(cur, hosts):
             post_approval(f"⚠️ Nova Speaks render FAILED for *{title}* on {hname} — log `{lp}`")
             log(f"failed: {slug} on {hname}")
 
+UPLOAD_PY = "/Volumes/Data/AI/youtube-up/venv/bin/python"   # nova_speaks_upload.py's shebang interpreter
+
+
 def upload(slug):
     """Private YouTube upload in Jordan's title format (nova_speaks_upload.py). Returns the video id or None."""
     try:
-        r = subprocess.run([str(SCRIPTS / "nova_speaks_upload.py"), "--slug", slug], capture_output=True, text=True, timeout=1800)
+        # run the venv interpreter explicitly: launchd cannot exec a script that lives on the NAS share (TCC, Errno 13)
+        r = subprocess.run([UPLOAD_PY, str(SCRIPTS / "nova_speaks_upload.py"), "--slug", slug], capture_output=True, text=True, timeout=1800)
         vid = (r.stdout.strip().splitlines() or [""])[-1]
         if r.returncode == 0 and re.fullmatch(r"[\w-]{11}", vid): return vid
         log(f"upload failed for {slug}: {(r.stderr or r.stdout)[-200:].strip()}")
@@ -266,12 +270,29 @@ def dispatch(cur, hosts):
                 own = [root / "static/images" / section / f"{slug}.webp"] + ([root / "static" / fm.group(1).lstrip("/")] if fm else [])
                 covers += [c for c in own if c.exists() and c.name not in {x.name for x in covers}]
             for cv in covers: copy_to(h, str(cv), f"{h['journal_dir']}/static/images/{section}/{cv.name}")
+            # satire pool (Jordan 2026-10-19): relevance + least-recently-used picks, none from the last 10 videos;
+            # the renderer falls back to section covers when this is empty
+            extra = ""
+            if section != "art":
+                try:
+                    import nova_satire
+                    md = pathlib.Path(art).read_text()
+                    picks = nova_satire.pick_for_video(slug, md, nova_satire.stills_needed(len(md.split())))
+                    rimgs = []
+                    for pth in picks:
+                        dst = f"{h['tts_home']}/satire-pool/{os.path.basename(pth)}"
+                        copy_to(h, pth, dst); rimgs.append(dst)
+                    if rimgs:
+                        extra = " --images " + " ".join(shlex.quote(x) for x in rimgs)
+                    log(f"satire picks for {slug}: {len(rimgs)}")
+                except Exception as e:
+                    log(f"satire picks skipped ({e}) — section covers only")
             for f in ("nova_speaks.py", "nova_speaks_narration.py"):              # keep the renderer + narration stage current
                 copy_to(h, str(SCRIPTS / f), f"{h['scripts_dir']}/{f}")
             lp = f"{h['tts_home']}/logs/{slug}.log"
             inner = (f"cd {shlex.quote(h['scripts_dir'])} && exec env TTS_HOME={shlex.quote(h['tts_home'])} COQUI_TOS_AGREED=1 "
                      f"NOVA_SPEAKS_OUT={shlex.quote(h['out_dir'])} {h['env'] or ''} {shlex.quote(h['python'])} nova_speaks.py "
-                     f"--article {shlex.quote(rart)} --url {shlex.quote(url)}")
+                     f"--article {shlex.quote(rart)} --url {shlex.quote(url)}{extra}")
             # fully detached: nothing in the background job keeps the ssh channel open, so this returns at once with the pid
             cmd = (f"mkdir -p {shlex.quote(os.path.dirname(lp))}; nohup bash -c {shlex.quote(inner)} > {shlex.quote(lp)} 2>&1 < /dev/null & echo $!")
             rc, out = sh(h, cmd, timeout=120)

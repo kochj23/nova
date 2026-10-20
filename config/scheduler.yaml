@@ -1391,6 +1391,20 @@ tasks:
     overlap: skip
     group: llm
 
+  satire_pool:                       # 2026-10-19 (Jordan): >=100 satirical images for Nova Speaks videos (nova_satire.py SCENES x STYLES); local ComfyUI only, yields whenever anything else is queued; resumable (PG satire_images), flock single-instance; a no-op once the pool is full
+    script: nova_satire.py
+    args: ["--pool", "110", "--budget", "1700"]
+    schedule: every 30m
+    timeout: 1800
+    overlap: skip
+    gpu_heavy: true
+  satire_articles:                   # 2026-10-19 (Jordan): one tailored satirical image inline in every new article (queued by publish_hugo -> satire_article_queue), then a 7-day backfill once the pool has 100; commits explicit paths under the journal push lock
+    script: nova_satire.py
+    args: ["--articles", "--days", "7", "--limit", "10", "--budget", "1500"]
+    schedule: every 30m
+    timeout: 1800
+    overlap: skip
+    gpu_heavy: true
   fix_missing_images:                # 2026-10-19 (Jordan: covers LOCAL only, OpenRouter retired for images). Backfills any journal post that published without a cover (or with a missing/0-byte one) on the Studio's ComfyUI FLUX.1 dev; explicit-path commit under the journal push lock. Big Brother also runs it hourly with a 540 s budget, but BB died 2026-10-16 (EX_CONFIG) and no cover was backfilled for 3 days — this keeps it scheduler-owned. flock = single instance.
     script: nova_fix_missing_images.py
     args: ["--limit", "12", "--budget", "1700"]

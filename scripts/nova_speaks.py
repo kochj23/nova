@@ -204,10 +204,47 @@ def wrap(s, n):
     return out
 
 
-def clip(img, dur, out, overlay=None, zoom_in=True):
+MOTIONS = ("in-center", "out-center", "pan-right", "pan-left", "in-topleft", "in-bottomright", "pan-up", "pan-down")
+
+
+def motion_expr(motion, frames):
+    """Ken Burns variants (Jordan 2026-10-19: the same move every shot is boring). Returns (z, x, y) zoompan exprs."""
+    zin, zout = "min(zoom+0.0006,1.18)", "if(eq(on,1),1.18,max(zoom-0.0006,1.0))"
+    cx, cy = "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
+    f = max(1, frames)
+    return {
+        "in-center": (zin, cx, cy),
+        "out-center": (zout, cx, cy),
+        "pan-right": ("1.15", f"(iw-iw/zoom)*on/{f}", cy),
+        "pan-left": ("1.15", f"(iw-iw/zoom)*(1-on/{f})", cy),
+        "in-topleft": (zin, "0", "0"),
+        "in-bottomright": (zin, "iw-iw/zoom", "ih-ih/zoom"),
+        "pan-up": ("1.15", cx, f"(ih-ih/zoom)*(1-on/{f})"),
+        "pan-down": ("1.15", cx, f"(ih-ih/zoom)*on/{f}"),
+    }.get(motion, (zin, cx, cy))
+
+
+def plan_shots(n_segments, n_stills, rng=random):
+    """Which still each paragraph shows: holds of 1-3 paragraphs (varied timing), walking the picked stills in
+    order (the picker already ranked them), never the same still twice in a row. -> [(still_index, motion)]"""
+    plan, s, i, last_motion = [], 0, 0, None
+    while i < n_segments:
+        hold = rng.choice((1, 1, 2, 2, 3))
+        motion = rng.choice([m for m in MOTIONS if m != last_motion])
+        for _ in range(min(hold, n_segments - i)):
+            plan.append((s % max(1, n_stills), motion))
+            i += 1
+        last_motion = motion
+        s += 1
+        if n_stills > 1 and s % n_stills == 0 and plan and plan[-1][0] == 0:
+            s += 1                                   # wrap-around never repeats the still just shown
+    return plan
+
+
+def clip(img, dur, out, overlay=None, zoom_in=True, motion=None):
     frames = max(2, int(dur * 25))
-    z = f"min(zoom+0.0006,1.18)" if zoom_in else f"if(eq(on,1),1.18,max(zoom-0.0006,1.0))"
-    vf = f"scale=2400:1350,zoompan=z='{z}':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={W}x{H}:fps=25,format=yuv420p"
+    z, x, y = motion_expr(motion or ("in-center" if zoom_in else "out-center"), frames)
+    vf = f"scale=2400:1350,zoompan=z='{z}':d={frames}:x='{x}':y='{y}':s={W}x{H}:fps=25,format=yuv420p"
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-loop", "1", "-i", img]
     if overlay:
         cmd += ["-i", overlay, "-filter_complex", f"[0:v]{vf}[v];[v][1:v]overlay=0:0:format=auto,format=yuv420p[o]", "-map", "[o]"]
@@ -306,12 +343,20 @@ def main():
     clips = []
     t_card = str(work / "clip_title.mp4"); clip(str(work / "title.png"), 4.0, t_card, zoom_in=False); clips.append(t_card)
     last_h = None
+    shots = plan_shots(len(segs), len(stills))
+    groups = []                                   # one continuous clip per held still (no jump cut mid-hold)
     for i, (h, wav, dur) in enumerate(segs):
         if h != last_h:
             lower_third(h, str(work / f"lt{i}.png")); last_h = h
         lt = str(work / f"lt{[j for j in range(i+1) if os.path.exists(work / f'lt{j}.png')][-1]}.png")
-        c = str(work / f"clip{i:04d}.mp4")
-        clip(stills[i % len(stills)], dur + 0.3, c, overlay=lt, zoom_in=(i % 2 == 0)); clips.append(c)
+        key = (shots[i], lt)
+        if groups and groups[-1][0] == key:
+            groups[-1][1] += dur + 0.3
+        else:
+            groups.append([key, dur + 0.3])
+    for gi, (((si, motion), lt), gdur) in enumerate(groups):
+        c = str(work / f"clip{gi:04d}.mp4")
+        clip(stills[si], gdur, c, overlay=lt, motion=motion); clips.append(c)
     e_card = str(work / "clip_end.mp4"); clip(str(work / "end.png"), 6.0, e_card, zoom_in=False); clips.append(e_card)
     open(work / "clips.txt", "w").write("".join(f"file '{c}'\n" for c in clips))
     silent = str(work / "video_silent.mp4")

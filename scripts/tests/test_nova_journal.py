@@ -66,7 +66,8 @@ def _lazy_stubs(weather="*Weather: 72F, clear*\n\n"):
     am = types.ModuleType("nova_articles_to_memory"); am.remember_article = MagicMock(return_value=True)
     cc = types.ModuleType("nova_claude_code"); cc.claude_env = MagicMock(return_value={"HOME": "/tmp"})
     nn = types.ModuleType("nova_notify"); nn.notify = MagicMock(return_value=True)
-    return {"nova_weather_blurb": wb, "nova_articles_to_memory": am, "nova_claude_code": cc, "nova_notify": nn,
+    sa = types.ModuleType("nova_satire"); sa.enqueue_article = MagicMock(return_value=True)   # satire queue hook (2026-10-19)
+    return {"nova_weather_blurb": wb, "nova_articles_to_memory": am, "nova_claude_code": cc, "nova_notify": nn, "nova_satire": sa,
             "nova_config": nj.nova_config}      # the lazy `import nova_config` must resolve to the object the module holds
 
 

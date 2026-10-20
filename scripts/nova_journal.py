@@ -1598,6 +1598,10 @@ description: "{description.replace('"', "'")}"
         remember_article(str(output))
     except Exception as e:
         log(f"article->memory skipped: {e}")
+    try:  # inline satirical image (Jordan 2026-10-19): queued only — nova_satire.py --articles makes it, never slows publishing
+        __import__("nova_satire").enqueue_article(output, section)
+    except Exception as e:
+        log(f"satire enqueue skipped: {e}")
     if cited_memory_ids:
         try:  # provenance invariant: record what this article drew on (non-fatal)
             import psycopg2
