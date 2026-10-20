@@ -86,6 +86,9 @@ class TestHistoryBelief(unittest.TestCase):
         self.assertTrue(ns.is_belief_topic("Is Atheism a Religion? Crash Course Religions"))
         self.assertTrue(ns.is_belief_topic("Gnostic texts and the early Christian church"))
         self.assertFalse(ns.is_belief_topic("Photosynthesis: the light reactions"))
+        for t in ("Sunni and Shia: how Islam split", "Inside a Hasidic synagogue", "Sufi poetry and the hadith",
+                  "Theravada and Mahayana Buddhism", "A gurdwara and the Sikh sangha"):
+            self.assertTrue(ns.is_belief_topic(t), t)
         self.assertFalse(ns.is_belief_topic("Our tech evangelist found the holy grail"))
 
 

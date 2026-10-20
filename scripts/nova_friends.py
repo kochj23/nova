@@ -226,13 +226,29 @@ BELIEF_CHANNELS = (    # Jordan 2026-10-19: every religious channel he follows �
 # a test checks): scholars of religion, a skeptic and the theological counter-case, so no single side owns the
 # section. fetch() already reads them, so each starts feeding the day he follows it; move it up then.
 BELIEF_PENDING_CHANNELS = (
+    # across traditions: scholars, a skeptic, the theological counter-case
     "ReligionForBreakfast", "Let's Talk Religion", "Dan McClellan", "UsefulCharts", "Alex O'Connor",
-    "Bishop Robert Barron", "The Word on Fire Show",
+    "Bishop Robert Barron", "The Word on Fire Show", "Harvard Divinity School", "University of Chicago Divinity School",
+    # Buddhism: secular scholar, Theravada, Zen/Mahayana, Tibetan, a Zen iconoclast
+    "Doug's Dharma", "Buddhist Society of Western Australia", "Plum Village App", "Dalai Lama", "Hardcore Zen",
+    # Hinduism: academic, educator, Vedanta
+    "Oxford Centre for Hindu Studies", "HinduAcademy", "Vedanta Society of New York",
+    # Sikhism / Jainism
+    "Sikh Research Institute (SikhRI)", "Basics of Sikhi", "International School for Jain Studies", "Arihanta Institute",
+    # Taoism (practitioner; Confucianism and Shinto come through the scholars above)
+    "Benebell Wen",
+    # Judaism: historian, explainer, Orthodox, Conservative, Reform, an ex-Hasidic critic
+    "Henry Abramson", "Unpacked", "Chabad.org", "The Jewish Theological Seminary", "The Movement for Reform Judaism",
+    "Frieda Vizel",
+    # Islam: academic/reformist, Sunni scholarship, Sunni traditionalist (Sufi-leaning), Shia
+    "Dr. Javad T. Hashmi", "Yaqeen Institute", "Yasir Qadhi", "Zaytuna College", "Sayed Ammar Nakshawani",
 )
 # Owned by another section (the lists stay disjoint) but also feed Belief, for religion-topic videos only
-# (nova_sections.is_belief_topic): ESOTERICA (Dr. Justin Sledge, academic religious studies; Mystery owns it)
-# and CrashCourse (its Religions series, e.g. #13 "Is Atheism a Religion?"; Science owns it).
-BELIEF_SHARED_CHANNELS = ("ESOTERICA", "CrashCourse")
+# (nova_sections.is_belief_topic): ESOTERICA (Dr. Justin Sledge, academic religious studies; Mystery owns it),
+# CrashCourse (its Religions series, e.g. #13 "Is Atheism a Religion?"; Science), YaleCourses (Christine
+# Hayes' Introduction to the Hebrew Bible; Science), and the History channels' religion episodes.
+BELIEF_SHARED_CHANNELS = ("ESOTERICA", "CrashCourse", "YaleCourses", "History of Everything", "Biographics",
+                          "RealLifeLore")
 # Jordan 2026-10-19: style and health stay unassigned — in NO subject and no pool (a test enforces it).
 UNASSIGNED_CHANNELS = ("GQ", "Real Men Real Style", "Brick and Sole", "Freshhkiicks", "Inkbox", "Doctor Mike",
                        "Dr.Sanders", "Jesse Enkamp")
@@ -278,6 +294,24 @@ GENERAL_HISTORY_SOURCES = ("world_history", "history")
 SCRIPTURE_SOURCES = ("bible", "quran", "buddhism", "hinduism", "sikhism", "taoism", "shinto", "confucianism",
                      "jainism", "zoroastrianism", "egyptian_book_of_the_dead", "books_of_the_dead", "nontheism")
 SCRIPTURE_MAX, SCRIPTURE_CHARS, SCRIPTURE_PER_SOURCE = 5, 1500, 2
+# Balance (Jordan 2026-10-19): the day's videos skew Christian (most religious channels he follows are Catholic),
+# and the picker ranks by word overlap with them — so Text in Context rotates a focus family by date. The
+# focus family's passages are offered first (FAMILY_MIN of them, word-matched if possible) and the task says
+# to prefer one, so over four days every family gets the top block at least once.
+TRADITION_FAMILIES = (
+    ("Abrahamic", ("bible", "quran")),
+    ("Dharmic", ("hinduism", "buddhism", "sikhism", "jainism")),
+    ("East Asian", ("taoism", "confucianism", "shinto")),
+    ("Non-theist and ancient", ("nontheism", "zoroastrianism", "egyptian_book_of_the_dead", "books_of_the_dead")),
+)
+FAMILY_MIN = 2
+
+
+def focus_family(today=None):
+    """(name, sources) of the tradition family Text in Context leans on today; rotates daily by date."""
+    from datetime import date
+    d = date.fromisoformat((today or nj.today_str())[:10])
+    return TRADITION_FAMILIES[d.toordinal() % len(TRADITION_FAMILIES)]
 SCRIPTURE_STOP = {"church", "catholic", "christian", "podcast", "episode", "father", "people", "really", "things",
                   "should", "because", "something", "actually", "question", "answer", "explained", "anything",
                   "everything", "nothing", "little", "always", "believe", "pretty", "having", "talking", "before",
@@ -287,7 +321,10 @@ BELIEF_TONE = ("Stance: a historian and anthropologist of religion, not a believ
                "where traditions — and unbelief — disagree. The religious channels are PRIMARY SOURCES about "
                "believers, never authorities: report them in their own terms ('Catholics believe...', 'the Gita "
                "teaches...', 'Barron argues...'). Keep it balanced — believers, scholars, skeptics and the "
-               "theological counter-arguments to skeptics all get a fair hearing. Respectful and curious; never "
+               "theological counter-arguments to skeptics all get a fair hearing, and so do the world's "
+               "traditions — Abrahamic (Jewish, Christian, Muslim: Sunni, Shia, Sufi), Dharmic (Hindu, Buddhist, "
+               "Sikh, Jain), East Asian (Taoist, Confucian, Shinto) and non-religious; when the material is mostly "
+               "one faith, say so rather than writing as if it were the whole picture. Respectful and curious; never "
                "preachy, never proselytising, never ranking religions, never mocking believers or unbelievers. "
                "Occult and paranormal belong to Mystery, not here. Quote scripture only word-for-word from the "
                "material with its exact citation; never invent, paraphrase-as-quote or misattribute a verse.")
@@ -754,15 +791,33 @@ def fetch_scripture(cur, videos, n=SCRIPTURE_MAX, today=None):
                    ORDER BY md5(coalesce(metadata->>'uid', '') || left(text, 60) || %s) LIMIT 1""",
                 (list(SCRIPTURE_SOURCES), seed))
     fallback = list(cur.fetchall())
+    fam_name, fam_srcs = focus_family(seed)
+    fam_rows = []
+    if words_:   # the focus family's own word matches — the general query's LIMIT can crowd them out
+        cur.execute("""/* scripture_library family */ SELECT text, metadata, source FROM memories
+                       WHERE source = ANY(%s) AND metadata->>'type' IN ('scripture', 'philosophy')
+                         AND coalesce(metadata->>'privacy', 'public') NOT IN ('private', 'local-only')
+                         AND text ~* %s
+                       LIMIT 200""", (list(fam_srcs), r"\m(" + "|".join(words_) + r")\M"))
+        fam_rows = list(cur.fetchall())
+    cur.execute("""/* scripture_library family */ SELECT text, metadata, source FROM memories
+                   WHERE source = ANY(%s) AND metadata->>'type' IN ('scripture', 'philosophy')
+                     AND coalesce(metadata->>'privacy', 'public') NOT IN ('private', 'local-only')
+                     AND length(text) > 200
+                   ORDER BY md5(coalesce(metadata->>'uid', '') || left(text, 60) || %s) LIMIT %s""",
+                (list(fam_srcs), seed, FAMILY_MIN))
+    fam_fallback = list(cur.fetchall())
     scored = []
-    for text, md, src in rows:
+    for text, md, src in rows + fam_rows:
         md = md if isinstance(md, dict) else {}
         low = (text or "").lower()
         hit = {w for w in words_ if re.search(rf"\b{w}\b", low)}
         scored.append((len(hit), sum(freq[w] for w in hit), zlib.crc32(f"{seed}{text[:80]}".encode()), text, md, src))
     scored.sort(key=lambda r: r[:3], reverse=True)
+    fam = [r for r in scored if r[5] in fam_srcs] + [(0, 0, 0, t, m, s_) for t, m, s_ in fam_fallback]
     picked, per = [], {}
-    for *_, text, md, src in scored + [(0, 0, 0, t, m, s_) for t, m, s_ in fallback]:
+    order = fam[:FAMILY_MIN] + scored + [(0, 0, 0, t, m, s_) for t, m, s_ in fallback]
+    for *_, text, md, src in order:
         md = md if isinstance(md, dict) else {}
         if len(picked) >= n or per.get(src, 0) >= SCRIPTURE_PER_SOURCE or BANNED.search(text or ""):
             continue
@@ -886,6 +941,11 @@ def top_block(subj, videos, arts, recipes=(), food_rules=None, extra=()):
     heading, task = FEATURES[subj]
     if subj in ("military", "history"):
         task = task.replace("{today}", month_day())
+    if subj == "belief":
+        fam = focus_family()[0]
+        task += (f" BALANCE: today's focus is the {fam} traditions — choose a passage from them when one "
+                 "connects at all, even if the day's videos are mostly about another faith; never let one "
+                 "tradition (Christianity included) own the block day after day.")
     if subj == "food":
         if not food_rules:
             log("Recipe Recommendation: no house rules — block omitted (fail closed)")

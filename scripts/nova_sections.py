@@ -89,7 +89,9 @@ _BELIEF_RX = _re.compile(
     r"tao(?:ism|ist)?|dao(?:ism|ist)|shinto|confucian\w*|jain(?:ism)?|zoroastrian\w*|judaism|jewish|torah|"
     r"talmud|rabbis?|saints?|prayers?|monastic\w*|monks?|nuns?|mystics?|psalms?|apostles?|prophets?|"
     r"sacred|sacraments?|atheis\w*|agnostic\w*|spiritual\w*|afterlife|book of the dead|"
-    r"gnostic\w*|kabbal\w*|heres(?:y|ies)|heretic\w*|demiurge|deit(?:y|ies)|non-?religio\w*|secular\w*)\b", _re.I)
+    r"gnostic\w*|kabbal\w*|heres(?:y|ies)|heretic\w*|demiurge|deit(?:y|ies)|non-?religio\w*|secular\w*|"
+    r"sunnis?|shi'?as?|shi'?ites?|sufi\w*|hadiths?|sharia|imams?|mosques?|caliph\w*|synagogues?|hasidi\w*|"
+    r"kosher|rabbinic\w*|gurdwaras?|sangha|vedanta|mahayana|theravada|bodhisattvas?)\b", _re.I)
 # Figurative belief-talk never counts (tech evangelists, holy grails, "the gospel of growth").
 _NOT_BELIEF = _re.compile(r"\b(?:holy grail|(?:tech|developer|product|brand) evangelis\w*|evangelis\w* for|"
                          r"gospel of (?:growth|wealth|productivity|hustle)|religious(?:ly)? (?:devot\w*|follow\w*)|"

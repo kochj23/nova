@@ -959,10 +959,50 @@ class TestHistoryBelief(unittest.TestCase):
         for n in ("ReligionForBreakfast", "Dan McClellan", "Alex O'Connor", "Bishop Robert Barron"):
             self.assertIn(m.norm(n), feeds, n)   # scholars, a skeptic and the theological counter-case
         self.assertFalse({m.norm(c) for c in m.BELIEF_PENDING_CHANNELS} & {m.norm(c) for c in m.BELIEF_CHANNELS})
-        self.assertEqual(set(m.SUBJECTS["belief"]["shared_channels"]), {"ESOTERICA", "CrashCourse"})
+        self.assertTrue({"ESOTERICA", "CrashCourse", "YaleCourses"} <= set(m.SUBJECTS["belief"]["shared_channels"]))
+        owned = {m.norm(c) for chans in OWNERS.values() for c in chans}
+        for c in m.SUBJECTS["belief"]["shared_channels"]:
+            self.assertIn(m.norm(c), owned, c)   # shared = owned elsewhere, topic-filtered here
         science, mystery = {m.norm(c) for c in m.SCIENCE_CHANNELS}, {m.norm(c) for c in m.MYSTERY_CHANNELS}
         self.assertIn(m.norm("CrashCourse"), science)    # shared, still owned by their own sections
         self.assertIn(m.norm("ESOTERICA"), mystery)
+
+    def test_scope_covers_the_worlds_traditions(self):
+        feeds = {m.norm(c) for c in m.SUBJECTS["belief"]["channels"]}
+        for tradition, names in {"buddhism": ("Plum Village App", "Dalai Lama", "Doug's Dharma"),
+                                 "hinduism": ("Oxford Centre for Hindu Studies", "Vedanta Society of New York"),
+                                 "sikh/jain": ("Sikh Research Institute (SikhRI)", "International School for Jain Studies"),
+                                 "taoism": ("Benebell Wen",),
+                                 "judaism": ("Henry Abramson", "Chabad.org", "The Jewish Theological Seminary",
+                                             "The Movement for Reform Judaism", "Frieda Vizel"),
+                                 "islam": ("Dr. Javad T. Hashmi", "Yasir Qadhi", "Zaytuna College",
+                                           "Sayed Ammar Nakshawani")}.items():
+            for n in names:
+                self.assertIn(m.norm(n), feeds, f"{tradition}: {n}")
+
+    def test_focus_family_rotates_across_all_four(self):
+        days = [f"2026-10-{d:02d}" for d in range(19, 23)]
+        self.assertEqual({m.focus_family(d)[0] for d in days},
+                         {"Abrahamic", "Dharmic", "East Asian", "Non-theist and ancient"})
+        fam_srcs = {s for _, srcs in m.TRADITION_FAMILIES for s in srcs}
+        self.assertEqual(fam_srcs, set(m.SCRIPTURE_SOURCES))   # every library source belongs to a family
+
+    def test_focus_family_passages_are_offered_first(self):
+        day = next(f"2026-10-{d:02d}" for d in range(19, 23) if m.focus_family(f"2026-10-{d:02d}")[0] == "Dharmic")
+        rows = [srow(PSALM.replace("1-4", f"1-{i}"), {**PSALM_MD, "verses": f"1-{i}"}, "bible") for i in range(5, 9)] + \
+               [srow(DHP, DHP_MD, "buddhism")]
+        vids = [{"title": "The Good Shepherd and the still waters", "text": "shepherd shepherd", "channel": "c",
+                 "url": "u", "date": "d"}]
+        got = m.fetch_scripture(Cur([], [], scripture=rows), vids, today=day)
+        self.assertEqual(got[0]["_source"], "buddhism")   # Bible matches the words better; the family leads anyway
+
+    def test_block_task_names_todays_family(self):
+        seen = []
+        run_main(["--subject", "belief"], videos=[vrow("x", "v1", chan="Sacred Logic")],
+                 scripture=[srow(PSALM, PSALM_MD, "bible")], llm=block_llm("NONE", seen))
+        _, user = next(x for x in seen if "very TOP" in x[0])
+        system = next(x for x in seen if "very TOP" in x[0])[0]
+        self.assertIn("BALANCE: today's focus is the " + m.focus_family("2026-10-19")[0], system + user)
 
     def test_shared_channels_feed_belief_only_on_religion_topics(self):
         cur = Cur([vrow("photosynthesis and the light reactions", "c1", chan="CrashCourse", title="Photosynthesis"),
