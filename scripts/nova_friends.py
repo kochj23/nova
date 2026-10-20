@@ -1018,6 +1018,9 @@ def top_block(subj, videos, arts, recipes=(), food_rules=None, extra=()):
         if hit:
             log("Recipe Recommendation: private-term check tripped — block omitted (fail closed)")
             return ""
+    if block and subj == "music":   # Jordan 2026-10-19: Nova "hears" the track (nova_hear; fail soft, never raises)
+        import nova_hear
+        block = nova_hear.add_sound_note(block, videos, log)
     return block
 
 

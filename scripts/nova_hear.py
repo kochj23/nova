@@ -21,7 +21,8 @@ import tempfile
 
 import numpy as np
 
-os.environ.setdefault("HF_HOME", "/Volumes/Data/huggingface")   # same model cache as nova_finetune
+if os.path.isdir("/Volumes/Data/huggingface"):                  # .6: same model cache as nova_finetune
+    os.environ.setdefault("HF_HOME", "/Volumes/Data/huggingface")  # Linux nodes keep the default ~/.cache
 
 FFMPEG = "/opt/homebrew/bin/ffmpeg" if os.path.exists("/opt/homebrew/bin/ffmpeg") else "ffmpeg"
 CLAP_MODEL = "laion/larger_clap_music_and_speech"   # larger_clap_music loads but scores flat (logit scale ~1) under transformers 4.57
@@ -124,6 +125,7 @@ def recognize(path: str, sections: list) -> dict:
     import torch
     from transformers import ClapModel, ClapProcessor
     torch.set_num_threads(8)
+    emb = lambda o: o if torch.is_tensor(o) else o.pooler_output   # transformers 5 returns an output object
     model, proc = ClapModel.from_pretrained(CLAP_MODEL).eval(), ClapProcessor.from_pretrained(CLAP_MODEL)
     y, sr = librosa.load(path, sr=48000, mono=True)
     win = 10 * sr
@@ -132,14 +134,14 @@ def recognize(path: str, sections: list) -> dict:
         embs = []
         for s in starts:
             inp = proc(audio=[y[s:s + win]], sampling_rate=sr, return_tensors="pt")
-            embs.append(torch.nn.functional.normalize(model.get_audio_features(**inp), dim=-1)[0])
+            embs.append(torch.nn.functional.normalize(emb(model.get_audio_features(**inp)), dim=-1)[0])
         A = torch.stack(embs)                                            # windows x dim
         out = {}
         texts = {g: v[1] for g, v in LABELS.items()}
         T = {}
         for g, labs in texts.items():
-            per = [torch.nn.functional.normalize(model.get_text_features(
-                **proc(text=[tp.format(l) for l in labs], return_tensors="pt", padding=True)), dim=-1) for tp in TEMPLATES]
+            per = [torch.nn.functional.normalize(emb(model.get_text_features(
+                **proc(text=[tp.format(l) for l in labs], return_tensors="pt", padding=True))), dim=-1) for tp in TEMPLATES]
             T[g] = torch.nn.functional.normalize(torch.stack(per).mean(0), dim=-1)
         track = torch.nn.functional.normalize(A.mean(0), dim=-1)
         scale = float(model.logit_scale_a.detach().exp())
@@ -172,6 +174,87 @@ def hear(path: str, clap: bool = True) -> dict:
     return r
 
 
+MAX_TRACK_S = 900        # longer = a DJ set or a documentary, not a track
+KEY_MIN_MARGIN = 0.05    # below this the major/minor (or relative-key) call is a coin flip
+SPEECH_MAX = 0.5         # CLAP "spoken word" above this = mostly talking (a making-of, an interview)
+
+
+def _log(msg):
+    print(f"[hear] {msg}", file=sys.stderr, flush=True)
+
+
+def _for_writer(r: dict) -> dict:
+    """The JSON the writer sees: vocal-TYPE labels dropped (CLAP called Sian Evans 'rap vocals' at 0.95),
+    vocal presence kept; a weak key becomes 'ambiguous'."""
+    r = json.loads(json.dumps(r))
+    clap = r.get("clap", {})
+    clap.pop("vocals", None)
+    if r["key"]["margin"] < KEY_MIN_MARGIN:
+        r["key"] = {"key": "ambiguous", "best_guess": r["key"]["key"], "runner_up": r["key"]["runner_up"]}
+    return r
+
+
+def describe_track(url: str, log=_log) -> str | None:
+    """'🎧 What it sounds like' note for one YouTube track, written ONLY from nova_hear's measurements.
+    Fail soft: any problem -> None (and a log line saying why); the caller publishes without the note."""
+    import shutil
+    try:
+        ytdlp = shutil.which("yt-dlp") or os.path.join(os.path.dirname(sys.executable), "yt-dlp")
+        with tempfile.TemporaryDirectory(prefix="nova-hear-") as d:
+            wav = os.path.join(d, "a.wav")
+            for attempt in range(3):   # googlevideo hands out intermittent 403s; a retry usually gets through
+                p = subprocess.run([ytdlp, "--no-warnings", "--socket-timeout", "30", "--no-playlist",
+                                    "--match-filter", f"duration < {MAX_TRACK_S}", "-f", "bestaudio", "-x",
+                                    "--audio-format", "wav", "-o", os.path.join(d, "a.%(ext)s"), url],
+                                   capture_output=True, text=True, timeout=600)
+                if os.path.exists(wav) or "does not pass filter" in (p.stdout + p.stderr):
+                    break
+                import time
+                time.sleep(10 * (attempt + 1))
+            if not os.path.exists(wav):
+                log(f"sound note skipped: no audio for {url} ({(p.stderr or p.stdout).strip()[-200:] or 'over length limit'})")
+                return None
+            r = hear(wav)
+        speech = next((x["prob"] for x in r["clap"]["vocals"] if x["label"] == "spoken word"), 0)
+        if speech > SPEECH_MAX:
+            log(f"sound note skipped: {url} is mostly speech (CLAP spoken word {speech:.2f})")
+            return None
+        import nova_journal as nj
+        import nova_voice
+        ctx = ("You are writing a 3-5 sentence '🎧 What it sounds like' note under today's Track of the Day. You get "
+               "ONLY machine measurements of the audio (tempo, key, loudness, sections, CLAP zero-shot tags) — no "
+               "title, artist or lyrics. Describe what the track sounds like using only those numbers. CLAP tags are "
+               "probabilistic guesses: hedge them. Tempo octave is ambiguous (half/double/candidates). If key is "
+               "'ambiguous', say so. Never name the artist or title, never invent instruments, lyrics or facts the "
+               "numbers don't support. No headers, no bullet points, no addressing Little Mister.")
+        text = (nj.call_openrouter(nova_voice.system_prompt(ctx), json.dumps(_for_writer(r)),
+                                   model="anthropic/claude-sonnet-4.5", max_tokens=600, temperature=0.5) or "").strip()
+        text = re.sub(r"^[*_\s]*🎧?\s*what it sounds like\s*:?[*_\s]*", "", text, flags=re.I).strip()  # we add the label
+        n = len(text.split())
+        if not 30 <= n <= 160:
+            log(f"sound note skipped: writer returned {n} words")
+            return None
+        log(f"sound note: {n} words for {url} (tempo {r['tempo']['bpm']}, {r['loudness']['integrated_lufs']} LUFS)")
+        return f"**🎧 What it sounds like:** {text}"
+    except Exception as e:  # noqa: BLE001 — the note never sinks the edition
+        log(f"sound note skipped: {type(e).__name__}: {e}")
+        return None
+
+
+def add_sound_note(block: str, videos, log=_log) -> str:
+    """Music and Friends hook: append the sound note for the video the Track of the Day links. Never raises."""
+    try:
+        url = next((v["url"] for v in videos if v.get("url") and v["url"] in block), None)
+        if not url:
+            log("sound note skipped: Track of the Day links no video")
+            return block
+        note = describe_track(url, log)
+        return f"{block}\n\n{note}" if note else block
+    except Exception as e:  # noqa: BLE001
+        log(f"sound note skipped: {type(e).__name__}: {e}")
+        return block
+
+
 def selftest():
     """120 BPM kick clicks over a sustained A-major triad -> tempo ~120, key A major, finite loudness."""
     import soundfile as sf
@@ -190,6 +273,12 @@ def selftest():
     assert r["key"]["key"] == "A major", r["key"]
     assert -40 < r["loudness"]["integrated_lufs"] < 0, r["loudness"]
     assert r["sections"] and r["sections"][-1]["end"] == r["duration_s"]
+    w = _for_writer({**r, "key": {"key": "D# major", "runner_up": "D# minor", "margin": 0.016},
+                     "clap": {"vocals": [{"label": "rap vocals", "prob": 0.95}], "genre": []}})
+    assert "vocals" not in w["clap"] and w["key"]["key"] == "ambiguous", w
+    assert _for_writer(r)["key"]["key"] == "A major"                    # a clear key survives
+    assert re.sub(r"^[*_\s]*🎧?\s*what it sounds like\s*:?[*_\s]*", "", "🎧 What it sounds like: Loud.", flags=re.I) == "Loud."
+    assert add_sound_note("block, no links", [{"url": "https://youtu.be/x"}], log=lambda m: None) == "block, no links"
     print("selftest OK", r["tempo"]["bpm"], r["key"]["key"], r["loudness"]["integrated_lufs"])
 
 

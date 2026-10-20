@@ -20,6 +20,10 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 import nova_friends as m  # noqa: E402
 import nova_watches_and_friends as w  # noqa: E402
+import nova_hear  # noqa: E402
+
+# Tests never reach YouTube: the music sound note is stubbed (TestSoundNote checks the hook itself).
+nova_hear.describe_track = lambda url, log=None: f"**🎧 What it sounds like:** stub for {url}"
 
 SRC = (SCRIPTS / "nova_friends.py").read_text()
 D = datetime(2026, 10, 19, 9, 0)
@@ -1082,6 +1086,26 @@ class TestHistoryBelief(unittest.TestCase):
         t0 = time.time()
         m.fetch_scripture(Cur([], [], scripture=rows), vids, today="2026-10-19")
         self.assertLess(time.time() - t0, 3.0)
+
+
+class TestSoundNote(unittest.TestCase):
+    """Music's Track of the Day gets nova_hear's '🎧 What it sounds like' note; nothing else does; failure is soft."""
+    def _body(self, subj, chan):
+        rc, nj, _ = run_main(["--subject", subj], videos=[vrow("x", "v1", chan=chan)], llm=block_llm(good_block()))
+        self.assertEqual(rc, 0)
+        return published_body(nj)
+
+    def test_music_track_of_the_day_gets_the_note(self):
+        self.assertIn(f"What it sounds like:** stub for {YT1}", self._body("music", SAMPLE["music"]))
+
+    def test_other_sections_never_get_it(self):
+        self.assertNotIn("What it sounds like", self._body("cars", "Rob Dahm"))
+
+    def test_failed_analysis_keeps_the_block(self):
+        with patch.object(nova_hear, "describe_track", return_value=None):
+            body = self._body("music", SAMPLE["music"])
+        self.assertTrue(body.startswith("## 🎧 Track of the Day\n\n"))
+        self.assertNotIn("What it sounds like", body)
 
 
 if __name__ == "__main__":
