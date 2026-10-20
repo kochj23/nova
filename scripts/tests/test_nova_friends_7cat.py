@@ -24,7 +24,7 @@ import nova_hear  # noqa: E402
 
 # Tests never reach YouTube: the music sound note is stubbed for this module only (TestSoundNote checks the hook).
 _hear_stub = patch.object(nova_hear, "describe_track",
-                          side_effect=lambda url, log=None: f"**🎧 What it sounds like:** stub for {url}")
+                          side_effect=lambda url, log=None, **k: f"**🎧 What it sounds like:** stub for {url}")
 
 
 def setUpModule():

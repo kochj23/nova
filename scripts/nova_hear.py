@@ -200,12 +200,108 @@ def _for_writer(r: dict) -> dict:
     return r
 
 
-def describe_track(url: str, log=_log) -> str | None:
+LISTEN_URL = os.environ.get("NOVA_HEAR_LISTEN_URL", "http://nova-core8.digitalnoise.net:37481/vocals")
+NOT_THE_RECORD = re.compile(r"\b(reaction|reacts?|reacting|making of|interview|live|cover|karaoke|remix|extended|"
+                            r"edit|sped up|slowed|nightcore|8d|instrumental|tutorial|lesson|review|explained|"
+                            r"documentary|behind the|breakdown|first time hearing|lyrics?)\b")
+
+
+def _norm(s: str) -> str:
+    import unicodedata
+    s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode().lower()
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]+", " ", s)).strip()
+
+
+def _yt_search(query: str, n: int = 10) -> list[dict]:
+    import shutil
+    ytdlp = shutil.which("yt-dlp") or os.path.join(os.path.dirname(sys.executable), "yt-dlp")
+    p = subprocess.run([ytdlp, "--no-warnings", "--socket-timeout", "30", "--flat-playlist", "--print",
+                        "%(id)s\t%(title)s\t%(channel)s\t%(duration)s", f"ytsearch{n}:{query}"],
+                       capture_output=True, text=True, timeout=120)
+    out = []
+    for line in p.stdout.splitlines():
+        vid, title, chan, dur = (line.split("\t") + ["", "", "", ""])[:4]
+        out.append({"id": vid, "title": title, "channel": chan,
+                    "duration": float(dur) if dur.replace(".", "", 1).isdigit() else 0.0})
+    return out
+
+
+def find_official(artist: str, title: str, log=_log, search=None) -> str | None:
+    """The official upload of one song: artist's own channel, '<Artist> - Topic' or VEVO; title must contain the
+    song title, nothing marking it as a reaction/live/cover/remix/making-of, 1.5-10 min. None if nothing verifies."""
+    a, t = _norm(artist), _norm(title)
+    if not a or not t:
+        return None
+    search = search or _yt_search
+    best = None
+    for i, v in enumerate(search(f"{artist} {title}")):
+        vt, ch = _norm(v["title"]), _norm(v["channel"])
+        extra = vt.replace(t, " ")                  # words in the video title beyond the song title itself
+        if t not in vt or NOT_THE_RECORD.search(extra) or not 90 <= v["duration"] <= 600:
+            continue
+        if ch == f"{a} topic":
+            rank = 0
+        elif "vevo" in ch and a.replace(" ", "") in (ch + vt).replace(" ", ""):
+            rank = 1
+        elif a.replace(" ", "") in ch.replace(" ", ""):
+            rank = 2
+        else:
+            continue                                # not the artist's own upload: unverified
+        if best is None or (rank, i) < best[0]:
+            best = ((rank, i), f"https://www.youtube.com/watch?v={v['id']}", v)
+    if best:
+        log(f"official upload for {artist} - {title}: {best[2]['title']} [{best[2]['channel']}] {best[1]}")
+        return best[1]
+    log(f"no verified official upload for {artist} - {title}")
+    return None
+
+
+def song_from_block(block: str) -> tuple[str, str] | None:
+    """(artist, title) of the one song a Track of the Day features, read from the edition's own text."""
+    import nova_journal as nj
+    raw = (nj.call_openrouter(
+        'From this text, return ONLY JSON {"artist": "...", "title": "..."} for the ONE song it features as the '
+        "track of the day, exactly as named in the text. If it features a DJ set, an album, a playlist or no single "
+        "song, return NONE.", block, model="anthropic/claude-haiku-4.5", max_tokens=200, temperature=0) or "").strip()
+    m = re.search(r"\{.*\}", raw, re.S)
+    if not m:
+        return None
+    d = json.loads(m.group(0))
+    return (d["artist"].strip(), d["title"].strip()) if d.get("artist") and d.get("title") else None
+
+
+def vocal_guess(url: str, log=_log, timeout: int = 120) -> dict | None:
+    """Qwen3-Omni's vocal call from the Studio's listen service (nova_hear_listen.py). None if unreachable/busy."""
+    import urllib.request
+    try:
+        req = urllib.request.Request(LISTEN_URL, data=json.dumps({"url": url}).encode(),
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read())
+    except Exception as e:  # noqa: BLE001 — no vocal line, the note still publishes
+        log(f"vocal guess unavailable ({type(e).__name__}: {e})")
+        return None
+
+
+def vocal_line(v: dict | None) -> str:
+    """One labeled sentence from the listen service's majority vote, or "" when it has nothing firm."""
+    if not v:
+        return ""
+    if v.get("lead_vocal") is False:
+        return " *Vocal guess (a listening model, not measured): no lead vocal.*"
+    g, s = v.get("gender", "unsure"), v.get("style", "unsure")
+    bits = [x for x in (g if g not in ("unsure", "none") else "", s if s not in ("unsure", "none") else "") if x]
+    return f" *Vocal guess (a listening model, not measured): {', '.join(bits)} lead vocal.*" if bits else ""
+
+
+def describe_track(url: str, log=_log, song=None) -> str | None:
     """'🎧 What it sounds like' note for one YouTube track, written ONLY from nova_hear's measurements.
-    Fail soft: any problem -> None (and a log line saying why); the caller publishes without the note."""
+    `song` (callable -> (artist, title) | None): when `url` is talk-heavy or too long (a reaction, making-of or DJ
+    set), find that song's official upload and analyze it instead. Fail soft: any problem -> None + a log line."""
     import shutil
     try:
         ytdlp = shutil.which("yt-dlp") or os.path.join(os.path.dirname(sys.executable), "yt-dlp")
+        why = None
         with tempfile.TemporaryDirectory(prefix="nova-hear-") as d:
             wav = os.path.join(d, "a.wav")
             for attempt in range(3):   # googlevideo hands out intermittent 403s; a retry usually gets through
@@ -213,17 +309,28 @@ def describe_track(url: str, log=_log) -> str | None:
                                     "--match-filter", f"duration < {MAX_TRACK_S}", "-f", "bestaudio", "-x",
                                     "--audio-format", "wav", "-o", os.path.join(d, "a.%(ext)s"), url],
                                    capture_output=True, text=True, timeout=600)
-                if os.path.exists(wav) or "does not pass filter" in (p.stdout + p.stderr):
+                if os.path.exists(wav):
+                    break
+                if "does not pass filter" in (p.stdout + p.stderr):
+                    why = "longer than a track"
                     break
                 import time
                 time.sleep(10 * (attempt + 1))
-            if not os.path.exists(wav):
-                log(f"sound note skipped: no audio for {url} ({(p.stderr or p.stdout).strip()[-200:] or 'over length limit'})")
+            if not os.path.exists(wav) and not why:
+                log(f"sound note skipped: no audio for {url} ({(p.stderr or p.stdout).strip()[-200:]})")
                 return None
-            r = hear(wav)
-        speech = r["clap"].get("speech_fraction", 0)
-        if speech > SPEECH_MAX:
-            log(f"sound note skipped: {url} is {speech:.0%} talk (reaction / making-of), not a track")
+            r = hear(wav) if not why else None
+        if r is not None:
+            speech = r["clap"].get("speech_fraction", 0)
+            if speech > SPEECH_MAX:
+                why = f"{speech:.0%} talk (reaction / making-of)"
+        if why:
+            s = song() if song else None
+            official = find_official(*s, log) if s else None
+            if official and official != url:
+                log(f"{url} is {why}; analyzing the official upload instead")
+                return describe_track(official, log)
+            log(f"sound note skipped: {url} is {why}, not a track" + ("" if s else " (no single song named)"))
             return None
         import nova_journal as nj
         import nova_voice
@@ -242,8 +349,9 @@ def describe_track(url: str, log=_log) -> str | None:
             log(f"sound note skipped: writer returned {n} words")
             return None
         log(f"sound note: {n} words for {url} (tempo {r['tempo']['bpm']}, {r['loudness']['integrated_lufs']} LUFS)")
+        # vocal TYPE comes only from the listening model, labeled as its guess (CLAP's vocal labels are hidden)
         # Jordan 2026-10-19: link the exact upload that was analyzed (never a guessed one)
-        return f"**🎧 What it sounds like:** {text} [Listen on YouTube]({url})"
+        return f"**🎧 What it sounds like:** {text}{vocal_line(vocal_guess(url, log))} [Listen on YouTube]({url})"
     except Exception as e:  # noqa: BLE001 — the note never sinks the edition
         log(f"sound note skipped: {type(e).__name__}: {e}")
         return None
@@ -256,7 +364,7 @@ def add_sound_note(block: str, videos, log=_log) -> str:
         if not url:
             log("sound note skipped: Track of the Day links no video")
             return block
-        note = describe_track(url, log)
+        note = describe_track(url, log, song=lambda: song_from_block(block))
         return f"{block}\n\n{note}" if note else block
     except Exception as e:  # noqa: BLE001
         log(f"sound note skipped: {type(e).__name__}: {e}")
