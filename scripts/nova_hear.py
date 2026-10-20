@@ -163,6 +163,12 @@ def recognize(path: str, sections: list) -> dict:
             sec["vocal_presence"] = round(1 - float(p[inst]), 2)
             g = torch.softmax((e @ T["genre"].T) * scale, -1)
             sec["top_genre"] = LABELS["genre"][1][int(g.argmax())]
+        # talk detector: share of 10 s windows CLAP calls "speech" over "singing"/"instrumental music" (bare labels).
+        # Calibrated 2026-10-19: Kosheen song 0.00, a composer reaction 0.56, a making-of documentary 0.83.
+        # ("spoken word" in the vocals group barely fired on either talker: 0.05 / 0.00.)
+        talk = torch.nn.functional.normalize(emb(model.get_text_features(
+            **proc(text=["speech", "singing", "instrumental music"], return_tensors="pt", padding=True))), dim=-1)
+        out["speech_fraction"] = round(float(((A @ talk.T).argmax(-1) == 0).float().mean()), 2)
     out["windows_analyzed"] = len(starts)
     return out
 
@@ -176,7 +182,7 @@ def hear(path: str, clap: bool = True) -> dict:
 
 MAX_TRACK_S = 900        # longer = a DJ set or a documentary, not a track
 KEY_MIN_MARGIN = 0.05    # below this the major/minor (or relative-key) call is a coin flip
-SPEECH_MAX = 0.5         # CLAP "spoken word" above this = mostly talking (a making-of, an interview)
+SPEECH_MAX = 0.3         # share of windows that are mostly talk; above it = a reaction/making-of, not a track
 
 
 def _log(msg):
@@ -215,23 +221,24 @@ def describe_track(url: str, log=_log) -> str | None:
                 log(f"sound note skipped: no audio for {url} ({(p.stderr or p.stdout).strip()[-200:] or 'over length limit'})")
                 return None
             r = hear(wav)
-        speech = next((x["prob"] for x in r["clap"]["vocals"] if x["label"] == "spoken word"), 0)
+        speech = r["clap"].get("speech_fraction", 0)
         if speech > SPEECH_MAX:
-            log(f"sound note skipped: {url} is mostly speech (CLAP spoken word {speech:.2f})")
+            log(f"sound note skipped: {url} is {speech:.0%} talk (reaction / making-of), not a track")
             return None
         import nova_journal as nj
         import nova_voice
         ctx = ("You are writing a 3-5 sentence '🎧 What it sounds like' note under today's Track of the Day. You get "
                "ONLY machine measurements of the audio (tempo, key, loudness, sections, CLAP zero-shot tags) — no "
-               "title, artist or lyrics. Describe what the track sounds like using only those numbers. CLAP tags are "
+               "title, artist or lyrics. Describe what the track sounds like using only those numbers, in under 120 words. CLAP tags are "
                "probabilistic guesses: hedge them. Tempo octave is ambiguous (half/double/candidates). If key is "
-               "'ambiguous', say so. Never name the artist or title, never invent instruments, lyrics or facts the "
+               "'ambiguous', say so. Loudness scale: -6 to -9 LUFS = very loud, limited club/pop master; around -14 "
+               "= streaming normal; -16 or lower = quiet, dynamic, older or live. Never name the artist or title, never invent instruments, lyrics or facts the "
                "numbers don't support. No headers, no bullet points, no addressing Little Mister.")
         text = (nj.call_openrouter(nova_voice.system_prompt(ctx), json.dumps(_for_writer(r)),
                                    model="anthropic/claude-sonnet-4.5", max_tokens=600, temperature=0.5) or "").strip()
         text = re.sub(r"^[*_\s]*🎧?\s*what it sounds like\s*:?[*_\s]*", "", text, flags=re.I).strip()  # we add the label
         n = len(text.split())
-        if not 30 <= n <= 160:
+        if not 30 <= n <= 200:
             log(f"sound note skipped: writer returned {n} words")
             return None
         log(f"sound note: {n} words for {url} (tempo {r['tempo']['bpm']}, {r['loudness']['integrated_lufs']} LUFS)")
