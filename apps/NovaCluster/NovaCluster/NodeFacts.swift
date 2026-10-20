@@ -133,3 +133,20 @@ enum AlertText {
         [i.source, i.text].compactMap { $0 }.joined(separator: " · ")
     }
 }
+
+/// Wording for the "just published" ticker (1.1.0).
+enum PublishedText {
+    /// Only links to Nova's own site are opened (the hub's data is LAN data, not trusted markup).
+    static func link(_ p: ClusterSnapshot.Post) -> URL? {
+        guard let s = p.url, let u = URL(string: s), u.scheme == "https", u.host == "nova.digitalnoise.net" else { return nil }
+        return u
+    }
+
+    /// "🔍 Belief and Friends: Garments … · 19:13".
+    static func line(_ p: ClusterSnapshot.Post, clock: (Date?) -> String = Fmt.clock) -> String {
+        var s = "\(p.emoji ?? "•") \(p.title ?? "untitled")"
+        let c = clock(Fmt.date(p.at))
+        if !c.isEmpty { s += " · \(c)" }
+        return s
+    }
+}

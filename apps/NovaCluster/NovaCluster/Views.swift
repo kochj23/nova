@@ -73,9 +73,13 @@ struct ContentView: View {
                 #else
                 let u = max(0.8, min(geo.size.width, geo.size.height) / 820)
                 #endif
-                AlertStrip(alerts: snap?.alerts, u: u)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 4 * u)
+                VStack(spacing: 5 * u) {
+                    AlertStrip(alerts: snap?.alerts, u: u)
+                    PublishedTicker(posts: snap?.published ?? [], u: u)
+                }
+                .frame(maxWidth: geo.size.width * 0.56)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 4 * u)
             }
         }
         #if os(macOS)
@@ -154,12 +158,15 @@ struct ContentView: View {
 
     private var mapScreen: some View {
         GeometryReader { geo in
+            // The alert strip + "just published" ticker sit above the header: make room while they show.
+            let strips: CGFloat = (snap?.published?.isEmpty == false ? 24 : 0)
+                + (AlertText.headline(snap?.alerts) != nil ? 10 : 0)
             #if os(macOS)
             let u = max(0.8, min(geo.size.width / 1440, geo.size.height / 900))
-            let topPad: CGFloat = 30
+            let topPad: CGFloat = 30 + strips
             #else
             let u = max(0.8, min(geo.size.width, geo.size.height) / 820)
-            let topPad: CGFloat = 18
+            let topPad: CGFloat = 18 + strips * 1.6
             #endif
             let landscape = geo.size.width > geo.size.height
             VStack(spacing: 0) {

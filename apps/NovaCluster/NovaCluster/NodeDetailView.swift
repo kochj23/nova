@@ -290,3 +290,45 @@ struct AlertsSheet: View {
         .preferredColorScheme(.dark)
     }
 }
+
+/// "JUST PUBLISHED" ticker (under the alert strip): steps through Nova's newest posts; click / tap opens one.
+struct PublishedTicker: View {
+    let posts: [ClusterSnapshot.Post]
+    let u: CGFloat
+    @State private var index = 0
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        if !posts.isEmpty {
+            let p = posts[index % posts.count]
+            Button {
+                #if !os(tvOS)
+                if let url = PublishedText.link(p) { openURL(url) }
+                #endif
+            } label: {
+                HStack(spacing: 8 * u) {
+                    Text("JUST PUBLISHED").font(.system(size: 9.5 * u, weight: .semibold)).tracking(1.6 * u)
+                        .foregroundStyle(Palette.terminal.opacity(0.85))
+                    Text(NodeLines.clean(PublishedText.line(p), max: 110))
+                        .font(.system(size: 11 * u)).foregroundStyle(.white.opacity(0.75))
+                        .id(p.key).transition(.opacity)
+                }
+                .lineLimit(1)
+                .padding(.horizontal, 12 * u).padding(.vertical, 4 * u)
+                .background(Capsule().fill(Color.black.opacity(0.5)))
+            }
+            .buttonStyle(.plain)
+            #if os(macOS)
+            .help(PublishedText.link(p)?.absoluteString ?? "")
+            #endif
+            .task(id: posts.first?.key) {
+                index = 0                                          // a new post jumps to the front
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(8))
+                    withAnimation(.easeInOut(duration: 0.4)) { index += 1 }
+                }
+            }
+            .accessibilityLabel("Just published: \(p.title ?? "")")
+        }
+    }
+}

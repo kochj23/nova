@@ -25,7 +25,8 @@ screensaver draws: what this Mac is reading now, what it has learned for Nova to
 `recent_jobs` (last 10: LLM jobs from memory, works read and episodes transcribed from PG); top-level `ups` (every
 UPS in service_config service='ups', read from NUT's upsd over TCP 3493) and `alerts` (failing / dead-letter /
 quarantined tasks on both schedulers — the Studio's and the scheduler-core leader's /tasks — and leader changes from
-leader_events in the last 7 days).
+leader_events in the last 7 days), and `published` (the newest posts on nova.digitalnoise.net, from the journal repo's
+git history: title, section, emoji, link, time).
 CLI  --serve [--port 37590] | --enroll NODE [--url http://host:11434] [--dedicated | --viewer | --probe] | --list | --selftest
 A VIEWER (--viewer) is a display, not a minion: it never heartbeats and is never sent work; its token reads /fleet.
 
@@ -39,6 +40,7 @@ import argparse
 import collections
 import hashlib
 import socket
+import subprocess
 import urllib.request
 import json
 import os
@@ -431,7 +433,7 @@ def llm_push(node: str, snap: dict, cur=None, addr: str | None = None):
 
 
 # ── Nova Cluster 1.1 extras: read-only collectors, refreshed in the background ───────────────────
-_EXTRAS: dict = {"ups": [], "recent_jobs": {}, "alerts": {"items": [], "counts": {}}}
+_EXTRAS: dict = {"ups": [], "recent_jobs": {}, "alerts": {"items": [], "counts": {}}, "published": []}
 _EXTRAS_LOCK = threading.Lock()
 _VAR = re.compile(r'^VAR (\S+) (\S+) "(.*)"$')
 UPS_VARS = ("ups.status", "ups.load", "ups.realpower.nominal", "battery.charge", "battery.runtime", "input.voltage",
@@ -630,7 +632,73 @@ def collect_alerts(cur) -> dict:
     return {"items": items[:24], "counts": counts, "leader": leader, "at": iso(datetime.now(timezone.utc))}
 
 
-COLLECTORS = [("ups", collect_ups, 10), ("recent_jobs", collect_recent_jobs, 30), ("alerts", collect_alerts, 30)]
+# just published: newest posts on nova.digitalnoise.net (from the journal repo the Studio publishes from)
+JOURNAL = os.path.expanduser("~/nova-journal")
+SITE = "https://nova.digitalnoise.net"
+SECTION_EMOJI = {"burbank-ops": "🛫", "nova": "✨", "watches": "⌚", "cars": "🚗", "tech": "💻", "food": "🍳",
+                 "music": "🎵", "military": "🎖", "screen": "🎬", "science": "🔬", "mystery": "🕯", "crime": "🕵",
+                 "workshop": "🔨", "travel": "🧭", "history": "🏛", "belief": "🔍"}
+_POST = re.compile(r"^content/([a-z0-9-]+)/([A-Za-z0-9._-]+)\.md$")
+_LEAD_EMOJI = re.compile(r"^([^\w\s\"'(\[]{1,3})\s+(.+)$")
+
+
+def parse_added(log_text: str) -> list:
+    """`git log --diff-filter=A --name-only --format=@@%ct` -> [(epoch, section, slug)], newest first, posts only."""
+    out, t = [], None
+    for line in log_text.splitlines():
+        if line.startswith("@@"):
+            t = int(line[2:]) if line[2:].isdigit() else None
+        elif t and (m := _POST.match(line.strip())) and m.group(2) != "_index":
+            out.append((t, m.group(1), m.group(2)))
+    return out
+
+
+def front_title(text: str) -> str | None:
+    m = re.search(r'^title:\s*"((?:[^"\\]|\\.)*)"\s*$', text[:3000], re.M) or re.search(r"^title:\s*'?([^'\n]+)'?\s*$", text[:3000], re.M)
+    return m.group(1).replace('\\"', '"').strip() if m else None
+
+
+def post_view(t: int, section: str, slug: str, title: str | None, names: dict) -> dict:
+    title = (title or slug.replace("-", " ")).strip()
+    emoji = SECTION_EMOJI.get(section, "•")
+    m = _LEAD_EMOJI.match(title)
+    if m:
+        emoji, title = m.group(1), m.group(2)
+    return {"title": title[:160], "section": section, "section_name": names.get(section, section), "emoji": emoji,
+            "url": f"{SITE}/{section}/{slug}/", "at": iso(datetime.fromtimestamp(t, timezone.utc))}
+
+
+def menu_names(yaml_text: str) -> dict:
+    """identifier -> name from hugo.yaml's main menu (regex; the hub has no YAML dependency)."""
+    return {m.group(1): m.group(2).strip() for m in
+            re.finditer(r"- identifier:\s*([a-z0-9-]+)\s*\n\s*name:\s*([^\n]+)", yaml_text)}
+
+
+def collect_published(_cur=None, limit: int = 12) -> list:
+    log_text = subprocess.run(["git", "-C", JOURNAL, "log", "--since=4.days", "--diff-filter=A", "--name-only",
+                               "--format=@@%ct", "--", "content"], capture_output=True, text=True, timeout=20).stdout
+    try:
+        names = menu_names(open(os.path.join(JOURNAL, "hugo.yaml")).read())
+    except OSError:
+        names = {}
+    out, seen = [], set()
+    for t, section, slug in parse_added(log_text):
+        if (section, slug) in seen:
+            continue
+        seen.add((section, slug))
+        path = os.path.join(JOURNAL, "content", section, slug + ".md")
+        try:
+            title = front_title(open(path, encoding="utf-8", errors="replace").read(3000))
+        except OSError:
+            continue                    # moved or retired since: not on the site any more
+        out.append(post_view(t, section, slug, title, names))
+        if len(out) >= limit:
+            break
+    return out
+
+
+COLLECTORS = [("ups", collect_ups, 10), ("recent_jobs", collect_recent_jobs, 30), ("alerts", collect_alerts, 30),
+              ("published", collect_published, 60)]
 
 
 def refresh_extras(force: bool = False):
@@ -731,11 +799,12 @@ def cluster(cur) -> dict:
     with _EXTRAS_LOCK:
         ups, db_jobs = list(_EXTRAS.get("ups") or []), dict(_EXTRAS.get("recent_jobs") or {})
         alerts = dict(_EXTRAS.get("alerts") or {})
+        published = list(_EXTRAS.get("published") or [])
     with _LLM_LOCK:
         llm_jobs = {n: list(d) for n, d in _RECENT_LLM.items()}
     for n in nodes:
         n["recent_jobs"] = recent_jobs_for(n["node"], db_jobs.get(n["node"], []), llm_jobs.get(n["node"], []))
-    return {"updated": iso(datetime.now(timezone.utc)), "totals": tot, "nodes": nodes, "events": events, "ups": ups, "alerts": alerts,
+    return {"updated": iso(datetime.now(timezone.utc)), "totals": tot, "nodes": nodes, "events": events, "ups": ups, "alerts": alerts, "published": published,
             "fleet_tonight": fl.get("fleet_tonight"), "queue": fl.get("queue"), "eta_days": fl.get("eta_days"),
             "recent_lessons": fl.get("recent_lessons", [])[:40]}
 
@@ -924,6 +993,13 @@ def selftest() -> int:
     li = leader_items("nova-core3", ev[1:], datetime.now(timezone.utc))
     assert li[0]["kind"] == "failover" and "nova-core3" in li[0]["text"] and li[1]["kind"] == "leader"
     assert [x["kind"] for x in leader_items("nova-core", ev, datetime.now(timezone.utc))] == ["leader", "leader"]
+    lg = "@@200\n\ncontent/belief/2026-10-19-a.md\ncontent/belief/_index.md\nstatic/x.webp\n@@100\n\ncontent/nova/b.md\n"
+    assert parse_added(lg) == [(200, "belief", "2026-10-19-a"), (100, "nova", "b")]
+    assert front_title('---\ntitle: "🔍 Belief and Friends: \\"Q\\""\ndate: x\n---') == '🔍 Belief and Friends: "Q"'
+    pv = post_view(200, "belief", "2026-10-19-a", "🔍 Belief and Friends: Garments", {"belief": "Belief and Friends"})
+    assert pv["emoji"] == "🔍" and pv["title"] == "Belief and Friends: Garments" and pv["url"].endswith("/belief/2026-10-19-a/")
+    assert post_view(1, "cars", "x", "Plain title", {})["emoji"] == "🚗"
+    assert menu_names("    - identifier: belief\n      name: Belief and Friends\n      url: /belief/\n") == {"belief": "Belief and Friends"}
     try:
         nut_vars("localhost", 1, "../x")
         raise AssertionError("bad ups name accepted")

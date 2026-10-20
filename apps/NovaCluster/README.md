@@ -119,6 +119,14 @@ DNS name from `leader_standby`), with `scheduler_runs` as the fallback when a sc
 come from `leader_events`, which `nova_leader_wrapper.py` writes on every takeover (seeded with the
 10-18 16:36 failover to nova-core3 and the 10-19 18:00 hand-back).
 
+### "Just published" ticker (1.1.0)
+
+Under the alert strip, a slim line steps through Nova's newest posts on nova.digitalnoise.net every 8 s:
+`JUST PUBLISHED  🔍 Belief and Friends: Garments, Gospel Arbitration… · 19:13`. A brand-new post jumps to the
+front. Click (Mac) or tap (iPad) to open it in the browser; only `https://nova.digitalnoise.net/…` links are
+ever opened. The hub reads the last 4 days of newly added posts from the journal repo's git history on the
+Studio (title, section, emoji, link, publish time), skipping posts that have since moved.
+
 ### Kiosk mode (1.1.0)
 
 For the iPad on its stand, a Mac in full screen, or the Apple TV: the app steps
@@ -163,6 +171,7 @@ flowchart LR
     NUT -- "TCP 3493, LIST VAR" --> EX
     SCH["schedulers /tasks<br/>Studio :37460 · core leader :37464"] --> EX
     LE[("leader_events<br/>(written by nova_leader_wrapper)")] --> EX
+    JR[("~/nova-journal git history<br/>new posts")] --> EX
     EX --> CL
     PG[("nova_ops<br/>minion_nodes (purpose, alias)<br/>minion_activity · token usage")]
     P --> LLM --> AGG
@@ -296,7 +305,7 @@ xcodebuild -project NovaCluster.xcodeproj -scheme NovaClusterMac -configuration 
   -destination 'platform=macOS' -derivedDataPath <dd> test
 ```
 
-There are 43 XCTest cases (`Tests/NodeLinesTests.swift`, `Tests/ConstellationTests.swift`, `Tests/KioskTests.swift`, `Tests/NodeFactsTests.swift`), all of which pass in 1.1.0. The constellation tests pin the shared hash and random stream so the screensaver's sky can't shift silently. The test bundle
+There are 45 XCTest cases (`Tests/NodeLinesTests.swift`, `Tests/ConstellationTests.swift`, `Tests/KioskTests.swift`, `Tests/NodeFactsTests.swift`), all of which pass in 1.1.0. The constellation tests pin the shared hash and random stream so the screensaver's sky can't shift silently. The test bundle
 is not hosted in the app: it has no window, no live hub, and no real UserDefaults or Keychain. The
 sources under test are compiled straight into the bundle. The network is stubbed with a `URLProtocol`.
 

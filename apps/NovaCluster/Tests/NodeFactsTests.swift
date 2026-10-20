@@ -116,3 +116,19 @@ final class AlertTextTests: XCTestCase {
         XCTAssertEqual(AlertText.headline(s.alerts), "1 failing")
     }
 }
+
+final class PublishedTextTests: XCTestCase {
+    func testOnlyNovaSiteLinksOpen() {
+        let ok = ClusterSnapshot.Post(title: "T", url: "https://nova.digitalnoise.net/belief/a/")
+        XCTAssertNotNil(PublishedText.link(ok))
+        XCTAssertNil(PublishedText.link(.init(title: "T", url: "https://evil.example/belief/a/")))
+        XCTAssertNil(PublishedText.link(.init(title: "T", url: "javascript:alert(1)")))
+        XCTAssertNil(PublishedText.link(.init(title: "T", url: nil)))
+    }
+
+    func testLine() {
+        let p = ClusterSnapshot.Post(title: "Belief and Friends: Garments", emoji: "🔍", at: "2026-10-20T02:13:02Z")
+        XCTAssertEqual(PublishedText.line(p, clock: { _ in "19:13" }), "🔍 Belief and Friends: Garments · 19:13")
+        XCTAssertEqual(PublishedText.line(.init(title: nil, emoji: nil), clock: { _ in "" }), "• untitled")
+    }
+}

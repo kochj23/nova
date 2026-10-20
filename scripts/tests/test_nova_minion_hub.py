@@ -59,7 +59,7 @@ class FakeCur:
 def reset():
     for d in (hub._LLM, hub._JOBS, hub._LAST_JOB, hub._RECENT_LLM):
         d.clear()
-    hub._EXTRAS.update(ups=[], recent_jobs={}, alerts={"items": [], "counts": {}})
+    hub._EXTRAS.update(ups=[], recent_jobs={}, alerts={"items": [], "counts": {}}, published=[])
     del hub._EVENTS[:]
     hub._IPS.update(t=0.0, map={})
 
@@ -377,6 +377,64 @@ class TestAlerts(unittest.TestCase):
         with mock.patch.object(hub, "_get_json", return_value={}):
             out = hub.collect_alerts(self.Cur(leader=None))
         self.assertEqual(out["items"][0]["kind"], "no-leader")
+
+
+class TestPublished(unittest.TestCase):
+    """1.1 (2026-10-19): the 'just published' ticker, from the journal repo's git history."""
+
+    def _repo(self, tmp):
+        import pathlib
+        r = pathlib.Path(tmp)
+        (r / "content" / "belief").mkdir(parents=True)
+        (r / "hugo.yaml").write_text("menu:\n  main:\n    - identifier: belief\n      name: Belief and Friends\n")
+        run = lambda *a: subprocess.run(["git", "-C", str(r), *a], check=True, capture_output=True)  # noqa: E731
+        run("init", "-q"); run("config", "user.email", "t@t"); run("config", "user.name", "t")
+        (r / "content" / "belief" / "_index.md").write_text("---\ntitle: Belief\n---\n")
+        (r / "content" / "belief" / "2026-10-19-a.md").write_text('---\ntitle: "🔍 Belief and Friends: A"\n---\nbody')
+        run("add", "-A"); run("commit", "-qm", "a")
+        (r / "content" / "belief" / "2026-10-19-b.md").write_text('---\ntitle: "Holy Days"\n---\nbody')
+        run("add", "-A"); run("commit", "-qm", "b")
+        return r
+
+    # Integration + Functional: a real git repo, newest first, _index skipped, names from the menu
+    def test_integration_reads_git_history(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            r = self._repo(tmp)
+            with mock.patch.object(hub, "JOURNAL", str(r)):
+                out = hub.collect_published()
+        self.assertEqual([p["title"] for p in out], ["Holy Days", "Belief and Friends: A"])
+        self.assertEqual(out[1]["emoji"], "🔍")
+        self.assertEqual(out[0]["emoji"], "🔍")                      # section fallback
+        self.assertEqual(out[0]["section_name"], "Belief and Friends")
+        self.assertTrue(out[0]["url"].startswith("https://nova.digitalnoise.net/belief/"))
+
+    # Security: a path outside content/<section>/ never becomes a post; titles are capped
+    def test_security_paths_and_caps(self):
+        self.assertEqual(hub.parse_added("@@1\n../../etc/passwd.md\ncontent/a/b/c.md\ncontent/x/y.md\n"), [(1, "x", "y")])
+        self.assertEqual(len(hub.post_view(1, "x", "y", "t" * 900, {})["title"]), 160)
+
+    # Unit
+    def test_unit_title_emoji_split(self):
+        p = hub.post_view(1, "nova", "s", "🪞 Nobody Ever Asked HAL", {})
+        self.assertEqual((p["emoji"], p["title"]), ("🪞", "Nobody Ever Asked HAL"))
+
+    # Retry / Frame: a retired post (file gone) is skipped, not an error
+    def test_frame_moved_post_skipped(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            r = self._repo(tmp)
+            (r / "content" / "belief" / "2026-10-19-b.md").unlink()
+            with mock.patch.object(hub, "JOURNAL", str(r)):
+                out = hub.collect_published()
+        self.assertEqual([p["title"] for p in out], ["Belief and Friends: A"])
+
+    # Performance: bounded
+    def test_performance_limit(self):
+        lg = "".join(f"@@{i}\ncontent/nova/p{i}.md\n" for i in range(500, 0, -1))
+        with mock.patch.object(hub.subprocess, "run", return_value=mock.Mock(stdout=lg)), \
+             mock.patch("builtins.open", mock.mock_open(read_data='title: "T"\n')):
+            self.assertEqual(len(hub.collect_published()), 12)
 
 
 if __name__ == "__main__":

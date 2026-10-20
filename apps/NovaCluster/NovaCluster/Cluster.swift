@@ -180,6 +180,16 @@ struct ClusterSnapshot: Codable, Equatable {
         var leader: String?
         var at: String?
     }
+    /// A post just published on nova.digitalnoise.net (1.1).
+    struct Post: Codable, Equatable {
+        var title: String?
+        var section: String?
+        var section_name: String?
+        var emoji: String?
+        var url: String?
+        var at: String?
+        var key: String { url ?? title ?? "" }
+    }
     struct Event: Codable, Equatable {
         var node: String?
         var model: String?
@@ -208,6 +218,7 @@ struct ClusterSnapshot: Codable, Equatable {
     var recent_lessons: [Lesson]?
     var ups: [UPS]?
     var alerts: Alerts?
+    var published: [Post]?
 
     var allNodes: [Node] { nodes ?? [] }
     var allEvents: [Event] { events ?? [] }
