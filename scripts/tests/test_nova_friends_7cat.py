@@ -1219,7 +1219,7 @@ class TestThemeDays(unittest.TestCase):
         def llm(system, user, **k):
             seen.append((system, user))
             return "TITLE: ignored\n## The question\n" + "word " * 2500
-        with patch.object(m, "pick_theme", return_value=dict(THEME)), \
+        with patch.object(m, "theme_candidates", return_value=[dict(THEME)]), \
                 patch.object(m, "theme_material", return_value=tvids(chans)), \
                 patch.object(m, "mark_theme_used") as used:
             rc, nj, _ = run_main(list(argv), llm=llm)
@@ -1246,6 +1246,29 @@ class TestThemeDays(unittest.TestCase):
         self.assertTrue(any("FALLBACK" in str(c) for c in nj.log.call_args_list))
         used.assert_not_called()
         self.assertNotIn("THE BIG QUESTION", seen[0][0])
+
+    def test_choose_theme_prefers_four_families_and_ignores_generic_buckets(self):
+        thin = dict(THEME, theme="holy-days")
+        rich = dict(THEME, theme="afterlife")
+        material = {"holy-days": tvids(["Sacred Logic", "Unpacked", "ESOTERICA", "CrashCourse"]),   # 2 traditions
+                    "afterlife": tvids(["Yaqeen Institute", "Chabad.org", "Plum Village App", "Alex O'Connor",
+                                        "Scientology"])}
+        calls = iter([material["holy-days"], material["afterlife"]])
+        with patch.object(m, "theme_candidates", return_value=[thin, rich]), \
+                patch.object(m, "theme_material", side_effect=lambda *a: next(calls)):
+            t, vids, trads, fams = m.choose_theme(None, None, m.SUBJECTS["belief"], "2026-10-19")
+        self.assertEqual(t["theme"], "afterlife")
+        self.assertGreaterEqual(len(fams), m.THEME_MIN_FAMILIES)
+        self.assertNotIn("Religious studies", m.traditions_in(tvids(["ESOTERICA", "CrashCourse", "Sacred Logic"]),
+                                                              m.belief_sources()["tradition_of"]))
+
+    def test_theme_material_needs_two_distinct_keyword_hits(self):
+        rows = [("we talk about heaven", D, {"video_id": "a" * 11, "channel": "Chabad.org", "title": "One",
+                                             "pipeline": "yt_subs_audio"}),
+                ("heaven and rebirth both", D, {"video_id": "b" * 11, "channel": "Chabad.org", "title": "Two",
+                                                "pipeline": "yt_subs_audio"})]
+        got = m.theme_material(Cur(rows, []), m.SUBJECTS["belief"], ["heaven", "rebirth", "afterlife"])
+        self.assertEqual([v["title"] for v in got], ["Two"])
 
     def test_roundup_days_never_pick_a_theme(self):
         with patch.object(m, "pick_theme") as pick:

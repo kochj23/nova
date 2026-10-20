@@ -276,6 +276,9 @@ THEME_REPEAT_DAYS = 30              # a theme is not reused within this many day
 THEME_LOOKBACK_DAYS = 365           # theme material may come from any video ingested in the last year
 THEME_MIN_TRADITIONS = 3            # fewer traditions with material -> roundup that day (logged)
 THEME_PASSAGES = 3
+THEME_MIN_FAMILIES = 4              # the picker prefers a theme whose material spans at least this many families
+THEME_MIN_HITS = 2                  # a video counts for a theme only if it hits this many distinct keywords
+GENERIC_TRADITIONS = ("Religious studies", "Religious history", "Religious demographics", "American religious history")
 
 
 def _theme_coin(day):
@@ -300,6 +303,22 @@ def is_theme_day(day):
     return hist[-1]
 
 
+def theme_candidates(oc, today):
+    """Active themes in pick order: the least-used half of those not used in THEME_REPEAT_DAYS, shuffled by date,
+    then the rest of the fresh ones, then the recently used ones oldest first."""
+    import random
+    from datetime import date, timedelta
+    oc.execute("""SELECT theme, question, keywords, last_used, times_used FROM belief_themes WHERE active
+                  ORDER BY last_used NULLS FIRST, times_used, theme""")
+    rows = [dict(zip(("theme", "question", "keywords", "last_used", "times_used"), r)) for r in oc.fetchall()]
+    cutoff = date.fromisoformat(today[:10]) - timedelta(days=THEME_REPEAT_DAYS)
+    fresh = [r for r in rows if r["last_used"] is None or r["last_used"] <= cutoff]
+    k = max(5, len(fresh) // 2)
+    pool, rest = fresh[:k], fresh[k:]
+    random.Random(f"belief-theme-pick:{today}").shuffle(pool)
+    return pool + rest + [r for r in rows if r not in fresh]
+
+
 def pick_theme(oc, today, want=None):
     """{theme, question, keywords}: `want` if given, else random (seeded by date) among the least-used half of the
     active themes not used in THEME_REPEAT_DAYS; if all were used recently, the one used longest ago."""
@@ -316,6 +335,29 @@ def pick_theme(oc, today, want=None):
         return rows[0] if rows else None
     pool = fresh[:max(5, len(fresh) // 2)]   # least-recently-used half
     return random.Random(f"belief-theme-pick:{today}").choice(pool)
+
+
+def choose_theme(oc, mc, cfg, today, want=None, tradition_of=None):
+    """(theme, videos, traditions, families) for today's theme day, or (None, ...) when no theme has material from
+    THEME_MIN_TRADITIONS traditions. Walks theme_candidates() and takes the first whose material spans
+    THEME_MIN_FAMILIES families; otherwise the candidate with the most families (first edition 2026-10-19: a blind
+    random pick landed on a theme with 2 families and off-topic videos)."""
+    tradition_of = tradition_of or belief_sources()["tradition_of"]
+    cands = [pick_theme(oc, today, want)] if want else theme_candidates(oc, today)
+    best = (None, [], [], [])
+    for t in cands[:12]:
+        if not t:
+            continue
+        vids = theme_material(mc, cfg, t["keywords"])
+        trads = traditions_in(vids, tradition_of)
+        fams = sorted({cfg.get("family_of", {}).get(norm(v["channel"] or ""), "?") for v in vids})
+        if len(trads) >= THEME_MIN_TRADITIONS and len(fams) >= THEME_MIN_FAMILIES:
+            return t, vids, trads, fams
+        if len(trads) >= THEME_MIN_TRADITIONS and len(fams) > len(best[3]):
+            best = (t, vids, trads, fams)
+        if want:
+            return (t, vids, trads, fams) if len(trads) >= THEME_MIN_TRADITIONS else (None, vids, trads, fams)
+    return best
 
 
 def mark_theme_used(oc, theme, today):
@@ -351,7 +393,7 @@ def theme_material(cur, cfg, keywords, days=THEME_LOOKBACK_DAYS):
               or is_belief_topic(f"{v['title']} {v.get('text', '')[:3000]}")]
     for v in videos:
         v["_hits"] = len({m.group(0).lower() for m in rx.finditer(f"{v['title']} {v.get('text', '')}")})
-    videos.sort(key=lambda v: v["_hits"], reverse=True)
+    videos = sorted((v for v in videos if v["_hits"] >= THEME_MIN_HITS), key=lambda v: v["_hits"], reverse=True)
     capped, cap = cfg.get("capped_channels", ((), 0))
     capped, kept, n = {norm(c) for c in capped}, [], 0
     for v in videos:
@@ -367,9 +409,10 @@ def theme_material(cur, cfg, keywords, days=THEME_LOOKBACK_DAYS):
 
 
 def traditions_in(videos, tradition_of):
-    """Base traditions ('Islam', not 'Islam (Shia)') with at least one video."""
+    """Base traditions ('Islam', not 'Islam (Shia)') with at least one video; generic scholarly buckets
+    (religious studies / history / demographics) are sources, not traditions, and do not count."""
     return sorted({tradition_of[norm(v["channel"] or "")].split(" (")[0] for v in videos
-                   if norm(v["channel"] or "") in tradition_of})
+                   if norm(v["channel"] or "") in tradition_of} - set(GENERIC_TRADITIONS))
 
 
 def theme_context(name, question, week, words_, cap, rules):
@@ -1283,19 +1326,15 @@ def main():
                 log(f"coverage report failed ({e})")
     theme = None
     if a.subject == "belief" and (a.theme or a.mode == "theme" or (a.mode == "auto" and is_theme_day(nj.today_str()))):
-        theme = pick_theme(oc, nj.today_str(), a.theme) if oc is not None else None
+        theme, videos, trads, fams = (choose_theme(oc, mc, cfg, nj.today_str(), a.theme) if oc is not None
+                                      else (None, [], [], []))
         if theme is None:
-            log("theme day: no theme available (belief_themes unreadable or unknown --theme) — roundup instead")
+            log(f"theme day FALLBACK: no theme has material from {THEME_MIN_TRADITIONS} traditions "
+                f"(belief_themes unreadable, unknown --theme, or thin material) — roundup instead")
         else:
-            videos, arts = theme_material(mc, cfg, theme["keywords"]), []
-            trads = traditions_in(videos, belief_sources()["tradition_of"])
-            fams = sorted({cfg["family_of"].get(norm(v["channel"] or ""), "?") for v in videos})
+            arts = []
             log(f"theme day: '{theme['question']}' ({theme['theme']}) — {len(videos)} videos, "
                 f"{len(trads)} traditions ({', '.join(trads)}), {len(fams)} families ({', '.join(fams)})")
-            if len(trads) < THEME_MIN_TRADITIONS:
-                log(f"theme day FALLBACK: only {len(trads)} traditions have material on '{theme['theme']}' "
-                    f"(need {THEME_MIN_TRADITIONS}) — roundup instead")
-                theme = None
     if theme is None:
         videos, arts = fetch(mc, cfg, a.days)
     if theme is None and cfg.get("widen") and a.days == 1 and len(videos) + len(arts) < THIN_MIN:
@@ -1422,7 +1461,7 @@ def main():
     front = None
     if a.subject == "belief":
         front = {"edition": "theme", "theme": theme["theme"]} if theme else {"edition": "roundup"}
-    desc = (f"The Big Question — {theme['question']} How the world's traditions, their scholars and their skeptics "
+    desc = (f"The Big Question — {theme['question'].rstrip('.?!')}{'?' if theme['question'].endswith('?') else '.'} How the world's traditions, their scholars and their skeptics "
             "answer it, where they agree and where they part." if theme else cfg["desc"].format(period=period, span=unit))
     if not nj.publish_hugo(title, body, section, [*cfg["tags"], "theme" if theme else period], desc,
                            image_path=img, emoji=cfg["emoji"], profile=None, extra_front=front):
