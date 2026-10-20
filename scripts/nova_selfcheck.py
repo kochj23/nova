@@ -349,19 +349,36 @@ def _gateway_voiceless(out: str) -> bool:
     return not any(backends.get(b, {}).get("healthy") for b in _VOICE_BACKENDS)
 
 
+def _svc_alive(url, timeout=8):
+    rc, out = sh(["curl", "-s", "-m", str(timeout), url], timeout + 5)
+    alive = rc == 0 and ('"ok": true' in out or '"status":"ok"' in out.replace(" ", "") or '"ok":true' in out.replace(" ", ""))
+    if alive and _gateway_voiceless(out):
+        alive = False  # process up but no local LLM → self-heal, don't report ok
+    return alive, out
+
+
 def check_services():
     for name, url, restart in SERVICES:
-        rc, out = sh(["curl", "-s", "-m", "8", url])
-        alive = rc == 0 and ('"ok": true' in out or '"status":"ok"' in out.replace(" ", "") or '"ok":true' in out.replace(" ", ""))
-        if alive and _gateway_voiceless(out):
-            alive = False  # process up but no local LLM → self-heal, don't report ok
+        # A busy-but-healthy service (2026-10-18 23:09: .6 load avg ~129 from overlapping nightly
+        # tv/media ingests) can miss one 8s probe. Retry with a longer timeout before restarting —
+        # kicking the memory-server write primary drops in-flight /remember writes.
+        alive, out = _svc_alive(url)
+        for _ in range(2):
+            if alive:
+                break
+            time.sleep(10)
+            alive, out = _svc_alive(url, 20)
         if alive:
             record(f"svc-{name}", "ok")
             continue
         fix(f"svc-{name}: restart", restart, 60)
-        time.sleep(15)
-        rc2, out2 = sh(["curl", "-s", "-m", "8", url])
-        ok = rc2 == 0 and ("ok" in out2) and not _gateway_voiceless(out2)
+        # memory-server startup waits on PG/Redis/Ollama (~20s+); poll up to ~90s instead of one 15s check.
+        ok, out2 = False, ""
+        for _ in range(6):
+            time.sleep(15)
+            ok, out2 = _svc_alive(url, 10)
+            if ok:
+                break
         record(f"svc-{name}", "fixed" if ok else "FAIL", "restarted", out2[:100])
 
 
