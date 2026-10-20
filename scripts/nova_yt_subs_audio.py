@@ -5,7 +5,7 @@ video for the transcription pipeline").
 
 Each run:
   1. lists Jordan's subscriptions (yt-dlp, Safari-sourced cookie jar — the Chrome jar can't see them),
-     plus the non-subscribed channels in nova_yt_direct.DIRECT_CHANNELS (by channel id),
+     plus the non-subscribed channels in nova_ops.belief_sources (fetch_mode 'direct', by channel id),
   2. drops channels already handled by nova_yt_ingest_watch (fishbowl) or nova_yt_new_episodes (TV library),
   3. for each remaining channel, looks at its single most recent upload (/videos tab, not live/upcoming);
      if that video is new (nova_ops.yt_ingest_seen, channel 'sub:<channel_id>') it downloads AUDIO ONLY,
@@ -328,7 +328,7 @@ def main():
     if not subs:
         log("subscription list empty — Safari cookie jar stale? (nova_speaks_upload refreshes it)")
         sys.exit(1)
-    direct = nova_yt_direct.as_subscriptions(subs)   # Jordan 2026-10-19: ingested without subscribing
+    direct = nova_yt_direct.as_subscriptions(subs, log=log)   # Jordan 2026-10-19: ingested without subscribing
     here = Path(__file__).parent
     handles, ids = covered_keys("".join((here / f).read_text() for f in COVERED_BY))
     todo = uncovered(subs + direct, handles, ids)

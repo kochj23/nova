@@ -64,7 +64,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_journal as nj          # noqa: E402
 import nova_voice                  # noqa: E402
 from nova_sections import is_belief_topic   # noqa: E402
-import nova_yt_direct                      # noqa: E402
 from nova_watches_and_friends import (MEM_DSN, MODEL, OPS_DSN, _connect, digest, featured_block,  # noqa: E402
                                       group_videos, place_block, sources, split_title, words)
 
@@ -219,28 +218,78 @@ HISTORY_CHANNELS = (   # Jordan 2026-10-19. Military history stays in MILITARY_C
     "History of Everything", "AlternateHistoryHub", "RealLifeLore", "Megaprojects", "Sealed History",
     "Vidstorical Films", "Well There's Your Problem Podcast", "Who Do You Think You Are?",
 )
-BELIEF_CHANNELS = (    # Jordan 2026-10-19: every religious channel he follows — primary sources about believers
-    "Ascension Presents", "Godsplaining | Catholic Podcast", "The Pope Leo's Path", "Thy Kingdom Come",
-    "The God Show", "Sacred Logic", "DeepBeliever",
-)
-# Ingested WITHOUT a subscription (Jordan 2026-10-19: "as long as you are grabbing them, I don't need to sub
-# to them"): nova_yt_direct.DIRECT_CHANNELS, fetched nightly by nova_yt_subs_audio by channel id — scholars of
-# religion, insiders, skeptics and critics across Abrahamic (incl. Orthodox churches and Islam's branches),
-# Dharmic and East Asian traditions, smaller Christian traditions and new religious movements, so no single
-# side owns the section. Broad ones ("topic") feed Belief only on religion-topic videos.
-_TOPIC_ONLY = set(nova_yt_direct.for_section("belief", "topic"))
-BELIEF_DIRECT_CHANNELS = tuple(c for c in nova_yt_direct.for_section("belief") if c not in _TOPIC_ONLY)
-# New religious movements and sects (LDS, Scientology, JW, cult-studies and survivor channels...): at most
-# NRM_MAX videos an issue, so the smaller movements never crowd out the world's major traditions.
-BELIEF_NRM_CHANNELS = nova_yt_direct.for_section("belief", "nrm")
-NRM_MAX = 8
-# Owned by another section (the lists stay disjoint) but also feed Belief, for religion-topic videos only
-# (nova_sections.is_belief_topic): ESOTERICA (Dr. Justin Sledge, academic religious studies; Mystery owns it),
-# CrashCourse (its Religions series, e.g. #13 "Is Atheism a Religion?"; Science), YaleCourses (Christine
-# Hayes' Introduction to the Hebrew Bible; Science), and the History channels' religion episodes.
-BELIEF_SHARED_CHANNELS = ("ESOTERICA", "CrashCourse", "YaleCourses", "History of Everything", "Biographics",
-                          "RealLifeLore")
-# + the broad direct channels (explainers, museums, a charity, cult-recovery podcasts): same religion-topic filter
+# Belief and Friends reads its channels from PG (nova_ops.belief_sources, belief_families — Jordan 2026-10-19:
+# all state in PG; how-to in agent_docs 'belief-sources'). One row per channel: tradition, rotation family,
+# role, fetch_mode (subscription / direct = ingested by channel id without a subscription, nova_yt_direct),
+# owned_by_section + topic_only (religion-topic videos only), nrm (capped per issue). Loaded once per run.
+NRM_MAX = 8   # new religious movements and sects: at most this many videos an issue
+# PG unreachable: a run still happens from these broad scholarly channels, and says so loudly (ERROR + alert).
+BELIEF_FALLBACK = ("ReligionForBreakfast", "Let's Talk Religion", "Harvard Divinity School", "Dan McClellan")
+_BELIEF = None
+
+
+def belief_sources(oc=None):
+    """{channels, shared, capped, family_of, families, rows} from belief_sources / belief_families; cached per
+    run. On a PG failure: the BELIEF_FALLBACK channels, one family, and a loud ERROR — never silently empty."""
+    global _BELIEF
+    if _BELIEF is not None:
+        return _BELIEF
+    try:
+        cur = oc or _connect(OPS_DSN, attempts=2).cursor()
+        cur.execute("SELECT name, ord, scripture_sources FROM belief_families ORDER BY ord")
+        families = [(n, tuple(srcs or ())) for n, _, srcs in cur.fetchall()]
+        cur.execute("""SELECT name, tradition, family, role, fetch_mode, owned_by_section, topic_only, nrm
+                         FROM belief_sources WHERE active ORDER BY name""")
+        rows = [dict(zip(("name", "tradition", "family", "role", "fetch_mode", "owned_by_section", "topic_only",
+                          "nrm"), r)) for r in cur.fetchall()]
+        if not rows or not families:
+            raise RuntimeError("belief_sources / belief_families empty")
+    except Exception as e:  # noqa: BLE001
+        log(f"ERROR belief_sources unreadable ({e}) — FALLBACK to {len(BELIEF_FALLBACK)} scholarly channels")
+        nj.log(f"[friends] ALERT Belief and Friends running on its code fallback: {e}")
+        families = [("All traditions", tuple(SCRIPTURE_SOURCES))]
+        rows = [{"name": n, "tradition": "Religious studies", "family": families[0][0], "role": "scholar",
+                 "fetch_mode": "direct", "owned_by_section": None, "topic_only": False, "nrm": False}
+                for n in BELIEF_FALLBACK]
+    shared = tuple(r["name"] for r in rows if r["topic_only"] or r["owned_by_section"])
+    _BELIEF = {"channels": tuple(r["name"] for r in rows if r["name"] not in shared), "shared": shared,
+               "capped": (tuple(r["name"] for r in rows if r["nrm"]), NRM_MAX),
+               "family_of": {norm(r["name"]): r["family"] for r in rows}, "families": families, "rows": rows}
+    return _BELIEF
+
+
+def apply_belief_sources(cfg, oc=None):
+    """Point the belief subject at the table's channels (main() calls this for --subject belief)."""
+    b = belief_sources(oc)
+    cfg.update(channels=b["channels"], shared_channels=b["shared"], capped_channels=b["capped"],
+               family_of=b["family_of"])
+    return cfg
+
+
+def belief_coverage(oc, mc, days=7):
+    """One log line per gap: per base tradition, the scholar/insider/critic slots with no active channel
+    (belief_coverage view) and the traditions with no video ingested in `days`. -> [str]."""
+    oc.execute("SELECT tradition, missing_roles FROM belief_coverage ORDER BY tradition")
+    cov = oc.fetchall()
+    oc.execute("SELECT split_part(tradition, ' (', 1), name FROM belief_sources WHERE active")
+    by_trad = {}
+    for t, n in oc.fetchall():
+        by_trad.setdefault(t, []).append(norm(n))
+    mc.execute(f"""SELECT DISTINCT {NORM_SQL}, metadata->>'video_id' FROM memories
+                   WHERE created_at > now() - make_interval(days => %s) AND metadata->>'pipeline' = 'yt_subs_audio'
+                     AND {NORM_SQL} = ANY(%s)""", (days, sorted({n for ns in by_trad.values() for n in ns})))
+    vids = {}
+    for ch, _ in mc.fetchall():
+        vids[ch] = vids.get(ch, 0) + 1
+    out = []
+    for t, missing in cov:
+        n = sum(vids.get(c, 0) for c in by_trad.get(t, []))
+        bits = ([f"{'/'.join(missing)} slot empty"] if missing else []) + ([f"no material in {days} days"] if not n
+                                                                             else [f"{n} videos in {days} days"])
+        out.append(f"coverage {t}: " + "; ".join(bits))
+    return out
+
+
 # Jordan 2026-10-19: style and health stay unassigned — in NO subject and no pool (a test enforces it).
 UNASSIGNED_CHANNELS = ("GQ", "Real Men Real Style", "Brick and Sole", "Freshhkiicks", "Inkbox", "Doctor Mike",
                        "Dr.Sanders", "Jesse Enkamp")
@@ -287,18 +336,11 @@ SCRIPTURE_SOURCES = ("bible", "quran", "buddhism", "hinduism", "sikhism", "taois
                      "jainism", "zoroastrianism", "egyptian_book_of_the_dead", "books_of_the_dead", "nontheism")
 SCRIPTURE_MAX, SCRIPTURE_CHARS, SCRIPTURE_PER_SOURCE = 5, 1500, 2
 # Balance (Jordan 2026-10-19): the day's videos skew Christian (most religious channels he follows are Catholic),
-# and the picker ranks by word overlap with them — so Text in Context rotates a focus family by date. The
-# focus family's passages are offered first (FAMILY_MIN of them, word-matched if possible) and the task says
-# to prefer one, so over four days every family gets the top block at least once.
-TRADITION_FAMILIES = (
-    ("Abrahamic", ("bible", "quran")),
-    ("Dharmic", ("hinduism", "buddhism", "sikhism", "jainism")),
-    ("East Asian", ("taoism", "confucianism", "shinto")),
-    ("Non-theist and ancient", ("nontheism", "zoroastrianism", "egyptian_book_of_the_dead", "books_of_the_dead")),
-    # No library texts of their own yet (no Book of Mormon, Science and Health...): on this day the block may use
-    # any passage, read through how a new movement or sect uses or rereads it.
-    ("New religious movements and sects", ()),
-)
+# and the picker ranks by word overlap with them — so Text in Context rotates a focus family by date
+# (belief_families: Abrahamic, Dharmic, East Asian, Non-theist and ancient, New religious movements and sects).
+# The focus family's passages are offered first (FAMILY_MIN of them, word-matched if possible) and the task
+# says to prefer one; a family with no library texts of its own (new movements) may use any passage, read
+# through how a movement uses it.
 FAMILY_MIN = 2
 
 
@@ -306,7 +348,8 @@ def focus_family(today=None):
     """(name, sources) of the tradition family Text in Context leans on today; rotates daily by date."""
     from datetime import date
     d = date.fromisoformat((today or nj.today_str())[:10])
-    return TRADITION_FAMILIES[d.toordinal() % len(TRADITION_FAMILIES)]
+    families = belief_sources()["families"]
+    return families[d.toordinal() % len(families)]
 SCRIPTURE_STOP = {"church", "catholic", "christian", "podcast", "episode", "father", "people", "really", "things",
                   "should", "because", "something", "actually", "question", "answer", "explained", "anything",
                   "everything", "nothing", "little", "always", "believe", "pretty", "having", "talking", "before",
@@ -463,7 +506,7 @@ SUBJECTS.update({
                         ["history", "world-history"], "history",
                         "Separate what is documented from legend, speculation and alternate-history 'what ifs' — "
                         "label alternate history as hypothetical. Never invent dates, numbers or quotes."),
-    "belief": _subject("belief", "Belief and Friends", "🔍", BELIEF_CHANNELS + BELIEF_DIRECT_CHANNELS,
+    "belief": _subject("belief", "Belief and Friends", "🔍", (),   # channels from belief_sources (main())
                        "what people believe and why, where traditions came from, how scriptures were written and "
                        "transmitted, religion in the news and in society, atheism and non-religion, apologetics "
                        "and the arguments against it, the scholars' view",
@@ -471,8 +514,6 @@ SUBJECTS.update({
                        "old illuminated manuscripts, museum reading rooms, worn scrolls and a map of the world's "
                        "traditions", ["belief", "religion"], "religion", BELIEF_TONE),
 })
-SUBJECTS["belief"]["shared_channels"] = BELIEF_SHARED_CHANNELS + tuple(sorted(_TOPIC_ONLY))
-SUBJECTS["belief"]["capped_channels"] = (BELIEF_NRM_CHANNELS, NRM_MAX)
 
 # The featured block at the top of each issue: (heading, task). Grounded, fail closed (featured_block).
 FEATURES = {
@@ -584,6 +625,20 @@ def recently_cited(section, days=2):
         return set()
 
 
+def round_robin(videos, family_of):
+    """Newest-first videos re-dealt one per family in turn (first edition 2026-10-19: newest-first let the last
+    families ingested take every slot and dropped all the Buddhist, Hindu, Sikh and Catholic videos)."""
+    lanes = {}
+    for v in videos:
+        lanes.setdefault(family_of.get(norm(v["channel"] or ""), ""), []).append(v)
+    out, queues = [], [list(q) for q in lanes.values()]
+    while any(queues):
+        for q in queues:
+            if q:
+                out.append(q.pop(0))
+    return out
+
+
 def fetch(cur, cfg, days):
     """-> (videos, articles) grouped newest-first, banned-term rows dropped, videos the section's last
     issues already cited dropped."""
@@ -606,11 +661,15 @@ def fetch(cur, cfg, days):
         if not md.get("video_id") and not md.get("url"):
             md["url"] = "local:" + (md.get("source_file") or md.get("title") or "")   # grouping key only
         vrows.append((text, created, md))
-    videos = group_videos(vrows, VID_PER, len(vrows) if shared else VID_MAX)
+    videos = group_videos(vrows, VID_PER, len(vrows))
+    cited = recently_cited(cfg["section"])   # before the cap: an already-told video never takes a slot
+    if cited:
+        videos = [v for v in videos if v["url"] not in cited]
     if shared:   # filter before the cap so off-topic shared videos never crowd out the section's own
         videos = [v for v in videos if norm(v["channel"] or "") not in shared
                   or is_belief_topic(f"{v['title']} {(v.get('text') or '')[:3000]}")]
-        capped, cap = cfg.get("capped_channels", ((), 0))
+    capped, cap = cfg.get("capped_channels", ((), 0))
+    if capped:
         capped, kept, n_capped = {norm(c) for c in capped}, [], 0
         for v in videos:   # newest first: the newest NRM videos win the capped slots
             if norm(v["channel"] or "") in capped:
@@ -618,10 +677,10 @@ def fetch(cur, cfg, days):
                     continue
                 n_capped += 1
             kept.append(v)
-        videos = kept[:VID_MAX]
-    cited = recently_cited(cfg["section"])
-    if cited:
-        videos = [v for v in videos if v["url"] not in cited]
+        videos = kept
+    if cfg.get("family_of") and len(videos) > VID_MAX:
+        videos = round_robin(videos, cfg["family_of"])
+    videos = videos[:VID_MAX]
     for v in videos:
         if (v["url"] or "").startswith("local:"):
             v["url"] = None
@@ -1043,6 +1102,19 @@ def main():
     name, section, noun = cfg["name"], cfg["section"], cfg["noun"]
 
     mc = _connect(MEM_DSN).cursor()
+    if a.subject == "belief":
+        try:
+            oc = _connect(OPS_DSN, attempts=2).cursor()
+        except Exception as e:  # noqa: BLE001 — belief_sources() logs the fallback loudly
+            oc = None
+            log(f"ERROR nova_ops unreachable for belief_sources ({e})")
+        apply_belief_sources(cfg, oc)
+        if oc is not None:
+            try:
+                for line in belief_coverage(oc, mc):
+                    log(line)
+            except Exception as e:  # noqa: BLE001 — the coverage report never sinks an issue
+                log(f"coverage report failed ({e})")
     videos, arts = fetch(mc, cfg, a.days)
     if cfg.get("widen") and a.days == 1 and len(videos) + len(arts) < THIN_MIN:
         log(f"{name}: only {len(videos)} videos today — looking back {WIDEN_DAYS} days")

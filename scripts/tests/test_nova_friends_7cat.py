@@ -563,10 +563,16 @@ class TestFoodRouting(unittest.TestCase):
 
 # ── The eight 2026-10-19 sections ───────────────────────────────────────────────────────────────
 NEW = ("music", "military", "screen", "science", "mystery", "crime", "workshop", "travel")
+# Belief's channels live in nova_ops.belief_sources (2026-10-19); load them once, as main() does.
+m.apply_belief_sources(m.SUBJECTS["belief"])
+BEL_ROWS = m.belief_sources()["rows"]
+BEL_SUB = tuple(r["name"] for r in BEL_ROWS if r["fetch_mode"] == "subscription" and not r["owned_by_section"]
+                and not r["topic_only"])
+BEL_DIRECT = tuple(r["name"] for r in BEL_ROWS if r["fetch_mode"] == "direct")
 LISTS = {"cars": m.CARS_CHANNELS, "tech": m.TECH_CHANNELS, "food": m.FOOD_CHANNELS, "music": m.MUSIC_CHANNELS,
          "military": m.MILITARY_CHANNELS, "screen": m.SCREEN_CHANNELS, "science": m.SCIENCE_CHANNELS,
          "mystery": m.MYSTERY_CHANNELS, "crime": m.CRIME_CHANNELS, "workshop": m.WORKSHOP_CHANNELS,
-         "travel": m.TRAVEL_CHANNELS, "history": m.HISTORY_CHANNELS, "belief": m.BELIEF_CHANNELS}
+         "travel": m.TRAVEL_CHANNELS, "history": m.HISTORY_CHANNELS, "belief": BEL_SUB}
 NEW2 = ("history", "belief")
 import nova_channel_pools as ncp  # noqa: E402
 # Every channel belongs to exactly one subject OR non-Friends pool (Jordan 2026-10-19).
@@ -665,7 +671,7 @@ class TestNewSectionRouting(unittest.TestCase):
         self.assertEqual(missing, [])
         # Every channel a section reads is either one he follows or on the explicit direct-ingest list
         # (nova_yt_direct: ingested by channel id without a subscription, Jordan 2026-10-19).
-        direct = {m.norm(c[2]) for c in m.nova_yt_direct.DIRECT_CHANNELS}
+        direct = {m.norm(c) for c in BEL_DIRECT}
         for subj, cfg in m.SUBJECTS.items():
             for c in (*cfg["channels"], *cfg.get("shared_channels", ())):
                 k = m.norm(c)
@@ -838,7 +844,7 @@ class TestHistoryBelief(unittest.TestCase):
         for n in ("OverSimplified", "Who Do You Think You Are?", "Well There's Your Problem Podcast", "RealLifeLore"):
             self.assertIn(m.norm(n), {m.norm(c) for c in m.HISTORY_CHANNELS})
         for n in ("Godsplaining | Catholic Podcast", "The Pope Leo's Path", "DeepBeliever"):
-            self.assertIn(m.norm(n), {m.norm(c) for c in m.BELIEF_CHANNELS})
+            self.assertIn(m.norm(n), {m.norm(c) for c in BEL_SUB})
         owned = {m.norm(c) for chans in OWNERS.values() for c in chans}
         for n in m.UNASSIGNED_CHANNELS:
             self.assertNotIn(m.norm(n), owned, n)
@@ -856,7 +862,8 @@ class TestHistoryBelief(unittest.TestCase):
             self.assertEqual(rc, 0, subj)
             want = {m.norm(c) for c in (*m.SUBJECTS[subj]["channels"], *m.SUBJECTS[subj].get("shared_channels", ()))}
             self.assertTrue({m.norm(c) for c in LISTS[subj]} <= want, subj)
-            self.assertEqual(set(cur.calls[0][1][1]), want, subj)
+            chan_q = next(c for c in cur.calls if "ORDER BY created_at DESC" in c[0] and "yt_subs_audio" in c[0])
+            self.assertEqual(set(chan_q[1][1]), want, subj)
             a = nj.publish_hugo.call_args.args
             self.assertTrue(a[0].startswith(m.SUBJECTS[subj]["name"] + ": "), a[0])
             self.assertEqual(a[2], subj)
@@ -978,10 +985,18 @@ class TestHistoryBelief(unittest.TestCase):
         feeds = {m.norm(c) for c in (*m.SUBJECTS["belief"]["channels"], *m.SUBJECTS["belief"]["shared_channels"])}
         for n in ("ReligionForBreakfast", "Dan McClellan", "Alex O'Connor", "Bishop Robert Barron"):
             self.assertIn(m.norm(n), feeds, n)   # scholars, a skeptic and the theological counter-case
-        self.assertFalse({m.norm(c) for c in m.BELIEF_DIRECT_CHANNELS} & {m.norm(c) for c in m.BELIEF_CHANNELS})
+        self.assertGreater(len(BEL_ROWS), 50, "belief_sources not loaded (PG down? code fallback in use)")
+        names = [m.norm(r["name"]) for r in BEL_ROWS]
+        self.assertEqual(len(names), len(set(names)))
+        others = {m.norm(c) for subj, chans in LISTS.items() if subj != "belief" for c in chans}
+        for r in BEL_ROWS:   # the table's own channels stay disjoint from every other section's list
+            if not r["owned_by_section"]:
+                self.assertNotIn(m.norm(r["name"]), others, r["name"])
+            else:
+                self.assertIn(m.norm(r["name"]), others, r["name"])   # shared = really owned elsewhere
         self.assertTrue({"ESOTERICA", "CrashCourse", "YaleCourses"} <= set(m.SUBJECTS["belief"]["shared_channels"]))
         owned = {m.norm(c) for chans in OWNERS.values() for c in chans}
-        topic_only = {m.norm(c) for c in m.nova_yt_direct.for_section("belief", "topic")}
+        topic_only = {m.norm(r["name"]) for r in BEL_ROWS if r["topic_only"]}
         for c in m.SUBJECTS["belief"]["shared_channels"]:   # owned elsewhere, or a broad direct channel
             self.assertTrue(m.norm(c) in owned or m.norm(c) in topic_only, c)
         self.assertFalse(topic_only & {m.norm(c) for c in m.SUBJECTS["belief"]["channels"]})
@@ -1007,7 +1022,7 @@ class TestHistoryBelief(unittest.TestCase):
         self.assertEqual({m.focus_family(d)[0] for d in days},
                          {"Abrahamic", "Dharmic", "East Asian", "Non-theist and ancient",
                           "New religious movements and sects"})
-        fam_srcs = {s for _, srcs in m.TRADITION_FAMILIES for s in srcs}
+        fam_srcs = {s for _, srcs in m.belief_sources()["families"] for s in srcs}
         self.assertEqual(fam_srcs, set(m.SCRIPTURE_SOURCES))   # every library source belongs to a family
 
     def test_focus_family_passages_are_offered_first(self):
@@ -1036,7 +1051,7 @@ class TestHistoryBelief(unittest.TestCase):
         self.assertTrue(got)
 
     def test_nrm_videos_capped_per_issue(self):
-        nrm = m.BELIEF_NRM_CHANNELS[0]
+        nrm = m.SUBJECTS["belief"]["capped_channels"][0][0]
         vids = [vrow(f"mormon history and the latter-day saints {i}", f"n{i}", chan=nrm, title=f"N{i}")
                 for i in range(m.NRM_MAX + 5)] + [vrow("buddhist monks", "w1", chan="Plum Village App", title="W1")]
         got, _ = m.fetch(Cur(vids, []), m.SUBJECTS["belief"], 1)
@@ -1069,6 +1084,47 @@ class TestHistoryBelief(unittest.TestCase):
         self.assertEqual([v["title"] for v in got], ["New"])
         with patch.object(m.nj, "HUGO_ROOT", root / "missing"):   # unreadable repo: nothing skipped
             self.assertEqual(len(m.fetch(cur, m.SUBJECTS["belief"], 1)[0]), 2)
+
+    def test_round_robin_deals_one_per_family(self):
+        fam = {m.norm("A1"): "Abrahamic", m.norm("A2"): "Abrahamic", m.norm("D1"): "Dharmic", m.norm("E1"): "East Asian"}
+        vids = [{"channel": c, "title": c} for c in ("A1", "A2", "A1", "D1", "E1")]
+        self.assertEqual([v["channel"] for v in m.round_robin(vids, fam)], ["A1", "D1", "E1", "A2", "A1"])
+
+    def test_belief_issue_spreads_across_families_when_over_the_cap(self):
+        rows = {r["name"]: r["family"] for r in BEL_ROWS if not r["topic_only"] and not r["owned_by_section"]}
+        nrm = [n for n, f in rows.items() if f == "New religious movements and sects"][:5]
+        abr = [n for n, f in rows.items() if f == "Abrahamic"][:20]
+        dh = [n for n, f in rows.items() if f == "Dharmic"][:8]
+        vids = ([vrow("religion", f"n{i}", chan=c, title=f"N{i}") for i, c in enumerate(nrm * 3)] +
+                [vrow("religion", f"a{i}", chan=c, title=f"A{i}") for i, c in enumerate(abr * 2)] +
+                [vrow("religion", f"d{i}", chan=c, title=f"D{i}") for i, c in enumerate(dh)])
+        got, _ = m.fetch(Cur(vids, []), m.SUBJECTS["belief"], 1)
+        self.assertEqual(len(got), m.VID_MAX)
+        self.assertEqual(sum(v["title"].startswith("D") for v in got), len(dh))   # oldest family still gets in
+
+    def test_fallback_is_loud_and_never_empty(self):
+        saved = m._BELIEF
+        try:
+            m._BELIEF = None
+            nj = MagicMock()
+            with patch.object(m, "_connect", side_effect=OSError("pg down")), patch.object(m, "nj", nj):
+                b = m.belief_sources()
+            self.assertEqual(b["channels"], m.BELIEF_FALLBACK)
+            self.assertTrue(any("ALERT" in str(c) or "ERROR" in str(c) for c in nj.log.call_args_list))
+        finally:
+            m._BELIEF = saved
+
+    def test_coverage_lines_name_empty_slots_and_quiet_traditions(self):
+        class C:
+            def __init__(self, answers): self.answers, self.r = list(answers), []
+            def execute(self, sql, params=None): self.r = self.answers.pop(0)
+            def fetchall(self): return self.r
+        oc = C([[("Sikhism", ["scholar", "critic"]), ("Jainism", [])],
+                [("Sikhism", "Basics of Sikhi"), ("Jainism", "Arihanta Institute")]])
+        mc = C([[(m.norm("Basics of Sikhi"), "v1")]])
+        lines = m.belief_coverage(oc, mc)
+        self.assertIn("coverage Sikhism: scholar/critic slot empty; 1 videos in 7 days", lines)
+        self.assertIn("coverage Jainism: no material in 7 days", lines)
 
     def test_shared_channels_feed_belief_only_on_religion_topics(self):
         cur = Cur([vrow("photosynthesis and the light reactions", "c1", chan="CrashCourse", title="Photosynthesis"),

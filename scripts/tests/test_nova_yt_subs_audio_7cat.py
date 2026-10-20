@@ -291,7 +291,7 @@ class TestFunctional(unittest.TestCase):
     def _main(self, argv, cur, subs=(("UC1", "@a", "A"),), mounted=True, direct=()):
         conn = MagicMock(); conn.cursor.return_value = cur
         with patch.object(sys, "argv", ["x", *argv]), patch.object(m, "subscriptions", return_value=list(subs)), \
-                patch.object(m.nova_yt_direct, "DIRECT_CHANNELS", tuple(direct)), \
+                patch.object(m.nova_yt_direct, "direct_channels", return_value=[c[:3] for c in direct]), \
                 patch.object(m, "ni", fake_ni()), patch.object(m.psycopg2, "connect", return_value=conn), \
                 patch.object(m.time, "sleep"), patch.object(m.os.path, "ismount", return_value=mounted), \
                 patch.object(m, "latest_video", return_value=("v9", "Title")) as lv, \
@@ -337,11 +337,18 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(dl.call_count, 2)
         self.assertIn("sub:UCdirect000000000000000a", [p[0] for s_, p in cur.calls if s_.startswith("INSERT INTO yt_ingest_seen")])
 
-    def test_direct_list_is_valid(self):
+    def test_direct_list_comes_from_belief_sources(self):
         import nova_yt_direct as d
-        ids = [c[0] for c in d.DIRECT_CHANNELS]
-        self.assertEqual(len(ids), len(set(ids)))
-        self.assertTrue(all(i.startswith("UC") and len(i) == 24 for i in ids))
+        cur = MagicMock(); cur.fetchall.return_value = [("UCdirect000000000000000a", "", "Direct A")]
+        self.assertEqual(d.as_subscriptions([], cur=cur), [("UCdirect000000000000000a", "", "Direct A")])
+        self.assertIn("fetch_mode = 'direct' AND active", cur.execute.call_args[0][0])
+
+    def test_direct_list_unreadable_is_loud_not_fatal(self):
+        import nova_yt_direct as d
+        logged = []
+        with patch.object(d, "direct_channels", side_effect=OSError("pg down")):
+            self.assertEqual(d.as_subscriptions([("UC1", "@a", "A")], log=logged.append), [])
+        self.assertTrue(logged and logged[0].startswith("ERROR"))
 
     def test_empty_subscription_list_exits_nonzero(self):
         with self.assertRaises(SystemExit) as e:
