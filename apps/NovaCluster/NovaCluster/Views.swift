@@ -124,9 +124,11 @@ struct ContentView: View {
         .onChange(of: kioskOn, initial: true) { _, on in setKeepAwake(on) }
         #endif
         .preferredColorScheme(.dark)
+        #if os(iOS) || os(tvOS)
         #if os(iOS)
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
+        #endif
         .sheet(isPresented: $showSettings) {
             SettingsSheet(cluster: cluster) { showSettings = false }
         }
@@ -134,6 +136,18 @@ struct ContentView: View {
             UIApplication.shared.isIdleTimerDisabled = (p == .active)
             if p == .active { cluster.start() } else { cluster.stop() }
         }
+        #endif
+        #if os(tvOS)
+        // Siri Remote: left / right step the view (and pause kiosk), Play/Pause opens Settings.
+        .onMoveCommand { dir in
+            noteTouch()
+            switch dir {
+            case .right: modeRaw = mode.next.rawValue
+            case .left: modeRaw = mode.next.next.rawValue
+            default: break
+            }
+        }
+        .onPlayPauseCommand { showSettings = true }
         #endif
         .onAppear {
             map.update(snap); version &+= 1; cluster.start()
@@ -239,9 +253,17 @@ struct ContentView: View {
 
     /// The wordmark: tap switches views, long-press opens settings.
     private func mark(u: CGFloat) -> some View {
+        #if os(tvOS)
+        // Apple TV: the wordmark is a focusable button — select steps the view (Play/Pause opens Settings).
+        Button { modeRaw = mode.next.rawValue; noteTouch() } label: {
+            Wordmark(u: u, subtitle: mode.subtitle, paused: !isLive)
+        }
+        .buttonStyle(TVGlowFocus())
+        #else
         Wordmark(u: u, subtitle: mode.subtitle, paused: !isLive)
             .onTapGesture { modeRaw = mode.next.rawValue }
             .onLongPressGesture(minimumDuration: 0.8) { presentSettings() }
+        #endif
     }
 
     private func mapArea(u: CGFloat) -> some View {
@@ -268,6 +290,7 @@ struct ContentView: View {
                 }
             }
             #endif
+            #if !os(tvOS)
             .onTapGesture { loc in
                 // A station (core or label) opens its drill-down; anything else (a moon) shows its tooltip.
                 let g = MapGeometry(size: mg.size, stations: map.stations)
@@ -277,6 +300,7 @@ struct ContentView: View {
                     pointer.tap = loc
                 }
             }
+            #endif
             .overlay(alignment: .bottomLeading) {
                 if let ups = snap?.ups, !ups.isEmpty {
                     let u = max(0.8, min(mg.size.width / 1040, mg.size.height / 760))
@@ -817,9 +841,9 @@ struct LessonCaption: View {
     }
 }
 
-// MARK: - Settings (iPad)
+// MARK: - Settings (iPad + Apple TV)
 
-#if os(iOS)
+#if os(iOS) || os(tvOS)
 struct SettingsSheet: View {
     let cluster: ClusterModel
     let done: () -> Void
@@ -845,7 +869,9 @@ struct SettingsSheet: View {
                 KioskSettingsSection()
             }
             .navigationTitle("Nova Cluster")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel", action: done) }
                 ToolbarItem(placement: .confirmationAction) {
@@ -867,10 +893,17 @@ struct KioskSettingsSection: View {
     var body: some View {
         Section {
             Toggle("Kiosk mode", isOn: $on)
+            #if os(tvOS)
+            Picker("Each view", selection: $interval) {
+                ForEach([30.0, 60, 120, 300, 600], id: \.self) { Text("\(Int($0)) s").tag($0) }
+            }
+            .disabled(!on)
+            #else
             Stepper(value: $interval, in: 10...600, step: 10) {
                 LabeledContent("Each view", value: "\(Int(KioskPolicy.clamp(interval))) s")
             }
             .disabled(!on)
+            #endif
         } header: { Text("Kiosk") } footer: {
             Text("Cycles Cluster Map → Dashboard → Constellation. A touch pauses it for two minutes. Also novacluster://kiosk?on=1&interval=60.")
         }

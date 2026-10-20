@@ -226,6 +226,7 @@ struct DashboardScreen<Mark: View>: View {
                     ForEach(rows[r]) { s in
                         MachineCard(s: s, hue: colors.hue(for: s.name), u: u, lines: activityLines)
                             .contentShape(Rectangle())
+                            .tvFocusable()
                             .onTapGesture { selectNode(s.name) }
                     }
                     ForEach(0..<(n - rows[r].count), id: \.self) { _ in

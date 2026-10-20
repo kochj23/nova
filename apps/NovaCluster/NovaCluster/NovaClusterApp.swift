@@ -23,7 +23,7 @@ struct NovaClusterApp: App {
     }
 
     var body: some Scene {
-        #if os(iOS)
+        #if os(iOS) || os(tvOS)
         WindowGroup {
             ContentView(cluster: cluster)
                 .onAppear { UIApplication.shared.isIdleTimerDisabled = true }

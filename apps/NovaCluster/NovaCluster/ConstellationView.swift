@@ -259,6 +259,7 @@ struct MinionStrip: View {
                         ForEach(rows[r]) { m in
                             MinionCard(node: m, hue: colors.hue(for: m.node), u: u)
                                 .contentShape(Rectangle())
+                                .tvFocusable()
                                 .onTapGesture { selectNode(m.node) }
                         }
                         ForEach(0..<(n - rows[r].count), id: \.self) { _ in

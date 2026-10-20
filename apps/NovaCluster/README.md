@@ -1,6 +1,6 @@
 # Nova Cluster (Mac + iPad)
 
-**Version 1.1.0 (build 3)** · macOS 14+ · iPadOS 17+ · SwiftUI · xcodegen
+**Version 1.1.0 (build 3)** · macOS 14+ · iPadOS 17+ · tvOS 17+ · SwiftUI · xcodegen
 
 Nova Cluster is a live view of what every machine in Nova's cluster is doing with its language
 models, and what that work turns into. Each machine's Ollama and llama.cpp traffic arrives from
@@ -17,6 +17,7 @@ There is one multiplatform xcodegen project with two app targets that share ever
 |---|---|---|---|
 | `NovaClusterMac` | macOS 14+ | `net.digitalnoise.NovaCluster` | `Nova Cluster.app` |
 | `NovaClusterPad` | iPadOS 17+ | `net.digitalnoise.NovaClusterPad` | `NovaCluster.app` / `.ipa` |
+| `NovaClusterTV` | tvOS 17+ | `net.digitalnoise.NovaClusterTV` | `NovaCluster.app` (Apple TV, 1.1.0) |
 | `NovaClusterTests` | macOS 14+ | `net.digitalnoise.NovaClusterTests` | XCTest bundle (not hosted in the app) |
 
 ## Features
@@ -195,7 +196,7 @@ flowchart LR
     M --> AGG
     AGG <--> PG
     AGG --> CL
-    subgraph App["Nova Cluster (shared SwiftUI sources)"]
+    subgraph App["Nova Cluster — Mac · iPad · Apple TV (shared SwiftUI sources)"]
         CM["ClusterModel<br/>2 s poller · cache · CometQueue · TokenTicker"]
         CFG["ClusterConfig<br/>UserDefaults + Keychain"]
         MAP["ClusterMapView<br/>Canvas 30 fps"]
@@ -276,6 +277,26 @@ xcrun devicectl device process launch --device <udid> --terminate-existing \
 
 On first launch iOS may ask for Local Network access. Tap **Allow**.
 
+## Apple TV app (1.1.0, Nova wish #60)
+
+The same SwiftUI views as a wall display. It **starts in kiosk mode** (map → dashboard → constellation, 60 s
+each). Siri Remote: **select** on the wordmark steps the view, **left / right** step back and forth (and pause
+the kiosk for two minutes), **Play/Pause** opens Settings, and the dashboard and minion cards take focus (lift)
+so a click opens a machine's drill-down. The default viewer node is `apple-tv`, enrolled on the hub as a
+read-only viewer (its token is in the Studio's login Keychain, service `nova-cluster-viewer`, account
+`apple-tv`). Configure it once from the Mac:
+
+```sh
+xcrun devicectl device install app --device <tv-udid> <dd>/Build/Products/Release-appletvos/NovaCluster.app
+xcrun devicectl device process launch --device <tv-udid> --terminate-existing \
+  --environment-variables "{\"NOVA_CLUSTER_HUB\":\"http://nova-core8.digitalnoise.net:37590\",\"NOVA_CLUSTER_NODE\":\"apple-tv\",\"NOVA_CLUSTER_TOKEN\":\"$(security find-generic-password -a apple-tv -s nova-cluster-viewer -w)\"}" \
+  net.digitalnoise.NovaClusterTV
+```
+
+**Hub by name.** All three apps reach the hub by its DNS name (`nova-core8.digitalnoise.net`). App Transport
+Security's local-networking exemption covers `.local` names and IPs only, so the Info.plists add an exception for
+`digitalnoise.net` (plain HTTP, subdomains included) and nothing else.
+
 ## Configuration
 
 Nothing network-specific is compiled in. The hub can come from any of these sources:
@@ -309,6 +330,9 @@ xcodegen generate                      # project.yml is the source of truth; nev
 xcodebuild -project NovaCluster.xcodeproj -scheme NovaClusterMac -configuration Release \
   -destination 'generic/platform=macOS' -derivedDataPath <dd> -allowProvisioningUpdates build
 
+# Apple TV
+xcodebuild -project NovaCluster.xcodeproj -scheme NovaClusterTV -configuration Release \
+  -destination 'generic/platform=tvOS' -derivedDataPath <dd> -allowProvisioningUpdates build
 # iPad
 xcodebuild -project NovaCluster.xcodeproj -scheme NovaClusterPad -configuration Release \
   -destination 'generic/platform=iOS' -derivedDataPath <dd> -allowProvisioningUpdates build

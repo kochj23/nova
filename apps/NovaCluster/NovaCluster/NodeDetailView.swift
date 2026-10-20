@@ -258,7 +258,11 @@ struct AlertsSheet: View {
             HStack {
                 Text("Scheduler alerts").font(.system(size: 22, weight: .semibold))
                 Spacer()
+                #if os(tvOS)
+                Button("Done", action: done)
+                #else
                 Button("Done", action: done).keyboardShortcut(.cancelAction)
+                #endif
             }
             if let l = alerts?.leader {
                 Text("scheduler-core leader: \(l)").font(.system(size: 13, design: .monospaced)).foregroundStyle(.white.opacity(0.6))
@@ -335,3 +339,32 @@ struct PublishedTicker: View {
         }
     }
 }
+
+
+extension View {
+    /// Apple TV: cards take focus (with the system lift) so the remote can reach them; a no-op elsewhere.
+    @ViewBuilder func tvFocusable() -> some View {
+        #if os(tvOS)
+        self.focusable().hoverEffect(.lift)
+        #else
+        self
+        #endif
+    }
+}
+
+#if os(tvOS)
+/// Apple TV focus without the system's white platter: the focused control grows a little and glows amber.
+struct TVGlowFocus: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { FocusLabel(configuration: configuration) }
+    private struct FocusLabel: View {
+        let configuration: ButtonStyle.Configuration
+        @Environment(\.isFocused) private var focused
+        var body: some View {
+            configuration.label
+                .scaleEffect(configuration.isPressed ? 0.97 : (focused ? 1.08 : 1))
+                .shadow(color: focused ? Palette.warm.opacity(0.55) : .clear, radius: 14)
+                .animation(.easeOut(duration: 0.15), value: focused)
+        }
+    }
+}
+#endif

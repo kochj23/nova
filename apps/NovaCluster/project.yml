@@ -45,6 +45,11 @@ targets:
         NSLocalNetworkUsageDescription: "Nova Cluster shows what Nova's machines are doing with their language models, from Nova's hub on your network."
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+          # The hub is reached by its DNS name (nova-core8.digitalnoise.net), never an IP: plain HTTP on the LAN.
+          NSExceptionDomains:
+            digitalnoise.net:
+              NSIncludesSubdomains: true
+              NSExceptionAllowsInsecureHTTPLoads: true
         CFBundleURLTypes:
           - CFBundleURLName: net.digitalnoise.NovaCluster
             CFBundleURLSchemes:
@@ -91,6 +96,11 @@ targets:
         NSLocalNetworkUsageDescription: "Nova Cluster shows what Nova's machines are doing with their language models, from Nova's hub on your network."
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+          # The hub is reached by its DNS name (nova-core8.digitalnoise.net), never an IP: plain HTTP on the LAN.
+          NSExceptionDomains:
+            digitalnoise.net:
+              NSIncludesSubdomains: true
+              NSExceptionAllowsInsecureHTTPLoads: true
         CFBundleURLTypes:
           - CFBundleURLName: net.digitalnoise.NovaCluster
             CFBundleURLSchemes:
@@ -108,6 +118,54 @@ targets:
     scheme:
       testTargets:
         - NovaClusterTests
+
+  # Apple TV (1.1.0, Nova wish #60): the same SwiftUI views as a wall display. Starts in kiosk mode; the Siri
+  # Remote's select steps the view, Play/Pause opens Settings, cards take focus for the drill-down.
+  NovaClusterTV:
+    type: application
+    platform: tvOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: NovaCluster
+        excludes:
+          - "**/.DS_Store"
+          - "Info.plist"
+          - "Assets.xcassets"
+      # Constellation core shared with the Nova Minion screensaver.
+      - path: ../Shared
+        excludes:
+          - "**/.DS_Store"
+    info:
+      path: NovaClusterTV/Info.plist
+      properties:
+        CFBundleDisplayName: Nova Cluster
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        UILaunchScreen:
+          UIColorName: ""
+        UIUserInterfaceStyle: Dark
+        NSLocalNetworkUsageDescription: "Nova Cluster shows what Nova's machines are doing with their language models, from Nova's hub on your network."
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          # The hub is reached by its DNS name (nova-core8.digitalnoise.net), never an IP: plain HTTP on the LAN.
+          NSExceptionDomains:
+            digitalnoise.net:
+              NSIncludesSubdomains: true
+              NSExceptionAllowsInsecureHTTPLoads: true
+        CFBundleURLTypes:
+          - CFBundleURLName: net.digitalnoise.NovaCluster
+            CFBundleURLSchemes:
+              - novacluster
+    settings:
+      base:
+        PRODUCT_NAME: NovaCluster
+        PRODUCT_BUNDLE_IDENTIFIER: net.digitalnoise.NovaClusterTV
+        TARGETED_DEVICE_FAMILY: "3"
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "Apple Development"
+        DEVELOPMENT_TEAM: QRRCB8HB3W
+        DEAD_CODE_STRIPPING: YES
+    scheme: {}
 
   # Logic + layout tests. Not hosted in the app (no window, no live hub, no real UserDefaults/Keychain):
   # the sources under test are compiled straight into the bundle.

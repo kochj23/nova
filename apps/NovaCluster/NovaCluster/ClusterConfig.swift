@@ -19,6 +19,8 @@ struct ClusterConfig: Equatable {
 
     #if os(macOS)
     static let defaultNode = "mac-studio-view"
+    #elseif os(tvOS)
+    static let defaultNode = "apple-tv"
     #else
     static let defaultNode = "ipad-air"
     #endif
