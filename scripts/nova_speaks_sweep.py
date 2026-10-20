@@ -53,7 +53,7 @@ def sh(host, cmd, timeout=60):
 
 def copy_to(host, src, dst):
     if not host["ssh"]:
-        if os.path.abspath(src) != os.path.abspath(dst):
+        if os.path.realpath(src) != os.path.realpath(dst):   # ~/.openclaw/scripts is a symlink to these scripts
             pathlib.Path(dst).parent.mkdir(parents=True, exist_ok=True); subprocess.run(["cp", src, dst], check=True)
     else:
         sh(host, f"mkdir -p {shlex.quote(os.path.dirname(dst))}")
@@ -154,8 +154,14 @@ def scan_new(cur, origin_ref=None):
         if not d: continue
         cur.execute("SELECT %s::timestamptz >= %s::timestamptz", (d.group(1), RULE_SINCE))
         if not cur.fetchone()[0]: continue
-        cur.execute("SELECT 1 FROM nova_speaks_renders WHERE slug=%s", (p.stem,))
-        if cur.fetchone(): continue
+        cur.execute("SELECT article_path FROM nova_speaks_renders WHERE slug=%s", (p.stem,))
+        row = cur.fetchone()
+        if row:
+            # the 2026-10-19 section consolidation moved files (operations -> burbank-ops, ...): follow the move
+            if not remote and row[0] != str(p) and not os.path.exists(row[0]):
+                cur.execute("UPDATE nova_speaks_renders SET article_path=%s, section=%s, url=%s WHERE slug=%s",
+                            (str(p), p.parent.name, f"{SITE}/{p.parent.name}/{p.stem}/", p.stem))
+            continue
         section = p.parent.name; url = f"{SITE}/{section}/{p.stem}/"
         if not is_live(url): log(f"not live yet: {p.stem}"); continue
         t = re.search(r'^title:\s*"?(.+?)"?\s*$', fm, re.M)
@@ -259,6 +265,9 @@ def dispatch(cur, hosts):
         except Exception as e:
             log(f"{h['host']} unreachable: {e}"); continue
         slug, section, art, url = row
+        if not os.path.exists(art):   # the article's problem, not the host's: don't burn the host's 3 strikes on it
+            cur.execute("UPDATE nova_speaks_renders SET status='failed', finished_at=now(), note=%s WHERE slug=%s", (f"article missing: {art}", slug))
+            log(f"article missing, failed: {slug}"); continue
         try:
             rart = f"{h['journal_dir']}/content/{section}/{slug}.md"
             copy_to(h, art, rart)
