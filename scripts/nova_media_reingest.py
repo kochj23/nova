@@ -630,6 +630,12 @@ def do_item(oc, mc, item: tuple, left: float, stats: dict, post=None, transcribe
         finish(oc, item[0], "pending", error="batch window closed mid-file")
         log(f" {tag} window closed mid-file; back to pending")
         return False
+    except NodeUnreachable as e:
+        # 2026-10-20: nova-core7 heartbeated over Wi-Fi with a dead Ethernet IP; 5,553 good files burned all
+        # their attempts in seconds each. A dead node stops its own loop instead.
+        finish(oc, item[0], "pending", error=str(e)[:300])
+        log(f" {tag} {e}; back to pending, stopping this node's loop")
+        return False
     except Exception as e:  # noqa: BLE001 — one bad file never stops the night
         oc.execute("SELECT attempts FROM media_reingest_queue WHERE file_path = %s", (item[0],))
         att = (oc.fetchone() or [0])[0] + 1
@@ -714,6 +720,10 @@ def extract_cmd(path: str) -> str:
             " -vn -ac 1 -ar 16000 -f s16le -")
 
 
+class NodeUnreachable(RuntimeError):
+    """The minion could not be reached; the item goes back to pending without spending an attempt."""
+
+
 def stream_pcm(path: str, host: str | None, dest: str, timeout: float, _popen=subprocess.Popen) -> None:
     """media host ffmpeg -> (this host) -> the minion's ~/.nova-minion/<dest>, or a local file when host is None."""
     src = _popen(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", MEDIA_HOST, extract_cmd(path)],
@@ -733,6 +743,8 @@ def stream_pcm(path: str, host: str | None, dest: str, timeout: float, _popen=su
     finally:
         if out:
             out.close()
+    if rc_dst == 255:   # ssh to the minion itself failed: the node's fault, not the file's
+        raise NodeUnreachable(f"minion {host} unreachable (ssh 255)")
     if rc_src or rc_dst:
         err = (src.stderr.read() if src.stderr else b"") or b""
         raise RuntimeError(f"audio extraction on {MEDIA_HOST} failed (ffmpeg {rc_src}, copy {rc_dst}): "
