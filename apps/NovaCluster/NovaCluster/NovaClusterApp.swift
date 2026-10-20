@@ -65,7 +65,7 @@ struct NovaClusterApp: App {
 import AppKit
 
 final class MacAppDelegate: NSObject, NSApplicationDelegate {
-    static let menuBarKey = "menubar.enabled"
+    static let menuBarKey = StatusItemController.menuBarKey
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.appearance = NSAppearance(named: .darkAqua)

@@ -31,9 +31,11 @@
 		6F34B03F14F37FF1C2143227 /* NovaClusterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CADB3C72F3259EE50E0893B /* NovaClusterApp.swift */; };
 		7CA52776663E0C511416FC20 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9125D25D592C3C4A77303531 /* Views.swift */; };
 		81FDFDDEC2FFB97BAE2713F6 /* ClusterMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4647A44D805423ED4850D6D /* ClusterMap.swift */; };
+		829FBB3579A86E1686282DF9 /* MenuBarHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = C56F43247A86D6DAE5636ADE /* MenuBarHealth.swift */; };
 		8885A9553D4DA3BB86664073 /* MenuBarHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = C56F43247A86D6DAE5636ADE /* MenuBarHealth.swift */; };
 		9870D341F784253BBCE117AB /* ConstellationFleet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB6ACCEC499C3BD244511037 /* ConstellationFleet.swift */; };
 		9C98E7F5A58B0D46F3183295 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C08C85821DFE82FC434B3C5 /* DashboardView.swift */; };
+		A4B6958F8F674CC64E76DA3C /* Cluster11SevenCatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39EF3ED1CA0A1D5F65E6E8DC /* Cluster11SevenCatTests.swift */; };
 		A7DD4B8784BA1261B641376C /* Cluster.swift in Sources */ = {isa = PBXBuildFile; fileRef = C39A9ACD991F51B4B62E164E /* Cluster.swift */; };
 		A9F9EB6A9CF09F585ADF6C76 /* Palette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 700FE44BE3D2E67271438271 /* Palette.swift */; };
 		B01B7B143DFE19B6C35422E1 /* ConstellationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109108D8DD81DDF87532EA87 /* ConstellationTests.swift */; };
@@ -55,6 +57,7 @@
 		109108D8DD81DDF87532EA87 /* ConstellationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConstellationTests.swift; sourceTree = "<group>"; };
 		170C4889C16562313989172B /* MacSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSettings.swift; sourceTree = "<group>"; };
 		2028B71DFC8AF1B259B7D4A3 /* NodeLinesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeLinesTests.swift; sourceTree = "<group>"; };
+		39EF3ED1CA0A1D5F65E6E8DC /* Cluster11SevenCatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cluster11SevenCatTests.swift; sourceTree = "<group>"; };
 		545DEA8821093A5EFF1BC9A2 /* NodeDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeDetailView.swift; sourceTree = "<group>"; };
 		5AE6ACA02422ADEE69F2BF7E /* NovaClusterTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NovaClusterTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		700FE44BE3D2E67271438271 /* Palette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Palette.swift; sourceTree = "<group>"; };
@@ -112,6 +115,7 @@
 		B2F26B1BCF98F829D76A568E /* Tests */ = {
 			isa = PBXGroup;
 			children = (
+				39EF3ED1CA0A1D5F65E6E8DC /* Cluster11SevenCatTests.swift */,
 				109108D8DD81DDF87532EA87 /* ConstellationTests.swift */,
 				DB64327D9566EC841382BB8D /* KioskTests.swift */,
 				FBCE191F06C5CBCA0FC76890 /* NodeFactsTests.swift */,
@@ -318,10 +322,12 @@
 			buildActionMask = 2147483647;
 			files = (
 				FD07102827296372A44EF6F5 /* Cluster.swift in Sources */,
+				A4B6958F8F674CC64E76DA3C /* Cluster11SevenCatTests.swift in Sources */,
 				D9EC7E22CB0FE60C8CEA6E87 /* ClusterConfig.swift in Sources */,
 				5CBF7074213855DAE8204857 /* ConstellationFleet.swift in Sources */,
 				B01B7B143DFE19B6C35422E1 /* ConstellationTests.swift in Sources */,
 				B44719D7ADF38A3B6FB31B90 /* KioskTests.swift in Sources */,
+				829FBB3579A86E1686282DF9 /* MenuBarHealth.swift in Sources */,
 				3EF6FB7C912F3608D21DA6B0 /* NodeFacts.swift in Sources */,
 				364C257BBEEBC05868D228F5 /* NodeFactsTests.swift in Sources */,
 				FC68F9138BE671A204B34237 /* NodeLines.swift in Sources */,

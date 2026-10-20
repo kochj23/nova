@@ -123,6 +123,7 @@ targets:
       - path: NovaCluster/Palette.swift
       - path: NovaCluster/ConstellationFleet.swift
       - path: NovaCluster/NodeFacts.swift
+      - path: NovaClusterMac/MenuBarHealth.swift
       - path: ../Shared/NovaConstellationCore.swift
     settings:
       base:

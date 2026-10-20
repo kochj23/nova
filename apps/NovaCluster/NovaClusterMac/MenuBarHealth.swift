@@ -19,7 +19,10 @@ final class StatusItemController: NSObject {
     private var openMain: (() -> Void)?
     private var defaultsObserver: NSObjectProtocol?
 
-    static var enabled: Bool { UserDefaults.standard.object(forKey: MacAppDelegate.menuBarKey) as? Bool ?? true }
+    static let menuBarKey = "menubar.enabled"
+    static var enabled: Bool { UserDefaults.standard.object(forKey: menuBarKey) as? Bool ?? true }
+    /// Tests: whether the status item exists right now.
+    var isShowing: Bool { item != nil }
 
     /// Called once from the main window; later calls just refresh the "open" action.
     func attach(_ status: MenuBarStatus, openMain: @escaping () -> Void) {
