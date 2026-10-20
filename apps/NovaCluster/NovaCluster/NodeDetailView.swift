@@ -11,9 +11,12 @@
 import SwiftUI
 
 /// "Open this machine's drill-down", available anywhere in the view tree.
-struct SelectNodeAction {
+/// Equatable and always equal: ContentView rebuilds the closure on every render, and an environment value
+/// SwiftUI can't compare is treated as changed, re-checking every reader each frame (1.1.0 dev: 80% CPU).
+struct SelectNodeAction: Equatable {
     var run: (String) -> Void = { _ in }
     func callAsFunction(_ node: String) { run(node) }
+    static func == (_: SelectNodeAction, _: SelectNodeAction) -> Bool { true }
 }
 
 private struct SelectNodeKey: EnvironmentKey {

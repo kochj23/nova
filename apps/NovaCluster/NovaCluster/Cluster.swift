@@ -265,6 +265,8 @@ final class ClusterModel {
     @ObservationIgnored let comets = CometQueue()
     /// Smooth "tokens today" between polls.
     @ObservationIgnored let ticker = TokenTicker()
+    /// The Mac menu-bar extra's throttled summary (not observed through the model: see MenuBarStatus).
+    @ObservationIgnored let menuStatus = MenuBarStatus()
 
     var isOffline: Bool { failures >= 2 || (snapshot == nil && failures > 0) }
 
@@ -324,9 +326,11 @@ final class ClusterModel {
                 defaults.set(data, forKey: Self.cacheKey)
             }
             failures = 0; lastError = nil; lastSuccess = Date()
+            menuStatus.update(snapshot, offline: false)
         } catch {
             failures += 1
             lastError = (error as? URLError)?.code == .badServerResponse ? "hub refused" : error.localizedDescription
+            menuStatus.update(snapshot, offline: isOffline)
         }
     }
 

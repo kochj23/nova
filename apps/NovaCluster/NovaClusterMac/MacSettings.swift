@@ -12,6 +12,7 @@ struct MacSettingsView: View {
     let cluster: ClusterModel
     @State private var draft = ClusterConfig.current
     @State private var saved = false
+    @AppStorage(MacAppDelegate.menuBarKey) private var menuBarOn = true
 
     var body: some View {
         Form {
@@ -34,6 +35,12 @@ struct MacSettingsView: View {
             }
 
             KioskSettingsSection()
+
+            Section("Menu bar") {
+                Toggle("Show fleet health in the menu bar", isOn: $menuBarOn)
+                Text("With it showing, closing the window keeps Nova Cluster running up there.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
 
             HStack {
                 if saved { Text("Saved").foregroundStyle(.secondary) }

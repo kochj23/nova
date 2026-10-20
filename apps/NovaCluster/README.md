@@ -127,6 +127,23 @@ front. Click (Mac) or tap (iPad) to open it in the browser; only `https://nova.d
 ever opened. The hub reads the last 4 days of newly added posts from the journal repo's git history on the
 Studio (title, section, emoji, link, publish time), skipping posts that have since moved.
 
+### Menu-bar item (Mac, 1.1.0)
+
+A menu-bar item shows fleet health at a glance: `⬢ 10/10`, or `⚠ 9/10 · 2!` when a machine is silent or a
+scheduler alert is up. Its menu lists machines live, the scheduler alerts, each UPS
+(`Master Bedroom UPS · 20% load · 180 W · 100% · 28 min · on line`), the newest post, **Open Nova Cluster (⌘O)**
+and Quit. Turn it off in Settings › Menu bar. While it shows, closing the window keeps the app running there.
+
+It is a plain AppKit `NSStatusItem` + `NSMenu`, **not** a SwiftUI `MenuBarExtra`: a 1.1.0 development build used
+`MenuBarExtra`, whose label lives in the app's scene graph; every update made SwiftUI rebuild the main menu and
+the app beach-balled (2026-10-19). The item reads `MenuBarStatus`, an Equatable summary the poller updates at
+most once per 2 s poll and only when something actually changed (a unit test pins the rate).
+
+**Hidden = idle.** On the Mac the window shows only its background while it can't be seen (app hidden, window
+minimized or fully covered): canvases and timelines pause and the polls change no views; the full view rebuilds
+the moment the window is visible again. Polling continues so the menu-bar item stays current. Verified: a
+120 s hidden run under `sample` had the main thread 99.6% idle with zero main-menu rebuilds.
+
 ### Kiosk mode (1.1.0)
 
 For the iPad on its stand, a Mac in full screen, or the Apple TV: the app steps
@@ -185,12 +202,15 @@ flowchart LR
         DASH["DashboardView<br/>cards + TrafficStarfield"]
         CON["ConstellationView<br/>lesson stars + minion cards"]
         DET["NodeDetailView<br/>link · backdoor · temps · UPS · last 10 jobs"]
+        MBS["MenuBarStatus<br/>Equatable summary, poll-rate"]
+        SIC["StatusItemController<br/>AppKit NSStatusItem (Mac)"]
         CORE["Shared/NovaConstellationCore<br/>StableHash · SeededRandom · LessonText · layout"]
         NL["NodeLines<br/>LLM job + purpose"]
     end
     CL -- "JSON, X-Minion-Token" --> CM
     CFG --> CM
     CM --> MAP & DASH & CON & DET
+    CM --> MBS --> SIC
     CORE --> CON
     CORE --> SAVER["Nova Minion screensaver<br/>(Core Animation, own target)"]
     NL --> MAP & DASH

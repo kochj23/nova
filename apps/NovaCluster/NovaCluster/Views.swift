@@ -33,13 +33,28 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var phase
     #if os(macOS)
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
     #endif
 
     private var snap: ClusterSnapshot? { cluster.snapshot }
 
+    /// Mac (1.1.0): animate only while the window can actually be seen. Hidden, minimized or fully covered,
+    /// the canvases pause (polling continues, so the menu-bar item stays current).
+    #if os(macOS)
+    @State private var windowVisible = true
+    #endif
+
+    private var showsContent: Bool {
+        #if os(macOS)
+        return windowVisible
+        #else
+        return true
+        #endif
+    }
+
     private var isLive: Bool {
         #if os(macOS)
-        return true
+        return windowVisible
         #else
         return phase == .active
         #endif
@@ -54,15 +69,19 @@ struct ContentView: View {
             }
             .ignoresSafeArea()
             DustLayer().ignoresSafeArea()
-            switch mode {
-            case .dashboard:
-                DashboardScreen(cluster: cluster, stations: map.stations, paused: !isLive) { u in mark(u: u) }
-                    .transition(.opacity)
-            case .constellation:
-                ConstellationScreen(cluster: cluster, stations: map.stations, paused: !isLive) { u in mark(u: u) }
-                    .transition(.opacity)
-            case .map:
-                mapScreen.transition(.opacity)
+            // Mac: while no window can be seen, show only the background, so the 2 s polls change no views
+            // (they still feed the menu-bar item). The full view rebuilds from live state when it's visible again.
+            if showsContent {
+                switch mode {
+                case .dashboard:
+                    DashboardScreen(cluster: cluster, stations: map.stations, paused: !isLive) { u in mark(u: u) }
+                        .transition(.opacity)
+                case .constellation:
+                    ConstellationScreen(cluster: cluster, stations: map.stations, paused: !isLive) { u in mark(u: u) }
+                        .transition(.opacity)
+                case .map:
+                    mapScreen.transition(.opacity)
+                }
             }
         }
         .animation(.easeInOut(duration: 0.5), value: modeRaw)
@@ -74,8 +93,10 @@ struct ContentView: View {
                 let u = max(0.8, min(geo.size.width, geo.size.height) / 820)
                 #endif
                 VStack(spacing: 5 * u) {
+                    if showsContent {
                     AlertStrip(alerts: snap?.alerts, u: u)
                     PublishedTicker(posts: snap?.published ?? [], u: u)
+                }
                 }
                 .frame(maxWidth: geo.size.width * 0.56)
                 .frame(maxWidth: .infinity)
@@ -114,8 +135,23 @@ struct ContentView: View {
             if p == .active { cluster.start() } else { cluster.stop() }
         }
         #endif
-        .onAppear { map.update(snap); version &+= 1; cluster.start() }
-        .onChange(of: snap) { _, s in map.update(s); version &+= 1 }
+        .onAppear {
+            map.update(snap); version &+= 1; cluster.start()
+            #if os(macOS)
+            StatusItemController.shared.attach(cluster.menuStatus) { openWindow(id: "cluster") }
+            windowVisible = MacVisibility.anyMainWindowVisible()
+            #endif
+        }
+        #if os(macOS)
+        .onReceive(MacVisibility.changes) { _ in
+            let v = MacVisibility.anyMainWindowVisible()
+            if v != windowVisible {
+                windowVisible = v
+                if v { map.update(snap); version &+= 1 }      // catch up on what changed while hidden
+            }
+        }
+        #endif
+        .onChange(of: snap) { _, s in if showsContent { map.update(s); version &+= 1 } }
         .onOpenURL { url in
             if ClusterConfig.applyView(url: url) { return }
             if KioskPolicy.apply(url: url) { lastSwitch = Date(); return }
@@ -203,7 +239,7 @@ struct ContentView: View {
 
     /// The wordmark: tap switches views, long-press opens settings.
     private func mark(u: CGFloat) -> some View {
-        Wordmark(u: u, subtitle: mode.subtitle)
+        Wordmark(u: u, subtitle: mode.subtitle, paused: !isLive)
             .onTapGesture { modeRaw = mode.next.rawValue }
             .onLongPressGesture(minimumDuration: 0.8) { presentSettings() }
     }
@@ -274,11 +310,12 @@ struct ContentView: View {
 struct Wordmark: View {
     let u: CGFloat
     var subtitle = "· CLUSTER"
+    var paused = false
 
     var body: some View {
         // A slow 10 fps breath drawn in a fixed-size Canvas, so it never touches layout
         // (a repeatForever animation would redraw the window at display rate).
-        TimelineView(.animation(minimumInterval: 0.1)) { tl in
+        TimelineView(.animation(minimumInterval: 0.1, paused: paused)) { tl in
             let t = tl.date.timeIntervalSinceReferenceDate
             Canvas { ctx, size in
                 ctx.opacity = 0.71 + 0.21 * sin(t * 2 * .pi / 10)

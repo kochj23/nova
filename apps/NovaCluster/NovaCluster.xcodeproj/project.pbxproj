@@ -31,6 +31,7 @@
 		6F34B03F14F37FF1C2143227 /* NovaClusterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CADB3C72F3259EE50E0893B /* NovaClusterApp.swift */; };
 		7CA52776663E0C511416FC20 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9125D25D592C3C4A77303531 /* Views.swift */; };
 		81FDFDDEC2FFB97BAE2713F6 /* ClusterMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4647A44D805423ED4850D6D /* ClusterMap.swift */; };
+		8885A9553D4DA3BB86664073 /* MenuBarHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = C56F43247A86D6DAE5636ADE /* MenuBarHealth.swift */; };
 		9870D341F784253BBCE117AB /* ConstellationFleet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB6ACCEC499C3BD244511037 /* ConstellationFleet.swift */; };
 		9C98E7F5A58B0D46F3183295 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C08C85821DFE82FC434B3C5 /* DashboardView.swift */; };
 		A7DD4B8784BA1261B641376C /* Cluster.swift in Sources */ = {isa = PBXBuildFile; fileRef = C39A9ACD991F51B4B62E164E /* Cluster.swift */; };
@@ -70,6 +71,7 @@
 		AD81C272AC09022CFF3383D7 /* ClusterConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterConfig.swift; sourceTree = "<group>"; };
 		C39A9ACD991F51B4B62E164E /* Cluster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cluster.swift; sourceTree = "<group>"; };
 		C4647A44D805423ED4850D6D /* ClusterMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterMap.swift; sourceTree = "<group>"; };
+		C56F43247A86D6DAE5636ADE /* MenuBarHealth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarHealth.swift; sourceTree = "<group>"; };
 		D722EFD1B4DA8014C032194A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		DB64327D9566EC841382BB8D /* KioskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KioskTests.swift; sourceTree = "<group>"; };
 		F156BDC51B34A60ADF576BD9 /* NovaClusterPad.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = NovaClusterPad.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -91,6 +93,7 @@
 			children = (
 				07D292F2558B56C3E618E442 /* Assets.xcassets */,
 				170C4889C16562313989172B /* MacSettings.swift */,
+				C56F43247A86D6DAE5636ADE /* MenuBarHealth.swift */,
 			);
 			path = NovaClusterMac;
 			sourceTree = "<group>";
@@ -279,6 +282,7 @@
 				6053AA0B638698721146B018 /* ConstellationView.swift in Sources */,
 				647AE03B21E362DD0B2B472D /* DashboardView.swift in Sources */,
 				1787256FFD39386EE3AEDB0E /* MacSettings.swift in Sources */,
+				8885A9553D4DA3BB86664073 /* MenuBarHealth.swift in Sources */,
 				264E014E2713BD92B23B778E /* NodeDetailView.swift in Sources */,
 				EA7257CA2AC9FE8FAEEA3435 /* NodeFacts.swift in Sources */,
 				C773B41E3A2F121B27779A0E /* NodeLines.swift in Sources */,

@@ -150,3 +150,87 @@ enum PublishedText {
         return s
     }
 }
+
+/// Fleet health at a glance (1.1.0): the Mac menu-bar extra and the Apple TV corner.
+struct FleetHealth: Equatable {
+    var live: Int
+    var total: Int
+    var bad: Int
+    var warn: Int
+    var ups: [(String, NodeFacts.Level)]
+    var offline: Bool
+
+    static func == (a: FleetHealth, b: FleetHealth) -> Bool {
+        a.live == b.live && a.total == b.total && a.bad == b.bad && a.warn == b.warn && a.offline == b.offline
+            && a.ups.map(\.0) == b.ups.map(\.0) && a.ups.map(\.1) == b.ups.map(\.1)
+    }
+
+    init(_ s: ClusterSnapshot?, offline: Bool = false) {
+        let nodes = s?.allNodes ?? []
+        live = nodes.filter(\.isLive).count
+        total = nodes.count
+        let p = AlertText.problems(s?.alerts)
+        bad = p.filter { $0.level == "bad" }.count
+        warn = p.filter { $0.level == "warn" }.count
+        ups = (s?.ups ?? []).map { u in
+            let sum = NodeFacts.upsSummary(u)
+            return ("\(u.label ?? u.key) UPS · \(sum.0)", sum.1)
+        }
+        self.offline = offline
+    }
+
+    var level: NodeFacts.Level {
+        if offline || bad > 0 || live < total || ups.contains(where: { $0.1 == .bad }) { return .bad }
+        if warn > 0 || ups.contains(where: { $0.1 == .warn }) { return .warn }
+        return total == 0 ? .quiet : .good
+    }
+
+    /// Menu-bar title: "10/10" or "9/10 · 2!" (short: the menu bar is tight).
+    var title: String {
+        if offline { return "hub?" }
+        var s = "\(live)/\(total)"
+        if bad + warn > 0 { s += " · \(bad + warn)!" }
+        return s
+    }
+
+    /// The lines inside the menu.
+    var lines: [(String, NodeFacts.Level)] {
+        var out: [(String, NodeFacts.Level)] = []
+        out.append(offline ? ("Nova's hub is not answering", .bad)
+                           : ("\(live) of \(total) machines live", live < total ? .bad : .good))
+        if bad + warn > 0 {
+            out.append(("\(bad + warn) scheduler alert\(bad + warn == 1 ? "" : "s") (\(bad) red, \(warn) amber)", bad > 0 ? .bad : .warn))
+        } else if !offline {
+            out.append(("schedulers healthy", .good))
+        }
+        out += ups
+        return out
+    }
+}
+
+/// What the Mac menu-bar item shows (1.1.0), kept apart from ClusterModel and from SwiftUI's scene graph.
+/// A dev build used a SwiftUI MenuBarExtra: its label lives in the app's scene graph, every update made SwiftUI
+/// rebuild the main menu, and the app beach-balled. The item is now an AppKit NSStatusItem fed by this plain
+/// (non-observed) summary: `onChange` fires only when the summary actually changes — at most once per 2 s poll.
+@MainActor
+final class MenuBarStatus {
+    struct Post: Equatable { var text: String; var url: URL }
+    private(set) var health = FleetHealth(nil)
+    private(set) var problems: [String] = []
+    private(set) var latest: Post?
+    /// How many times the summary changed (tests: must stay at or below the number of polls).
+    private(set) var changes = 0
+    var onChange: (() -> Void)?
+
+    func update(_ s: ClusterSnapshot?, offline: Bool) {
+        let h = FleetHealth(s, offline: offline)
+        let p = Array(AlertText.problems(s?.alerts).prefix(4).map { NodeLines.clean(AlertText.line($0), max: 70) })
+        let l = s?.published?.first.flatMap { post in
+            PublishedText.link(post).map { Post(text: NodeLines.clean(PublishedText.line(post), max: 70), url: $0) }
+        }
+        guard h != health || p != problems || l != latest else { return }
+        health = h; problems = p; latest = l
+        changes += 1
+        onChange?()
+    }
+}

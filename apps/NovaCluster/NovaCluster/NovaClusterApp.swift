@@ -56,6 +56,7 @@ struct NovaClusterApp: App {
         Settings {
             MacSettingsView(cluster: cluster)
         }
+
         #endif
     }
 }
@@ -64,9 +65,14 @@ struct NovaClusterApp: App {
 import AppKit
 
 final class MacAppDelegate: NSObject, NSApplicationDelegate {
+    static let menuBarKey = "menubar.enabled"
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.appearance = NSAppearance(named: .darkAqua)
     }
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    /// Closing the window quits, unless the menu-bar item is showing (then the app lives on up there).
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        !(UserDefaults.standard.object(forKey: Self.menuBarKey) as? Bool ?? true)
+    }
 }
 #endif
