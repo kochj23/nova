@@ -92,11 +92,14 @@ class TestHistoryBelief(unittest.TestCase):
         for t in ("The Book of Mormon and Joseph Smith", "Scientology, Dianetics and L. Ron Hubbard",
                   "How Quakers and the Religious Society of Friends worship", "Coptic and Ethiopian Orthodox fasting",
                   "The Ismaili imamat and the Aga Khan", "Mennonite and Amish life", "The Druze and the Alevis",
-                  "Inside the Branch Davidians: David Koresh", "Jehovah's Witnesses and the Watchtower Society"):
+                  "Inside the Branch Davidians: David Koresh", "Jehovah's Witnesses and the Watchtower Society",
+                  "The Satanic Panic and satanic ritual abuse claims", "The Satanic Temple and the Church of Satan",
+                  "LaVeyan Satanism vs theistic Satanists"):
             self.assertTrue(ns.is_belief_topic(t), t)
         for t in ("Friends reunion special: the one with the witness", "A cocktail shaker and a salt shaker",
                   "Orthodox economics and the nation state", "Family identity and company culture",
-                  "The vineyard at Bethel farm: a way of life", "Cult classic films with a cult following"):
+                  "The vineyard at Bethel farm: a way of life", "Cult classic films with a cult following",
+                  "Satanic riffs: the heaviest black metal albums of 2026", "Speak of the devil: the devil is in the details"):
             self.assertFalse(ns.is_belief_topic(t), t)
         self.assertFalse(ns.is_belief_topic("Our tech evangelist found the holy grail"))
 

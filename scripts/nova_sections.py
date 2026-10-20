@@ -110,7 +110,10 @@ _BELIEF_RX = _re.compile(
     r"new apostolic reformation|prosperity gospel|word of faith movement|hillsong|bethel church|"
     r"vineyard (?:church\w*|movement)|community of christ|twelve tribes|international church of christ|"
     r"the way international|la luz del mundo|serpent handl\w*|high-control groups?|cult leaders?|"
-    r"cult members?|former members?|ex-members?)\b", _re.I)
+    r"cult members?|former members?|ex-members?|"
+    # modern Satanism ('satanic' alone never counts — metal reviews; nor 'devil' idioms)
+    r"satanism|satanists?|satanic temple|church of satan|anton (?:szandor )?lavey|laveyan|satanic panic|"
+    r"satanic ritual abuse|left-hand path|order of nine angles|luciferian\w*)\b", _re.I)
 # Figurative belief-talk never counts (tech evangelists, holy grails, "the gospel of growth").
 _NOT_BELIEF = _re.compile(r"\b(?:holy grail|(?:tech|developer|product|brand) evangelis\w*|evangelis\w* for|"
                          r"gospel of (?:growth|wealth|productivity|hustle)|religious(?:ly)? (?:devot\w*|follow\w*)|"

@@ -107,6 +107,13 @@ DIRECT_CHANNELS = (
     ("UC67JLTD22dSnVadqXKcYPcA", "", "IndoctriNation Podcast with Rachel Bernstein", "belief", "nrm,topic"),
     ("UCxYM6bAC_3l66uCRxFO0QAg", "", "Cult Expert - Dr. Steven Hassan", "belief", "nrm,topic"),
     ("UCzvoUDoDu-cKIb11rg4ODDQ", "", "Holy Koolaid", "belief", ""),
+    # Modern Satanism, as a historian sees it: the two organisations' own channels (both now post rarely),
+    # an ex-evangelical skeptic who interviews scholars of Satanism. Theistic Satanism and the Left-Hand Path
+    # come through ReligionForBreakfast, Let's Talk Religion and ESOTERICA; no ritual-instruction channels,
+    # and violent groups (Order of Nine Angles) only through scholars and journalists.
+    ("UCYIv7bicSK4NBL_lgH61zIw", "", "The Satanic Temple", "belief", "nrm"),
+    ("UCCdWlbB0TB58FSquop3Sc2w", "", "Church of Satan", "belief", "nrm"),
+    ("UCG1uayRlzz3ahT8ISRdyw7Q", "", "Genetically Modified Skeptic", "belief", "topic"),
 )
 
 
