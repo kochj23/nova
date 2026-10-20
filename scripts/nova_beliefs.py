@@ -181,6 +181,11 @@ def reject_reason(stance: str, title: str = "", kind: str = "") -> str | None:
         return "malformed (dangling so)"
     if generality(s) < 0.3:
         return "trivia (too specific)"
+    # ponytail: name/phrase match -- a real conviction about Jordan would be caught too; reword it if that bites
+    if re.search(r"\bLittle Mister\b", s):
+        return "recap (about Jordan, e.g. a game column)"
+    if re.match(r"(?i)(the|this|my)\s+(author|essay|article|column|post|piece)\b", s):
+        return "self-report (about the article, not the world)"
     return None
 
 

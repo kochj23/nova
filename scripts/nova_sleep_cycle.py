@@ -199,6 +199,12 @@ def phase_beliefs(mc, oc):
             stance = (b.get("stance") or "").strip()
             if not topic or not stance:
                 continue
+            import nova_beliefs   # lazy: nova_beliefs imports this module
+            gate = nova_beliefs.reject_reason(stance, title)
+            if gate:
+                refused += 1
+                reasons[gate] = reasons.get(gate, 0) + 1
+                continue
             evidence, why = belief_evidence(b, mem_id, title, body)
             if not evidence:
                 refused += 1

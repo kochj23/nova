@@ -79,7 +79,7 @@ class TestSecurity(_Base):
         self.assertNotRegex(SRC, r'\.execute\(\s*f["\']')
         oc = Cur([("FROM beliefs", None), ("RETURNING id", (5,))])
         mc = Cur([("nova_articles", [(42, "T'; --", "the UNAS cutover cut write latency")])])
-        with patch.object(sc, "llm", return_value='[{"topic":"NAS speed","stance":"UNAS cut latency","confidence":0.8,'
+        with patch.object(sc, "llm", return_value='[{"topic":"NAS speed","stance":"Moving storage to faster arrays cuts write latency for every service","confidence":0.8,'
                                                  '"quote":"the UNAS cutover cut write latency"}]'):
             sc.phase_beliefs(mc, oc)
         sql, params = oc.writes("INSERT INTO beliefs")[0]
@@ -144,13 +144,13 @@ class TestUnit(_Base):
         self.remember.assert_not_called()
 
     def test_belief_same_stance_skipped_new_stance_supersedes(self):
-        ans = '[{"topic":"NAS speed","stance":"S2","confidence":0.9,"quote":"write latency fell by half"}]'
+        ans = '[{"topic":"NAS speed","stance":"Storage migrations usually speed every service up within a week","confidence":0.9,"quote":"write latency fell by half"}]'
         art = [(9, "t", "After the move, write latency fell by half.")]
-        oc = Cur([("FROM beliefs", (7, "S1")), ("RETURNING id", (8,))])
+        oc = Cur([("FROM beliefs", (7, "Storage migrations usually slow every service down for a week")), ("RETURNING id", (8,))])
         with patch.object(sc, "llm", return_value=ans):
             sc.phase_beliefs(Cur([("nova_articles", art)]), oc)
         self.assertEqual(oc.writes("UPDATE beliefs")[0][1], (8, 7))
-        oc2 = Cur([("FROM beliefs", (7, "S2"))])
+        oc2 = Cur([("FROM beliefs", (7, "Storage migrations usually speed every service up within a week"))])
         with patch.object(sc, "llm", return_value=ans):
             sc.phase_beliefs(Cur([("nova_articles", art)]), oc2)
         self.assertEqual(oc2.writes("INSERT INTO beliefs"), [])
@@ -169,9 +169,9 @@ class TestUnit(_Base):
                          "quote not found in the source text")
 
     def test_unevidenced_belief_refused_and_counted(self):
-        ans = ('[{"topic":"a","stance":"A","quote":"this sentence is not there"},'
-               '{"topic":"b","stance":"B"},'
-               '{"topic":"c","stance":"C","quote":"the backup ran clean all week"}]')
+        ans = ('[{"topic":"a","stance":"Backups that are never restored should not be trusted at all","quote":"this sentence is not there"},'
+               '{"topic":"b","stance":"Monitoring that pages for everything ends up ignored by everyone"},'
+               '{"topic":"c","stance":"A backup that ran clean all week is still worth testing","quote":"the backup ran clean all week"}]')
         oc = Cur([("FROM beliefs", None), ("RETURNING id", (5,))])
         with patch.object(sc, "llm", return_value=ans), \
                 patch.dict(sys.modules, {"nova_pg_schema": MagicMock()}):
