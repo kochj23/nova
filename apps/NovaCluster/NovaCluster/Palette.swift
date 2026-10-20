@@ -75,18 +75,7 @@ enum ModelHue {
     }
 }
 
-/// Stable (per-string, across launches) hash so layouts stay put between polls.
-enum StableHash {
-    static func of(_ s: String, seed: UInt64 = 0) -> UInt64 {
-        var h: UInt64 = 0xcbf29ce484222325 ^ seed
-        for b in s.utf8 { h ^= UInt64(b); h = h &* 0x100000001b3 }
-        h ^= h >> 33; h = h &* 0xff51afd7ed558ccd; h ^= h >> 33
-        return h
-    }
-    static func unit(_ s: String, _ seed: UInt64) -> Double {
-        Double(of(s, seed: seed) >> 11) / Double(1 << 53)
-    }
-}
+// StableHash and LessonText live in apps/Shared/NovaConstellationCore.swift (shared with the screensaver).
 
 enum Fmt {
     nonisolated(unsafe) private static let iso: ISO8601DateFormatter = {
@@ -139,18 +128,6 @@ enum Fmt {
         guard let last = parts.last, last.first?.isNumber == true else { return o ?? "" }
         let v = last.split(separator: ".").prefix(2).joined(separator: ".")
         return (parts.dropLast().map(String.init) + [v]).joined(separator: " ")
-    }
-}
-
-/// Lesson text as the hub writes it can carry citation markers like "[3][12]"; strip them.
-enum LessonText {
-    private static let citations = try! NSRegularExpression(pattern: #"\s*\[\d+(?:\s*[,–-]\s*\d+)*\]"#)
-    static func clean(_ s: String) -> String {
-        let r = NSRange(s.startIndex..., in: s)
-        let stripped = citations.stringByReplacingMatches(in: s, range: r, withTemplate: "")
-        return stripped.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-            .replacingOccurrences(of: " .", with: ".")
-            .replacingOccurrences(of: " ,", with: ",")
     }
 }
 

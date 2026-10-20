@@ -1,6 +1,6 @@
 # Nova Minion screensaver
 
-**Version 1.0.1 (build 2)** · macOS 14+ · `NovaMinion.saver` (`com.jordankoch.NovaMinion`) · Swift + Core Animation · xcodegen
+**Version 1.1.0 (build 3)** · macOS 14+ · `NovaMinion.saver` (`com.jordankoch.NovaMinion`) · Swift + Core Animation · xcodegen
 
 A macOS screensaver that shows what this Mac is doing for Nova while it sits idle, in the spirit of
 SETI@home and Folding@home. It reads the local minion agent's status and draws the lessons the fleet
@@ -31,6 +31,13 @@ and has the same look.
 - **NOVA wordmark** (top right). It breathes slowly over a 9 s cycle.
 - **Preview** (System Settings thumbnail). Type is larger relative to the frame, the terminal is hidden,
   and the saver polls every 30 s instead of every 5 s.
+
+## Shared code (1.1.0)
+
+Star placement, the stable hash, the seeded random stream and lesson-text cleanup now live in
+[`../Shared/NovaConstellationCore.swift`](../Shared/NovaConstellationCore.swift), which
+[Nova Cluster](../NovaCluster/)'s Constellation view also compiles. The algorithm is exactly the
+one the screensaver used before, so its sky did not move; Nova Cluster's tests pin the numbers.
 
 ## Architecture
 

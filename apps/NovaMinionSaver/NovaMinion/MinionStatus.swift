@@ -22,9 +22,7 @@ struct MinionLesson: Equatable {
 
     /// Lesson text with citation markers ([3], [12][14], [3, 4]) removed and whitespace tidied.
     var cleanText: String {
-        var s = lesson.replacingOccurrences(of: #"\s*\[\d+(?:\s*,\s*\d+)*\]"#, with: "", options: .regularExpression)
-        s = s.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-        s = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        var s = LessonText.clean(lesson).trimmingCharacters(in: .whitespacesAndNewlines)   // shared with Nova Cluster
         if s.count > 300 {
             let cut = s.prefix(300)
             if let space = cut.lastIndex(of: " ") { s = String(cut[..<space]) + "…" } else { s = String(cut) + "…" }

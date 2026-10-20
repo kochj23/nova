@@ -37,10 +37,12 @@ struct NovaClusterApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandGroup(before: .toolbar) {
-                Button("Cluster Map") { UserDefaults.standard.set("map", forKey: "view.mode") }
+                Button("Cluster Map") { UserDefaults.standard.set(ViewMode.map.rawValue, forKey: ViewMode.key) }
                     .keyboardShortcut("1", modifiers: .command)
-                Button("Dashboard") { UserDefaults.standard.set("dashboard", forKey: "view.mode") }
+                Button("Dashboard") { UserDefaults.standard.set(ViewMode.dashboard.rawValue, forKey: ViewMode.key) }
                     .keyboardShortcut("2", modifiers: .command)
+                Button("Constellation") { UserDefaults.standard.set(ViewMode.constellation.rawValue, forKey: ViewMode.key) }
+                    .keyboardShortcut("3", modifiers: .command)
                 Divider()
                 Button("Refresh Now") { Task { await cluster.pollOnce() } }
                     .keyboardShortcut("r", modifiers: .command)

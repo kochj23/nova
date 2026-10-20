@@ -52,14 +52,14 @@ struct ClusterConfig: Equatable {
         Keychain.write(token.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    /// `novacluster://view?mode=map|dashboard` switches the view. Returns true if handled.
+    /// `novacluster://view?mode=map|dashboard|constellation` switches the view. Returns true if handled.
     static func applyView(url: URL) -> Bool {
         guard url.scheme?.lowercased() == "novacluster",
               let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
               (comps.host ?? "").lowercased() == "view",
               let m = comps.queryItems?.first(where: { $0.name == "mode" })?.value,
-              ["map", "dashboard"].contains(m) else { return false }
-        UserDefaults.standard.set(m, forKey: "view.mode")
+              let mode = ViewMode(rawValue: m) else { return false }
+        UserDefaults.standard.set(mode.rawValue, forKey: ViewMode.key)
         return true
     }
 
@@ -93,6 +93,30 @@ struct ClusterConfig: Equatable {
         if let v = env["NOVA_CLUSTER_NODE"] { cfg.node = v }
         if let v = env["NOVA_CLUSTER_TOKEN"] { cfg.token = v }
         cfg.save()
+    }
+}
+
+/// The three views (1.1.0: Nova Minion's constellation joined the map and the dashboard).
+/// Tap the wordmark to step through them; Mac: ⌘1 / ⌘2 / ⌘3; kiosk mode cycles them.
+enum ViewMode: String, CaseIterable {
+    case map, dashboard, constellation
+    static let key = "view.mode"
+
+    /// Unknown or missing stored values fall back to the map.
+    init(stored: String?) { self = ViewMode(rawValue: stored ?? "") ?? .map }
+
+    var next: ViewMode {
+        let all = Self.allCases
+        return all[(all.firstIndex(of: self)! + 1) % all.count]
+    }
+
+    /// Wordmark subtitle.
+    var subtitle: String {
+        switch self {
+        case .map: return "· CLUSTER"
+        case .dashboard: return "· DASHBOARD"
+        case .constellation: return "· MINION"
+        }
     }
 }
 

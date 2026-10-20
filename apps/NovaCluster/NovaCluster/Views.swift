@@ -11,9 +11,10 @@ import SwiftUI
 
 struct ContentView: View {
     let cluster: ClusterModel
-    /// "map" (cluster map) or "dashboard" (Nova Minion style). Tap the wordmark to switch;
-    /// Mac: View › Cluster Map (⌘1) / Dashboard (⌘2).
-    @AppStorage("view.mode") private var mode = "map"
+    /// map · dashboard · constellation (Nova Minion, folded in 1.1.0). Tap the wordmark to step through;
+    /// Mac: View › Cluster Map (⌘1) / Dashboard (⌘2) / Constellation (⌘3).
+    @AppStorage(ViewMode.key) private var modeRaw = ViewMode.map.rawValue
+    private var mode: ViewMode { ViewMode(stored: modeRaw) }
     @State private var map = MapModel()
     @State private var pointer = MapPointer()
     @State private var version = 0
@@ -42,14 +43,18 @@ struct ContentView: View {
             }
             .ignoresSafeArea()
             DustLayer().ignoresSafeArea()
-            if mode == "dashboard" {
+            switch mode {
+            case .dashboard:
                 DashboardScreen(cluster: cluster, stations: map.stations, paused: !isLive) { u in mark(u: u) }
                     .transition(.opacity)
-            } else {
+            case .constellation:
+                ConstellationScreen(cluster: cluster, stations: map.stations, paused: !isLive) { u in mark(u: u) }
+                    .transition(.opacity)
+            case .map:
                 mapScreen.transition(.opacity)
             }
         }
-        .animation(.easeInOut(duration: 0.5), value: mode)
+        .animation(.easeInOut(duration: 0.5), value: modeRaw)
         .preferredColorScheme(.dark)
         #if os(iOS)
         .statusBarHidden(true)
@@ -114,8 +119,8 @@ struct ContentView: View {
 
     /// The wordmark: tap switches views, long-press opens settings.
     private func mark(u: CGFloat) -> some View {
-        Wordmark(u: u, subtitle: mode == "dashboard" ? "· DASHBOARD" : "· CLUSTER")
-            .onTapGesture { mode = (mode == "dashboard") ? "map" : "dashboard" }
+        Wordmark(u: u, subtitle: mode.subtitle)
+            .onTapGesture { modeRaw = mode.next.rawValue }
             .onLongPressGesture(minimumDuration: 0.8) { presentSettings() }
     }
 

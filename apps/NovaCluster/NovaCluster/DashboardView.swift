@@ -419,6 +419,8 @@ struct DashLesson: View {
     let colors: MachineColors
     let u: CGFloat
     let width: CGFloat
+    /// Reports the lesson on stage (the constellation rings its star).
+    var onCurrent: ((String?) -> Void)? = nil
     @State private var shown: ClusterSnapshot.Lesson?
     @State private var currentKey: String?
     @State private var visible = 0.0
@@ -475,6 +477,7 @@ struct DashLesson: View {
                 if Task.isCancelled { return }
             }
             shown = lessons.first { $0.key == currentKey }
+            onCurrent?(shown?.key)
             withAnimation(.easeOut(duration: 1.8)) { visible = 1 }
         }
         .task {

@@ -140,26 +140,4 @@ enum Render {
     }
 }
 
-/// Small deterministic PRNG (SplitMix64) so layouts are stable for a given seed.
-struct SeededRandom {
-    private var state: UInt64
-    init(seed: UInt64) { state = seed &+ 0x9E37_79B9_7F4A_7C15 }
-    mutating func nextUInt() -> UInt64 {
-        state = state &+ 0x9E37_79B9_7F4A_7C15
-        var z = state
-        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
-        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
-        return z ^ (z >> 31)
-    }
-    /// Uniform in [0, 1).
-    mutating func next() -> CGFloat { CGFloat(nextUInt() >> 11) / CGFloat(1 << 53) }
-    /// Approximately normal (mean 0, sd ~1).
-    mutating func gauss() -> CGFloat { (next() + next() + next() + next() - 2) * 1.73 }
-}
-
-/// Stable 64-bit FNV-1a hash (Swift's Hasher is randomly seeded per process).
-func stableHash(_ s: String) -> UInt64 {
-    var h: UInt64 = 0xcbf2_9ce4_8422_2325
-    for b in s.utf8 { h ^= UInt64(b); h = h &* 0x100_0000_01b3 }
-    return h
-}
+// SeededRandom and the stable hash live in apps/Shared/NovaConstellationCore.swift (shared with Nova Cluster).

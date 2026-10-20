@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		17C71B5146DF05C0957218B8 /* MinionStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3886582B34AE0206B70F03D /* MinionStatus.swift */; };
 		A85A57C30B8F1E91DC5C7C02 /* MinionPoller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E2A450BF2A2776CC6B2244A /* MinionPoller.swift */; };
+		BD33738BE09794D17B36439F /* NovaConstellationCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71FAAB0C0912A6421052716F /* NovaConstellationCore.swift */; };
 		C2036DB1B059F3A099F6D7C8 /* Constellation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 437C061980557B34B3610CDE /* Constellation.swift */; };
 		F8C77EFB98E0767D202A04B9 /* Render.swift in Sources */ = {isa = PBXBuildFile; fileRef = 296579227BED3D19843841AD /* Render.swift */; };
 		FC3FC882F5A0BB9046AEB215 /* NovaMinionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D04468B033BF8B20A50CF1A6 /* NovaMinionView.swift */; };
@@ -17,6 +18,7 @@
 /* Begin PBXFileReference section */
 		296579227BED3D19843841AD /* Render.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Render.swift; sourceTree = "<group>"; };
 		437C061980557B34B3610CDE /* Constellation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Constellation.swift; sourceTree = "<group>"; };
+		71FAAB0C0912A6421052716F /* NovaConstellationCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaConstellationCore.swift; sourceTree = "<group>"; };
 		866097EB77FE151C372886BC /* NovaMinion.bundle */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NovaMinion.bundle; sourceTree = BUILT_PRODUCTS_DIR; };
 		8E2A450BF2A2776CC6B2244A /* MinionPoller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinionPoller.swift; sourceTree = "<group>"; };
 		D04468B033BF8B20A50CF1A6 /* NovaMinionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaMinionView.swift; sourceTree = "<group>"; };
@@ -24,6 +26,15 @@
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
+		32B301E9C27551AE7773A822 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				71FAAB0C0912A6421052716F /* NovaConstellationCore.swift */,
+			);
+			name = Shared;
+			path = ../Shared;
+			sourceTree = "<group>";
+		};
 		BF9487166C0B027F829CE58F /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -48,6 +59,7 @@
 			isa = PBXGroup;
 			children = (
 				D100150C4024ACDA3557F9F7 /* NovaMinion */,
+				32B301E9C27551AE7773A822 /* Shared */,
 				BF9487166C0B027F829CE58F /* Products */,
 			);
 			sourceTree = "<group>";
@@ -113,6 +125,7 @@
 				C2036DB1B059F3A099F6D7C8 /* Constellation.swift in Sources */,
 				A85A57C30B8F1E91DC5C7C02 /* MinionPoller.swift in Sources */,
 				17C71B5146DF05C0957218B8 /* MinionStatus.swift in Sources */,
+				BD33738BE09794D17B36439F /* NovaConstellationCore.swift in Sources */,
 				FC3FC882F5A0BB9046AEB215 /* NovaMinionView.swift in Sources */,
 				F8C77EFB98E0767D202A04B9 /* Render.swift in Sources */,
 			);
@@ -207,7 +220,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -220,7 +233,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0.1;
+				MARKETING_VERSION = 1.1.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -265,7 +278,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -284,7 +297,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0.1;
+				MARKETING_VERSION = 1.1.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

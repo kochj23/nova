@@ -243,17 +243,11 @@ final class Constellation {
     @discardableResult
     private func addStar(_ l: MinionLesson, phase: Star.Phase) -> Star {
         let workKey = l.title.lowercased()
-        let wh = stableHash(workKey)
-        var wr = SeededRandom(seed: wh)
-        // Work cluster centre: spread across the sky, mostly above the lesson text.
-        let cx = 0.07 + wr.next() * 0.86
-        let cy = 0.34 + wr.next() * 0.48           // stay clear of the terminal and wordmark
-        let depth = Int(wh % 3)
-        var sr = SeededRandom(seed: stableHash(l.key))
-        let aspect = size.width / max(size.height, 1)
-        let nx = min(0.98, max(0.02, cx + sr.gauss() * 0.032 / max(aspect / 1.78, 0.5)))
-        let ny = min(0.87, max(0.06, cy + sr.gauss() * 0.05))
-        let base = (l.mine ? 22 : 17) + sr.next() * 11
+        // Placement is shared with Nova Cluster's Constellation view (apps/Shared/NovaConstellationCore.swift).
+        let p = ConstellationLayout.place(work: workKey, key: l.key, aspect: size.width / max(size.height, 1))
+        let depth = p.depth
+        let nx = p.norm.x, ny = p.norm.y
+        let base = (l.mine ? 22 : 17) + p.sizeJitter * 11
         let s = Star(key: l.key, workKey: workKey, mine: l.mine, depth: depth,
                      norm: CGPoint(x: nx, y: ny), baseSize: base, phase: phase)
         s.layer.contents = l.mine ? warmSprite : coolSprite
@@ -261,7 +255,7 @@ final class Constellation {
         noActions {
             place(s)
             if case .fadingIn = phase { s.layer.opacity = 0 }
-            let group = Int(sr.nextUInt() % UInt64(twinkleGroups))
+            let group = Int(p.twinkle % UInt64(twinkleGroups))
             depths[depth].groups[group].addSublayer(s.layer)
         }
         stars.append(s)
@@ -277,7 +271,7 @@ final class Constellation {
 
     private func startArrival(_ s: Star, now: CFTimeInterval) {
         let target = localPoint(of: s)
-        var r = SeededRandom(seed: stableHash(s.key) ^ 0xA11)
+        var r = SeededRandom(seed: StableHash.fnv1a(s.key) ^ 0xA11)
         // Enter from the upper sky at a shallow, slightly random angle.
         let angle = CGFloat.pi * (0.62 + 0.5 * r.next())         // pointing up-left … up-right
         let dist = max(size.width, size.height) * 0.55

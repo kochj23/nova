@@ -1,14 +1,14 @@
 # Nova Cluster (Mac + iPad)
 
-**Version 1.0.1 (build 2)** · macOS 14+ · iPadOS 17+ · SwiftUI · xcodegen
+**Version 1.1.0 (build 3)** · macOS 14+ · iPadOS 17+ · SwiftUI · xcodegen
 
 Nova Cluster is a live view of what every machine in Nova's cluster is doing with its language
 models, and what that work turns into. Each machine's Ollama and llama.cpp traffic arrives from
 Nova's hub every 2 s: the models in memory, the requests being served right now, and the finished
 requests. So does the minions' reading work: current jobs, tonight's works and lessons, episodes
 transcribed, and the latest lesson. The app only displays this data. It never computes or writes
-anything back. It is a sibling of [Nova Minion](../NovaMinionPad/) and uses the same near-black
-space look.
+anything back. Since 1.1.0 it also contains [Nova Minion](../NovaMinionPad/): the lesson
+constellation is its third view, so one app shows the traffic and what the traffic turns into.
 
 There is one multiplatform xcodegen project with two app targets that share every source in
 `NovaCluster/`. Platform-specific code sits behind `#if os(iOS)` / `#if os(macOS)`.
@@ -44,10 +44,11 @@ and bidi overrides are removed and the length is capped at 240 characters. Long 
 To see the full text, hover over it (Mac), tap a station on the map (both platforms), or long-press a
 dashboard card (iPad).
 
-### Two views
+### Three views
 
-To switch views, tap the wordmark. On the Mac you can also use **View › Cluster Map (⌘1) / Dashboard (⌘2)**
-or `novacluster://view?mode=map|dashboard`. The app remembers your choice (`view.mode`).
+Tap the wordmark to step through **Cluster Map → Dashboard → Constellation**. On the Mac you can also use
+**View › Cluster Map (⌘1) / Dashboard (⌘2) / Constellation (⌘3)**, or
+`novacluster://view?mode=map|dashboard|constellation`. The app remembers your choice (`view.mode`).
 
 #### Cluster map (`NOVA · CLUSTER`)
 
@@ -71,6 +72,17 @@ or `novacluster://view?mode=map|dashboard`. The app remembers your choice (`view
   are used on the cards and in the legend.
 - The **latest lesson** in large serif type, the tokens-today hero, and the cluster and fleet totals
   along the bottom.
+
+#### Constellation (`NOVA · MINION`, Nova Minion folded in, 1.1.0)
+
+| Area | Shows |
+|---|---|
+| Sky | Every lesson the minions learned is a star in the color of the machine that learned it (the same hues as the dashboard cards). Stars from the same work cluster and are joined by faint lines, over three slowly drifting parallax depths. New stars fade in; the star whose lesson is on stage gets a pulsing ring. Placement comes from the shared core in [`../Shared/`](../Shared/), the same code the Nova Minion screensaver uses, so a lesson sits in the same place on both. |
+| Minion cards | One card per machine doing minion work: state dot (dedicated / idle / away / offline), tok/s, OS, `tonight:` totals, and up to three `reading:` / `transcribing:` lines typed out terminal-style. Mac: as many ~250 pt cards across as fit; iPad: 3 landscape / 2 portrait. |
+| Lesson | The current lesson in large serif with `— from <title>`, kind · node · time. A brand-new lesson takes the stage at once; otherwise it steps through recent lessons every ~22 s. |
+| Bottom | Machine legend and the fleet line: minions, works and lessons tonight, episodes transcribed, and the reading queue with its ETA. |
+
+It reads the same `/cluster` poll as the other two views (no second hub client, no second token).
 
 ### Resilience
 
@@ -105,11 +117,15 @@ flowchart LR
         CFG["ClusterConfig<br/>UserDefaults + Keychain"]
         MAP["ClusterMapView<br/>Canvas 30 fps"]
         DASH["DashboardView<br/>cards + TrafficStarfield"]
+        CON["ConstellationView<br/>lesson stars + minion cards"]
+        CORE["Shared/NovaConstellationCore<br/>StableHash · SeededRandom · LessonText · layout"]
         NL["NodeLines<br/>LLM job + purpose"]
     end
     CL -- "JSON, X-Minion-Token" --> CM
     CFG --> CM
-    CM --> MAP & DASH
+    CM --> MAP & DASH & CON
+    CORE --> CON
+    CORE --> SAVER["Nova Minion screensaver<br/>(Core Animation, own target)"]
     NL --> MAP & DASH
 ```
 
@@ -220,7 +236,7 @@ xcodebuild -project NovaCluster.xcodeproj -scheme NovaClusterMac -configuration 
   -destination 'platform=macOS' -derivedDataPath <dd> test
 ```
 
-There are 17 XCTest cases in `Tests/NodeLinesTests.swift`, all of which pass in 1.0.1. The test bundle
+There are 28 XCTest cases (`Tests/NodeLinesTests.swift`, `Tests/ConstellationTests.swift`), all of which pass in 1.1.0. The constellation tests pin the shared hash and random stream so the screensaver's sky can't shift silently. The test bundle
 is not hosted in the app: it has no window, no live hub, and no real UserDefaults or Keychain. The
 sources under test are compiled straight into the bundle. The network is stubbed with a `URLProtocol`.
 

@@ -1,5 +1,12 @@
 # Nova Minion (iPad + Mac)
 
+> **Superseded (2026-10-19).** Nova Minion's constellation is now the third view of
+> [Nova Cluster 1.1.0](../NovaCluster/) (**Constellation**, ⌘3 on the Mac, or tap the wordmark),
+> fed by the same `/cluster` poll as the map and dashboard. This project is kept until the
+> combined app has replaced it on every device; new work goes into Nova Cluster. The
+> screensaver ([`../NovaMinionSaver/`](../NovaMinionSaver/)) is still its own target and now
+> places stars with the shared core in [`../Shared/`](../Shared/).
+
 **Version 1.0.1 (build 2)** · iPadOS 17+ · macOS 14+ · SwiftUI · xcodegen
 
 Nova Minion is a display-only window onto Nova's minion fleet: the machines that read works and turn
