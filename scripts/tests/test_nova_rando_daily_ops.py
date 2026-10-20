@@ -239,7 +239,7 @@ class TestIntegration(unittest.TestCase):
         ro.nova_journal.grafana_panel_image = MagicMock(return_value="/images/operations/fleet.png")
         with patch.object(ro.subprocess, "run", MagicMock()), redirect_stdout(io.StringIO()):
             ro.publish('Nova "Quoted" Title', ARTICLE, None, pub_date="2026-10-05")
-        ro.nova_journal.grafana_panel_image.assert_called_once_with("fleet-health", 7, "operations", "rando-ops-fleet-health")
+        ro.nova_journal.grafana_panel_image.assert_called_once_with("nova-fleet", 59, "operations", "rando-ops-fleet-health")
         ro.nova_journal.git_push.assert_called_once_with("operations", 'Nova "Quoted" Title')
         msg, kw = ro.nova_config.post_both.call_args[0][0], ro.nova_config.post_both.call_args[1]
         self.assertEqual(kw, {"slack_channel": "#nova-notifications"})

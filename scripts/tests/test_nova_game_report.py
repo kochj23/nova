@@ -266,6 +266,11 @@ class TestUnit(unittest.TestCase):
         self.assertIn("actions", gr.trivial_reason(session(actions=0), cfg))
         self.assertIsNone(gr.trivial_reason(session(), cfg))
 
+    def test_hidden_time_posts_stamp_end_of_day(self):
+        # noon buried evening game columns under the rest of the day; 23:59 hides play time and still sorts first
+        src = (SCRIPT.parent / "nova_journal.py").read_text()
+        self.assertIn('else "%Y-%m-%dT23:59:00-07:00"', src)
+
     def test_date_played_is_pacific_not_utc(self):
         # 2026-10-19 21:45 PDT is 2026-10-20 04:45 UTC; the column said "October 20"
         end = datetime(2026, 10, 20, 4, 45, tzinfo=timezone.utc)

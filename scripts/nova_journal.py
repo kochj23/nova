@@ -1578,7 +1578,7 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
         hugo_image = f"/images/{section}/{img_base}.webp"
         log(f"Image copied: {img_dest.name}")
 
-    timestamp = now_dt().strftime("%Y-%m-%dT%H:%M:%S-07:00" if show_time else "%Y-%m-%dT12:00:00-07:00")
+    timestamp = now_dt().strftime("%Y-%m-%dT%H:%M:%S-07:00" if show_time else "%Y-%m-%dT23:59:00-07:00")   # end of day: no play time leaked, still tops the day
     tags_yaml = json.dumps(tags)
     safe_title = title.replace('"', '')
     display_title = f"{emoji} {safe_title}" if emoji else safe_title
