@@ -266,6 +266,12 @@ class TestUnit(unittest.TestCase):
         self.assertIn("actions", gr.trivial_reason(session(actions=0), cfg))
         self.assertIsNone(gr.trivial_reason(session(), cfg))
 
+    def test_date_played_is_pacific_not_utc(self):
+        # 2026-10-19 21:45 PDT is 2026-10-20 04:45 UTC; the column said "October 20"
+        end = datetime(2026, 10, 20, 4, 45, tzinfo=timezone.utc)
+        s = session(started_at=end - timedelta(minutes=10), ended_at=end, last_seen_at=end)
+        self.assertEqual(gr.build_facts(s, [], [], dict(gr.DEFAULTS))["date_played"], "2026-10-19")
+
     def test_duration_uses_last_seen_for_abandoned(self):
         now = NOW()
         s = session(ended_at=None, started_at=now - timedelta(minutes=50), last_seen_at=now - timedelta(minutes=40))

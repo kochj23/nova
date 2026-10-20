@@ -42,6 +42,7 @@ import sys
 import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -386,7 +387,7 @@ def build_facts(s: dict, events: list[dict], history: list[dict], cfg: dict) -> 
         "game": game_name(s["game"], s["client"]),
         "what_the_game_is": GAME_ABOUT.get(s["game"], ""),
         "platform": platform_name(s["client"]),
-        "date_played": str(ended.date()),
+        "date_played": str(ended.astimezone(ZoneInfo("America/Los_Angeles")).date()),   # UTC rolled 9 PM games to tomorrow
         "session_minutes": round(mins, 1),
         "session_minutes_rounded": int(round(mins)),
         "actions": int(s.get("actions") or 0),
