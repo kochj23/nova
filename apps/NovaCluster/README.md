@@ -105,6 +105,20 @@ The data comes from the hub (`/cluster`): probe 1.2 on each machine reports the 
 hub reads the UPS from NUT and the job history from PostgreSQL in a background thread. Taps on a moon still
 show that model's tooltip.
 
+### Alert strip (1.1.0)
+
+When anything on Nova's schedulers is wrong, a capsule appears at the top centre of every view:
+`● 2 DEAD-LETTER · 3 FAILING  studio · media_reingest_minions: failed 5× in a row`. It steps through the
+problems every 5 s; tap it for the full list with each task's last error. It is red when anything is
+dead-lettered, quarantined or unreachable, amber for failing tasks or a scheduler-core leader that isn't
+nova-core, and hidden when all is well.
+
+The hub builds it every 30 s from both schedulers' `/tasks` (the Studio's, and the scheduler-core leader's by
+DNS name from `leader_standby`), with `scheduler_runs` as the fallback when a scheduler doesn't answer:
+**dead-letter** = quarantined or 10+ failures in a row, **failing** = 3+. Leader changes in the last 7 days
+come from `leader_events`, which `nova_leader_wrapper.py` writes on every takeover (seeded with the
+10-18 16:36 failover to nova-core3 and the 10-19 18:00 hand-back).
+
 ### Kiosk mode (1.1.0)
 
 For the iPad on its stand, a Mac in full screen, or the Apple TV: the app steps
@@ -143,10 +157,12 @@ flowchart LR
         LLM["POST /llm<br/>probe samples, 1 s"]
         AGG["aggregate<br/>totals · today / all-time tokens<br/>events · llm_job · fleet"]
         CL["GET /cluster?node=…"]
-        EX["extras thread (read-only)<br/>UPS via NUT · recent jobs via PG"]
+        EX["extras thread (read-only)<br/>UPS via NUT · recent jobs + alerts via PG"]
     end
     NUT[("upsd on nova-core4<br/>Master Bedroom UPS")]
     NUT -- "TCP 3493, LIST VAR" --> EX
+    SCH["schedulers /tasks<br/>Studio :37460 · core leader :37464"] --> EX
+    LE[("leader_events<br/>(written by nova_leader_wrapper)")] --> EX
     EX --> CL
     PG[("nova_ops<br/>minion_nodes (purpose, alias)<br/>minion_activity · token usage")]
     P --> LLM --> AGG
@@ -280,7 +296,7 @@ xcodebuild -project NovaCluster.xcodeproj -scheme NovaClusterMac -configuration 
   -destination 'platform=macOS' -derivedDataPath <dd> test
 ```
 
-There are 40 XCTest cases (`Tests/NodeLinesTests.swift`, `Tests/ConstellationTests.swift`, `Tests/KioskTests.swift`, `Tests/NodeFactsTests.swift`), all of which pass in 1.1.0. The constellation tests pin the shared hash and random stream so the screensaver's sky can't shift silently. The test bundle
+There are 43 XCTest cases (`Tests/NodeLinesTests.swift`, `Tests/ConstellationTests.swift`, `Tests/KioskTests.swift`, `Tests/NodeFactsTests.swift`), all of which pass in 1.1.0. The constellation tests pin the shared hash and random stream so the screensaver's sky can't shift silently. The test bundle
 is not hosted in the app: it has no window, no live hub, and no real UserDefaults or Keychain. The
 sources under test are compiled straight into the bundle. The network is stubbed with a `URLProtocol`.
 

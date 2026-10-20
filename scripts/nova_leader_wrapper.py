@@ -23,7 +23,13 @@ RETRY_S = 10            # standby: how often to try for the lock
 BEAT_S = 30             # heartbeat / liveness check cadence
 DDL = """CREATE TABLE IF NOT EXISTS leader_standby (
   name text NOT NULL, node text NOT NULL, role text NOT NULL, pid int, ts timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (name, node))"""
+  PRIMARY KEY (name, node));
+CREATE TABLE IF NOT EXISTS leader_events (
+  id bigserial PRIMARY KEY, name text NOT NULL, node text NOT NULL, pid int, ts timestamptz NOT NULL DEFAULT now(),
+  note text)"""
+# Every takeover is recorded (2026-10-19): the 10-18 16:36 move to nova-core3 broke ~20 tasks unnoticed for a day;
+# Nova Cluster's alert strip now shows recent leader changes from this table.
+TAKEOVER = "INSERT INTO leader_events (name, node, pid) VALUES (%s, %s, %s)"
 BEAT = ("INSERT INTO leader_standby (name, node, role, pid, ts) VALUES (%s,%s,%s,%s,now()) "
         "ON CONFLICT (name, node) DO UPDATE SET role=EXCLUDED.role, pid=EXCLUDED.pid, ts=now() WHERE leader_standby.name=EXCLUDED.name")
 
@@ -59,6 +65,10 @@ def run_leader(conn, name, cmd):
         signal.signal(s, fwd)
     log(f"LEADER — started child {child.pid}: {' '.join(cmd)}")
     beat(conn, name, "leader", child.pid)
+    try:
+        with conn.cursor() as cur: cur.execute(TAKEOVER, (name, NODE, child.pid))
+    except Exception as e:  # noqa: BLE001 — the record is for the board; leading never waits on it
+        log(f"takeover not recorded: {e}")
     last = time.time()
     while child.poll() is None:
         time.sleep(1)

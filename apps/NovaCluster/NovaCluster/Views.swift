@@ -66,6 +66,18 @@ struct ContentView: View {
             }
         }
         .animation(.easeInOut(duration: 0.5), value: modeRaw)
+        .overlay(alignment: .top) {
+            GeometryReader { geo in
+                #if os(macOS)
+                let u = max(0.8, min(geo.size.width / 1440, geo.size.height / 900))
+                #else
+                let u = max(0.8, min(geo.size.width, geo.size.height) / 820)
+                #endif
+                AlertStrip(alerts: snap?.alerts, u: u)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 4 * u)
+            }
+        }
         #if os(macOS)
         .onContinuousHover(coordinateSpace: .global) { ph in
             // Hover re-fires as animated content moves under a still cursor: only a real move counts.

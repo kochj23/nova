@@ -161,6 +161,25 @@ struct ClusterSnapshot: Codable, Equatable {
         var at: String?
         var id: String { key }
     }
+    /// Scheduler alerts from the hub (1.1): failing / dead-letter / quarantined tasks and leader changes.
+    struct Alerts: Codable, Equatable {
+        struct Item: Codable, Equatable {
+            /// bad | warn | info
+            var level: String?
+            /// dead-letter | quarantined | failing | unreachable | no-leader | failover | leader
+            var kind: String?
+            var source: String?
+            var task: String?
+            var text: String?
+            var reason: String?
+            var failures: Double?
+            var at: String?
+        }
+        var items: [Item]?
+        var counts: [String: Double]?
+        var leader: String?
+        var at: String?
+    }
     struct Event: Codable, Equatable {
         var node: String?
         var model: String?
@@ -188,6 +207,7 @@ struct ClusterSnapshot: Codable, Equatable {
     var eta_days: Double?
     var recent_lessons: [Lesson]?
     var ups: [UPS]?
+    var alerts: Alerts?
 
     var allNodes: [Node] { nodes ?? [] }
     var allEvents: [Event] { events ?? [] }

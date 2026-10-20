@@ -59,7 +59,7 @@ class FakeCur:
 def reset():
     for d in (hub._LLM, hub._JOBS, hub._LAST_JOB, hub._RECENT_LLM):
         d.clear()
-    hub._EXTRAS.update(ups=[], recent_jobs={})
+    hub._EXTRAS.update(ups=[], recent_jobs={}, alerts={"items": [], "counts": {}})
     del hub._EVENTS[:]
     hub._IPS.update(t=0.0, map={})
 
@@ -311,6 +311,72 @@ class TestClusterExtras(unittest.TestCase):
              mock.patch.object(hub, "db", return_value=FakeCur()):
             hub.refresh_extras(force=True)
         self.assertEqual(hub._EXTRAS["ups"], [{"key": "old"}])
+
+
+class TestAlerts(unittest.TestCase):
+    """1.1 (2026-10-19): the alert strip — failing / dead-letter / quarantined tasks and leader changes."""
+
+    TASKS = {"a": {"enabled": True, "consecutive_failures": 12}, "b": {"enabled": True, "consecutive_failures": 3},
+             "off": {"enabled": False, "consecutive_failures": 99}, "ok": {"enabled": True, "consecutive_failures": 2}}
+
+    class Cur(FakeCur):
+        def __init__(self, leader="nova-core", events=()):
+            super().__init__(); self.leader, self.events = leader, list(events)
+        def fetchone(self):
+            return (self.leader,) if "FROM leader_standby" in self.sql and self.leader else None
+        def fetchall(self):
+            if "FROM leader_events" in self.sql:
+                return self.events
+            return []
+
+    # Unit
+    def test_unit_classify(self):
+        al = hub.classify_tasks("studio", self.TASKS)
+        self.assertEqual([(a["task"], a["level"]) for a in al], [("a", "bad"), ("b", "warn")])
+
+    # Security: task names and reasons from the schedulers are capped data
+    def test_security_capped(self):
+        al = hub.classify_tasks("s", {"x" * 500: {"enabled": True, "consecutive_failures": 4}}, {"x" * 500: "y" * 900})
+        self.assertLessEqual(len(al[0]["task"]), 80)
+        self.assertLessEqual(len(al[0]["reason"]), 140)
+
+    # Retry / resilience: an unreachable scheduler becomes a 'bad' alert, never an exception
+    def test_retry_unreachable_scheduler(self):
+        with mock.patch.object(hub, "_get_json", side_effect=OSError("down")):
+            out = hub.collect_alerts(self.Cur())
+        self.assertEqual(out["counts"]["bad"], 2)
+        self.assertTrue(all(a["kind"] == "unreachable" for a in out["items"]))
+
+    # Integration: both schedulers queried, the core one by the leader's DNS name
+    def test_integration_core_leader_by_dns(self):
+        seen = []
+        with mock.patch.object(hub, "_get_json", side_effect=lambda u: seen.append(u) or self.TASKS):
+            out = hub.collect_alerts(self.Cur(leader="nova-core3"))
+        self.assertIn("http://nova-core3.digitalnoise.net:37464/tasks", seen)
+        self.assertTrue(any(a["kind"] == "failover" for a in out["items"]))   # standby leading = warn
+
+    # Functional: ordering bad > warn > info, counts
+    def test_functional_order_and_counts(self):
+        from datetime import datetime, timezone
+        ev = [("nova-core", datetime(2026, 10, 20, 0, 59, tzinfo=timezone.utc), "back")]
+        with mock.patch.object(hub, "_get_json", return_value=self.TASKS):
+            out = hub.collect_alerts(self.Cur(events=ev))
+        levels = [a["level"] for a in out["items"]]
+        self.assertEqual(levels, sorted(levels, key={"bad": 0, "warn": 1, "info": 2}.get))
+        self.assertEqual(out["counts"], {"bad": 2, "warn": 2, "info": 1})
+
+    # Performance: a cap on items no matter how much is failing
+    def test_performance_capped_list(self):
+        many = {f"t{i}": {"enabled": True, "consecutive_failures": 5} for i in range(200)}
+        with mock.patch.object(hub, "_get_json", return_value=many):
+            out = hub.collect_alerts(self.Cur())
+        self.assertLessEqual(len(out["items"]), 24)
+
+    # Frame: no live leader is itself an alert
+    def test_frame_no_leader(self):
+        with mock.patch.object(hub, "_get_json", return_value={}):
+            out = hub.collect_alerts(self.Cur(leader=None))
+        self.assertEqual(out["items"][0]["kind"], "no-leader")
 
 
 if __name__ == "__main__":

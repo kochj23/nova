@@ -98,3 +98,38 @@ enum NodeFacts {
         }
     }
 }
+
+/// Wording for the alert strip (1.1.0).
+enum AlertText {
+    typealias Item = ClusterSnapshot.Alerts.Item
+
+    /// The items the strip cycles through: problems only (bad first), never the info-level leader history.
+    static func problems(_ a: ClusterSnapshot.Alerts?) -> [Item] {
+        (a?.items ?? []).filter { $0.level == "bad" || $0.level == "warn" }
+    }
+
+    /// "2 dead-letter · 3 failing" / "scheduler-core on standby"; nil when everything is fine.
+    static func headline(_ a: ClusterSnapshot.Alerts?) -> String? {
+        let p = problems(a)
+        guard !p.isEmpty else { return nil }
+        var parts: [String] = []
+        let dead = p.filter { ["dead-letter", "quarantined"].contains($0.kind ?? "") }.count
+        let failing = p.filter { $0.kind == "failing" }.count
+        let other = p.count - dead - failing
+        if dead > 0 { parts.append("\(dead) dead-letter") }
+        if failing > 0 { parts.append("\(failing) failing") }
+        if other > 0 { parts.append(other == 1 ? (p.first { !["dead-letter", "quarantined", "failing"].contains($0.kind ?? "") }?.kind ?? "alert") : "\(other) more") }
+        return parts.joined(separator: " · ")
+    }
+
+    static func level(_ a: ClusterSnapshot.Alerts?) -> NodeFacts.Level {
+        let p = problems(a)
+        if p.contains(where: { $0.level == "bad" }) { return .bad }
+        return p.isEmpty ? .good : .warn
+    }
+
+    /// One strip line: "studio · model_warm: quarantined after 10 failures in a row".
+    static func line(_ i: Item) -> String {
+        [i.source, i.text].compactMap { $0 }.joined(separator: " · ")
+    }
+}

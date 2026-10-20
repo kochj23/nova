@@ -86,3 +86,33 @@ final class NodeFactsTests: XCTestCase {
         XCTAssertNoThrow(try JSONDecoder().decode(ClusterSnapshot.self, from: Data(#"{"nodes":[{"node":"a"}]}"#.utf8)))
     }
 }
+
+final class AlertTextTests: XCTestCase {
+    typealias A = ClusterSnapshot.Alerts
+
+    func testQuietWhenHealthy() {
+        let a = A(items: [.init(level: "info", kind: "leader", source: "scheduler-core", text: "leader → nova-core · Mon 17:59")])
+        XCTAssertNil(AlertText.headline(a))
+        XCTAssertNil(AlertText.headline(nil))
+        XCTAssertEqual(AlertText.level(a), .good)
+    }
+
+    func testHeadlineAndLevel() {
+        let a = A(items: [.init(level: "bad", kind: "quarantined", source: "studio", task: "model_warm", text: "model_warm: quarantined"),
+                          .init(level: "bad", kind: "dead-letter", source: "studio", text: "x"),
+                          .init(level: "warn", kind: "failing", source: "scheduler-core", text: "y"),
+                          .init(level: "warn", kind: "failover", source: "scheduler-core", text: "on standby"),
+                          .init(level: "info", kind: "leader", text: "z")])
+        XCTAssertEqual(AlertText.headline(a), "2 dead-letter · 1 failing · failover")
+        XCTAssertEqual(AlertText.level(a), .bad)
+        XCTAssertEqual(AlertText.problems(a).count, 4)
+        XCTAssertEqual(AlertText.line(a.items![0]), "studio · model_warm: quarantined")
+    }
+
+    func testDecodesAlerts() throws {
+        let json = #"{"alerts":{"items":[{"level":"warn","kind":"failing","source":"studio","task":"t","text":"t: failed 4× in a row","failures":4}],"counts":{"bad":0,"warn":1},"leader":"nova-core"}}"#
+        let s = try JSONDecoder().decode(ClusterSnapshot.self, from: Data(json.utf8))
+        XCTAssertEqual(s.alerts?.leader, "nova-core")
+        XCTAssertEqual(AlertText.headline(s.alerts), "1 failing")
+    }
+}

@@ -23,7 +23,9 @@ screensaver draws: what this Mac is reading now, what it has learned for Nova to
 1.1 (2026-10-19, Nova Cluster 1.1.0): /cluster also carries, from read-only caches a background thread refreshes
 (so a request never waits on the network): per node `net` (wired link speed + Wi-Fi backdoor), `temps`, and
 `recent_jobs` (last 10: LLM jobs from memory, works read and episodes transcribed from PG); top-level `ups` (every
-UPS in service_config service='ups', read from NUT's upsd over TCP 3493).
+UPS in service_config service='ups', read from NUT's upsd over TCP 3493) and `alerts` (failing / dead-letter /
+quarantined tasks on both schedulers — the Studio's and the scheduler-core leader's /tasks — and leader changes from
+leader_events in the last 7 days).
 CLI  --serve [--port 37590] | --enroll NODE [--url http://host:11434] [--dedicated | --viewer | --probe] | --list | --selftest
 A VIEWER (--viewer) is a display, not a minion: it never heartbeats and is never sent work; its token reads /fleet.
 
@@ -37,6 +39,7 @@ import argparse
 import collections
 import hashlib
 import socket
+import urllib.request
 import json
 import os
 import re
@@ -428,7 +431,7 @@ def llm_push(node: str, snap: dict, cur=None, addr: str | None = None):
 
 
 # ── Nova Cluster 1.1 extras: read-only collectors, refreshed in the background ───────────────────
-_EXTRAS: dict = {"ups": [], "recent_jobs": {}}
+_EXTRAS: dict = {"ups": [], "recent_jobs": {}, "alerts": {"items": [], "counts": {}}}
 _EXTRAS_LOCK = threading.Lock()
 _VAR = re.compile(r'^VAR (\S+) (\S+) "(.*)"$')
 UPS_VARS = ("ups.status", "ups.load", "ups.realpower.nominal", "battery.charge", "battery.runtime", "input.voltage",
@@ -529,7 +532,105 @@ def recent_jobs_for(node: str, db_jobs: list, llm: list, limit: int = 10) -> lis
     return [{k: v for k, v in j.items() if k != "t"} for j in rows[:limit]]
 
 
-COLLECTORS = [("ups", collect_ups, 10), ("recent_jobs", collect_recent_jobs, 30)]
+# alerts: failing / dead-letter tasks on both schedulers + scheduler-core leader changes
+STUDIO_SCHED = "http://localhost:37460/tasks"           # the hub runs on the Studio
+CORE_SCHED = "http://{node}.digitalnoise.net:37464/tasks"  # scheduler-core leader, by DNS name
+PREFERRED_CORE_LEADER = "nova-core"
+FAILING_AT, DEAD_AT = 3, 10
+
+
+def classify_tasks(source: str, tasks: dict, reasons: dict | None = None) -> list:
+    """/tasks JSON -> alert items. Disabled tasks never alert. Pure."""
+    out = []
+    for tid, t in (tasks or {}).items():
+        if not isinstance(t, dict) or t.get("enabled") is False:
+            continue
+        n = int(t.get("consecutive_failures") or 0)
+        quarantined = bool(t.get("quarantined"))
+        if quarantined or n >= DEAD_AT:
+            level, kind = "bad", "dead-letter" if not quarantined else "quarantined"
+            text = f"{tid}: {kind} after {n} failures in a row"
+        elif n >= FAILING_AT:
+            level, kind, text = "warn", "failing", f"{tid}: failed {n}× in a row"
+        else:
+            continue
+        reason = (reasons or {}).get(tid)
+        out.append({"level": level, "kind": kind, "source": source, "task": tid[:80], "text": text[:160],
+                    "reason": re.sub(r"\s+", " ", reason)[:140] if reason else None, "failures": n})
+    return out
+
+
+def _get_json(url: str, timeout: float = 5.0):
+    with urllib.request.urlopen(urllib.request.Request(url, headers={"Accept": "application/json"}), timeout=timeout) as r:
+        return json.loads(r.read() or b"{}")
+
+
+def _last_errors(cur, task_ids: list) -> dict:
+    if not task_ids:
+        return {}
+    cur.execute("SELECT DISTINCT ON (task_id) task_id, coalesce(nullif(error_tail, ''), stdout_tail) FROM scheduler_runs "
+                "WHERE task_id = ANY(%s) AND status <> 'success' ORDER BY task_id, started_at DESC", (task_ids,))
+    return {t: (e or "")[-300:] for t, e in cur.fetchall()}
+
+
+def _failing_from_runs(cur) -> dict:
+    """Fallback when a scheduler's /tasks can't be reached: trailing failure streaks from scheduler_runs (2 days)."""
+    cur.execute("""SELECT task_id, count(*) FROM (
+                     SELECT task_id, status, row_number() OVER (PARTITION BY task_id ORDER BY started_at DESC) rn,
+                            count(*) FILTER (WHERE status = 'success') OVER (PARTITION BY task_id ORDER BY started_at DESC
+                              ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) ok_seen
+                     FROM scheduler_runs WHERE started_at > (extract(epoch FROM now()) - 2 * 86400) * 1000) r
+                   WHERE ok_seen = 0 AND status NOT IN ('running', 'success') GROUP BY task_id""")
+    return {t: {"enabled": True, "consecutive_failures": int(n)} for t, n in cur.fetchall()}
+
+
+def leader_items(leader: str | None, events: list, now: datetime) -> list:
+    """Leader-change alerts. Pure: events = [(node, ts, note)] newest first."""
+    out = []
+    if leader and leader != PREFERRED_CORE_LEADER:
+        since = next((ts for n, ts, _ in events if n == leader), None)
+        out.append({"level": "warn", "kind": "failover", "source": "scheduler-core", "task": None,
+                    "text": f"scheduler-core is running on the standby ({leader})"
+                            + (f" since {since.astimezone().strftime('%a %H:%M')}" if since else ""), "reason": None})
+    for n, ts, note in events[:4]:
+        out.append({"level": "info", "kind": "leader", "source": "scheduler-core", "task": None,
+                    "text": f"leader → {n} · {ts.astimezone().strftime('%a %H:%M')}",
+                    "reason": (note or "")[:140] or None, "at": iso(ts)})
+    return out
+
+
+def collect_alerts(cur) -> dict:
+    items: list = []
+    cur.execute("SELECT node FROM leader_standby WHERE name = 'nova-scheduler-core' AND role = 'leader' "
+                "AND ts > now() - interval '5 minutes' ORDER BY ts DESC LIMIT 1")
+    row = cur.fetchone()
+    leader = row[0] if row else None
+    sources = [("studio", STUDIO_SCHED)]
+    if leader and _NODE.match(leader):
+        sources.append(("scheduler-core", CORE_SCHED.format(node=leader)))
+    else:
+        items.append({"level": "bad", "kind": "no-leader", "source": "scheduler-core", "task": None,
+                      "text": "scheduler-core has no live leader", "reason": None})
+    for name, url in sources:
+        try:
+            tasks = _get_json(url)
+        except Exception as e:  # noqa: BLE001
+            items.append({"level": "bad", "kind": "unreachable", "source": name, "task": None,
+                          "text": f"{name} scheduler not answering", "reason": f"{e.__class__.__name__}"})
+            tasks = _failing_from_runs(cur) if name == "scheduler-core" else {}
+        found = classify_tasks(name, tasks)
+        reasons = _last_errors(cur, [a["task"] for a in found])
+        items += classify_tasks(name, tasks, reasons)
+    cur.execute("SELECT node, ts, note FROM leader_events WHERE name = 'nova-scheduler-core' "
+                "AND ts > now() - interval '7 days' ORDER BY ts DESC LIMIT 8")
+    items += leader_items(leader, cur.fetchall(), datetime.now(timezone.utc))
+    rank = {"bad": 0, "warn": 1, "info": 2}
+    items.sort(key=lambda a: (rank.get(a["level"], 3), -(a.get("failures") or 0)))
+    counts = {k: sum(1 for a in items if a["level"] == k) for k in ("bad", "warn", "info")}
+    return {"items": items[:24], "counts": counts, "leader": leader, "at": iso(datetime.now(timezone.utc))}
+
+
+COLLECTORS = [("ups", collect_ups, 10), ("recent_jobs", collect_recent_jobs, 30), ("alerts", collect_alerts, 30)]
 
 
 def refresh_extras(force: bool = False):
@@ -629,11 +730,12 @@ def cluster(cur) -> dict:
                                 last_job.get(n["node"]), now)
     with _EXTRAS_LOCK:
         ups, db_jobs = list(_EXTRAS.get("ups") or []), dict(_EXTRAS.get("recent_jobs") or {})
+        alerts = dict(_EXTRAS.get("alerts") or {})
     with _LLM_LOCK:
         llm_jobs = {n: list(d) for n, d in _RECENT_LLM.items()}
     for n in nodes:
         n["recent_jobs"] = recent_jobs_for(n["node"], db_jobs.get(n["node"], []), llm_jobs.get(n["node"], []))
-    return {"updated": iso(datetime.now(timezone.utc)), "totals": tot, "nodes": nodes, "events": events, "ups": ups,
+    return {"updated": iso(datetime.now(timezone.utc)), "totals": tot, "nodes": nodes, "events": events, "ups": ups, "alerts": alerts,
             "fleet_tonight": fl.get("fleet_tonight"), "queue": fl.get("queue"), "eta_days": fl.get("eta_days"),
             "recent_lessons": fl.get("recent_lessons", [])[:40]}
 
@@ -811,6 +913,17 @@ def selftest() -> int:
     assert [t for _, t in _RECENT_LLM["n"]] == ["a → m", "b"]
     note_jobs("n", ["b"], None, 1200.0)
     assert len(_RECENT_LLM["n"]) == 3
+    tasks = {"a": {"enabled": True, "consecutive_failures": 12}, "b": {"enabled": True, "consecutive_failures": 4},
+             "c": {"enabled": False, "consecutive_failures": 50}, "d": {"enabled": True, "consecutive_failures": 1},
+             "e": {"enabled": True, "consecutive_failures": 0, "quarantined": True}}
+    al = classify_tasks("studio", tasks, {"b": "Errno 2  no such\n file"})
+    assert [(x["task"], x["kind"]) for x in al] == [("a", "dead-letter"), ("b", "failing"), ("e", "quarantined")]
+    assert al[1]["reason"] == "Errno 2 no such file"
+    ev = [("nova-core", datetime(2026, 10, 20, 0, 59, tzinfo=timezone.utc), "back"),
+          ("nova-core3", datetime(2026, 10, 18, 23, 36, tzinfo=timezone.utc), "failover")]
+    li = leader_items("nova-core3", ev[1:], datetime.now(timezone.utc))
+    assert li[0]["kind"] == "failover" and "nova-core3" in li[0]["text"] and li[1]["kind"] == "leader"
+    assert [x["kind"] for x in leader_items("nova-core", ev, datetime.now(timezone.utc))] == ["leader", "leader"]
     try:
         nut_vars("localhost", 1, "../x")
         raise AssertionError("bad ups name accepted")

@@ -205,3 +205,88 @@ struct UPSBadge: View {
         .accessibilityElement(children: .combine)
     }
 }
+
+/// Top-centre strip (every view): only when something is failing. Cycles through the problems; tap for the list.
+struct AlertStrip: View {
+    let alerts: ClusterSnapshot.Alerts?
+    let u: CGFloat
+    @State private var showAll = false
+    @State private var index = 0
+
+    var body: some View {
+        let problems = AlertText.problems(alerts)
+        if let head = AlertText.headline(alerts) {
+            let bad = AlertText.level(alerts) == .bad
+            let tint = bad ? Palette.alert : Palette.warm
+            Button { showAll = true } label: {
+                HStack(spacing: 8 * u) {
+                    Circle().fill(tint).frame(width: 7 * u, height: 7 * u).shadow(color: tint, radius: 3 * u)
+                    Text(head.uppercased()).font(.system(size: 10.5 * u, weight: .semibold)).tracking(1.4 * u)
+                        .foregroundStyle(tint)
+                    let item = problems[index % max(1, problems.count)]
+                    Text(NodeLines.clean(AlertText.line(item), max: 90))
+                        .font(.system(size: 11 * u, design: .monospaced)).foregroundStyle(.white.opacity(0.7))
+                        .id(index).transition(.opacity)
+                }
+                .lineLimit(1)
+                .padding(.horizontal, 12 * u).padding(.vertical, 5 * u)
+                .background(Capsule().fill(Color.black.opacity(0.6)))
+                .overlay(Capsule().strokeBorder(tint.opacity(0.4), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .task(id: problems.count) {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(5))
+                    withAnimation(.easeInOut(duration: 0.4)) { index += 1 }
+                }
+            }
+            .sheet(isPresented: $showAll) { AlertsSheet(alerts: alerts) { showAll = false } }
+            .accessibilityLabel("Scheduler alerts: \(head)")
+        }
+    }
+}
+
+struct AlertsSheet: View {
+    let alerts: ClusterSnapshot.Alerts?
+    let done: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Scheduler alerts").font(.system(size: 22, weight: .semibold))
+                Spacer()
+                Button("Done", action: done).keyboardShortcut(.cancelAction)
+            }
+            if let l = alerts?.leader {
+                Text("scheduler-core leader: \(l)").font(.system(size: 13, design: .monospaced)).foregroundStyle(.white.opacity(0.6))
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array((alerts?.items ?? []).enumerated()), id: \.offset) { _, i in
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Circle().fill(i.level == "bad" ? Palette.alert : i.level == "warn" ? Palette.warm : .white.opacity(0.35))
+                                .frame(width: 8, height: 8)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(NodeLines.clean(AlertText.line(i))).font(.system(size: 14, design: .monospaced))
+                                if let r = i.reason, !r.isEmpty {
+                                    Text(NodeLines.clean(r)).font(.system(size: 12, design: .monospaced))
+                                        .foregroundStyle(.white.opacity(0.45))
+                                }
+                            }
+                        }
+                        #if os(tvOS)
+                        .focusable()
+                        #endif
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(22)
+        #if os(macOS)
+        .frame(minWidth: 620, minHeight: 420)
+        #endif
+        .background(Palette.space)
+        .preferredColorScheme(.dark)
+    }
+}
