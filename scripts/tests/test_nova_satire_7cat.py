@@ -112,6 +112,14 @@ class TestSecurity(Base):
         out = sat.insert_inline(MD, "/images/satire/x.webp", "evil](http://bad) [x")
         self.assertNotIn("](http://bad)", out)
 
+    def test_enqueue_only_queues_files_inside_the_real_journal(self):
+        cur = Cur()
+        with patch.object(sat, "db", return_value=Conn(cur)):
+            self.assertFalse(sat.enqueue_article(Path(self.tmp) / "elsewhere/content/music/2026-x.md", "music"))
+            inside = self.journal / "content/music/2026-10-19-real.md"
+            self.assertTrue(sat.enqueue_article(inside, "music"))
+        self.assertEqual(sum("INSERT INTO satire_article_queue" in s for s, _ in cur.stmts), 1)
+
     def test_enqueue_skips_index_and_art(self):
         with patch.object(sat, "db") as d:
             self.assertFalse(sat.enqueue_article("/j/content/art/2026-x.md", "art"))
@@ -142,7 +150,8 @@ class TestRetry(Base):
     def test_pool_fill_skips_failed_render_and_continues(self):
         cur = Cur({"SELECT prompt_key": [], "count(*)": [(0,)]})
         outs = iter([None, fake_png(self.tmp), fake_png(self.tmp)])
-        made = sat.pool_fill(target=2, budget_s=60, gen=lambda *a, **k: next(outs), conn=Conn(cur), busy=lambda: False)
+        made = sat.pool_fill(target=2, budget_s=60, gen=lambda *a, **k: next(outs), conn=Conn(cur), busy=lambda: False,
+                             sleep=lambda s: None)
         self.assertEqual(made, 2)
         self.assertEqual(sum("INSERT INTO satire_images" in s for s, _ in cur.stmts), 2)
 

@@ -38,6 +38,7 @@ MARKER = "<!-- satire-image -->"
 NO_TEXT = ("Affectionate, absurd satire. No readable text, no letters, no logos, no brand names, "
            "no real or famous people, nothing sexual.")
 RECENT_VIDEOS = 10
+POOL_GAP_S = 45
 SKIP_SECTIONS = {"art", "start-here", "search", "about"}
 
 
@@ -229,6 +230,8 @@ def enqueue_article(md_path, section):
         p = Path(md_path)
         if section in SKIP_SECTIONS or p.name == "_index.md":
             return False
+        if JOURNAL.resolve() not in p.resolve().parents:   # tests publish into temp HUGO_ROOTs — never queue those
+            return False
         c = db()
         with c.cursor() as cur:
             ensure_schema(cur)
@@ -307,6 +310,7 @@ def pool_fill(target=110, budget_s=3000, gen=None, conn=None, busy=comfy_busy, s
             made += 1
             count += 1
             log(f"pool {count}/{target}: {rel}")
+            sleep(POOL_GAP_S)        # leave ComfyUI idle long enough for the article worker / other pollers to get in
     return made
 
 
