@@ -1325,7 +1325,7 @@ tasks:
     script: nova_media_reingest.py
     args: ["--minions", "--minutes", "240"]   # 2026-10-18: continuous — every 1m + overlap skip = back-to-back runs; the run re-scans minions every 30 s and feeds each N workers; media host extracts, minions transcribe. 4 h runs: a run ends only when its slowest in-flight file does (CPU minions take 15-40 min), so short runs idled the fleet at every hand-over
     schedule: every 1m
-    timeout: 19500                   # 240 min of claiming + up to 80 min (FILE_TIMEOUT_S) for the last in-flight file
+    timeout: 21600                   # 240 min claiming + drain; 19500 s (325 min) killed every run mid-file 10-18/19 (Jordan-visible as 5 straight failures), 6 h fits the slowest CPU-minion file
     overlap: skip
   media_reingest_queue:            # Sun 21:30 — refresh the re-transcription queue (new files, Plex plays, recall)
     script: nova_media_reingest.py
