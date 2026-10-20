@@ -614,10 +614,17 @@ NORM_SQL = r"lower(btrim(regexp_replace(replace(coalesce(metadata->>'channel', m
 
 def recently_cited(section, days=2):
     """Video URLs the section's own posts from the last `days` already list — a video ingested late one day is
-    still inside the next day's window, and the next issue must not retell it. Reads the local Hugo repo (the
-    one this run publishes from); unreadable = nothing to skip."""
+    still inside the next day's window, and the next issue must not retell it. Fast-forwards and reads the
+    local Hugo repo (the one this run publishes from); unreadable = nothing to skip."""
     try:
-        cutoff = __import__("time").time() - days * 86400
+        import subprocess
+        import time as _t
+        subprocess.run(["git", "-C", str(nj.HUGO_ROOT), "pull", "--ff-only", "-q"], capture_output=True,
+                       timeout=30)   # another host may have published the last issue (publish rebases later anyway)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        cutoff = _t.time() - days * 86400
         folder = Path(nj.HUGO_ROOT) / "content" / section
         posts = [p for p in folder.glob("*.md") if p.stat().st_mtime >= cutoff]
         return {u for p in posts for u in re.findall(r"https://www\.youtube\.com/watch\?v=[\w-]{11}", p.read_text())}
