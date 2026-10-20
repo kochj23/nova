@@ -232,7 +232,7 @@ def describe_track(url: str, log=_log) -> str | None:
                "title, artist or lyrics. Describe what the track sounds like using only those numbers, in under 120 words. CLAP tags are "
                "probabilistic guesses: hedge them. Tempo octave is ambiguous (half/double/candidates). If key is "
                "'ambiguous', say so. Loudness scale: -6 to -9 LUFS = very loud, limited club/pop master; around -14 "
-               "= streaming normal; -16 or lower = quiet, dynamic, older or live. Never name the artist or title, never invent instruments, lyrics or facts the "
+               "= streaming normal; -16 or lower = quiet, dynamic, older or live. Vocals: say only whether and where they are present — never guess singing vs rapping, the singer's gender or voice type (the analysis can't tell). Never name the artist or title, never invent instruments, lyrics or facts the "
                "numbers don't support. No headers, no bullet points, no addressing Little Mister.")
         text = (nj.call_openrouter(nova_voice.system_prompt(ctx), json.dumps(_for_writer(r)),
                                    model="anthropic/claude-sonnet-4.5", max_tokens=600, temperature=0.5) or "").strip()
