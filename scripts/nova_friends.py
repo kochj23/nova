@@ -571,8 +571,22 @@ def norm(name):
 NORM_SQL = r"lower(btrim(regexp_replace(replace(coalesce(metadata->>'channel', metadata->>'show'), E'’', ''''), '\s+', ' ', 'g')))"
 
 
+def recently_cited(section, days=2):
+    """Video URLs the section's own posts from the last `days` already list — a video ingested late one day is
+    still inside the next day's window, and the next issue must not retell it. Reads the local Hugo repo (the
+    one this run publishes from); unreadable = nothing to skip."""
+    try:
+        cutoff = __import__("time").time() - days * 86400
+        folder = Path(nj.HUGO_ROOT) / "content" / section
+        posts = [p for p in folder.glob("*.md") if p.stat().st_mtime >= cutoff]
+        return {u for p in posts for u in re.findall(r"https://www\.youtube\.com/watch\?v=[\w-]{11}", p.read_text())}
+    except Exception:  # noqa: BLE001 — dedup is a nicety, never a reason to skip an issue
+        return set()
+
+
 def fetch(cur, cfg, days):
-    """-> (videos, articles) grouped newest-first, banned-term rows dropped."""
+    """-> (videos, articles) grouped newest-first, banned-term rows dropped, videos the section's last
+    issues already cited dropped."""
     shared = {norm(c) for c in cfg.get("shared_channels", ())}   # another section's channel, topic videos only
     keys = sorted({norm(c) for c in cfg["channels"]} | shared)
     cur.execute(f"""SELECT text, created_at, metadata FROM memories
@@ -605,6 +619,9 @@ def fetch(cur, cfg, days):
                 n_capped += 1
             kept.append(v)
         videos = kept[:VID_MAX]
+    cited = recently_cited(cfg["section"])
+    if cited:
+        videos = [v for v in videos if v["url"] not in cited]
     for v in videos:
         if (v["url"] or "").startswith("local:"):
             v["url"] = None

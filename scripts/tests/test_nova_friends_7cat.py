@@ -1044,6 +1044,19 @@ class TestHistoryBelief(unittest.TestCase):
         for bad in ("wrong doctrine", "not as usable to join"):
             self.assertNotIn(bad, m.SRC if hasattr(m, "SRC") else SRC)
 
+    def test_videos_cited_by_recent_issues_are_not_retold(self):
+        import tempfile
+        root = Path(tempfile.mkdtemp()); (root / "content" / "belief").mkdir(parents=True)
+        (root / "content" / "belief" / "2026-10-19-belief.md").write_text(
+            "## Sources\n- [x](https://www.youtube.com/watch?v=v1AAAAAAAAA)\n")
+        cur = Cur([vrow("buddhist monks", "v1AAAAAAAAA", chan="Plum Village App", title="Old"),
+                   vrow("buddhist monks", "v2BBBBBBBBB", chan="Plum Village App", title="New")], [])
+        with patch.object(m.nj, "HUGO_ROOT", root):
+            got, _ = m.fetch(cur, m.SUBJECTS["belief"], 1)
+        self.assertEqual([v["title"] for v in got], ["New"])
+        with patch.object(m.nj, "HUGO_ROOT", root / "missing"):   # unreadable repo: nothing skipped
+            self.assertEqual(len(m.fetch(cur, m.SUBJECTS["belief"], 1)[0]), 2)
+
     def test_shared_channels_feed_belief_only_on_religion_topics(self):
         cur = Cur([vrow("photosynthesis and the light reactions", "c1", chan="CrashCourse", title="Photosynthesis"),
                    vrow("is atheism a religion? religious demographics and the new atheism", "c2",
