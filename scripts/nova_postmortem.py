@@ -230,7 +230,7 @@ cover:
     body += article
 
     # Live fleet-health snapshot at publish time — a real Grafana panel render, not a description of one.
-    snapshot = grafana_panel_image("fleet-health", 7, "operations", "fleet-health-snapshot")
+    snapshot = grafana_panel_image("nova-fleet", 59, "operations", "fleet-health-snapshot")
     if snapshot:
         body += f"\n\n---\n\n**Fleet health at publish time:**\n\n![Current fleet health]({snapshot})"
 

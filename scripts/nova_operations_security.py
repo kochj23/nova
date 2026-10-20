@@ -318,7 +318,7 @@ def main():
     except Exception as e:
         nj.log(f"[ops-security] image gen failed (non-fatal): {e}")
 
-    snap = nj.grafana_panel_image("nova-security", 8, "operations", "sec-ops-high-severity")
+    snap = nj.grafana_panel_image("nova-sec", 7, "operations", "sec-ops-high-severity")
     if snap:
         body += f"\n\n---\n\n**Recent high-severity events at publish time:**\n\n![Recent high-severity events]({snap})"
 

@@ -588,7 +588,7 @@ def publish(title: str, body: str, brief_facts: str):
     slug = "ops-" + re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:55]
     CONTENT_DIR.mkdir(parents=True, exist_ok=True)
 
-    snap = nova_journal.grafana_panel_image("nova-hosts-fleet", 1, "operations", "daily-ops-cpu-load")
+    snap = nova_journal.grafana_panel_image("nova-fleet", 30, "operations", "daily-ops-cpu-load")
     if snap:
         body += f"\n\n---\n\n**CPU load across the fleet at publish time:**\n\n![CPU load by host]({snap})"
 

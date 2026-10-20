@@ -580,7 +580,7 @@ def looks_like_failure(body: str) -> tuple[bool, str]:
 
 
 def publish(title: str, body: str, image_path: Path | None, pub_date: str | None = None):
-    snap = nova_journal.grafana_panel_image("fleet-health", 7, "operations", "rando-ops-fleet-health")
+    snap = nova_journal.grafana_panel_image("nova-fleet", 59, "operations", "rando-ops-fleet-health")
     if snap:
         body += f"\n\n---\n\n**Fleet health at publish time:**\n\n![Current fleet health]({snap})"
 

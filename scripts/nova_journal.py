@@ -547,6 +547,21 @@ def call_openrouter(system: str, user: str, model: str = "anthropic/claude-haiku
     return None
 
 
+def _grafana_panel_exists(dashboard_uid: str, panel_id: int) -> bool:
+    try:
+        with urllib.request.urlopen(resolve_url("grafana", f"/api/dashboards/uid/{dashboard_uid}"), timeout=15) as resp:
+            dash = json.load(resp).get("dashboard") or {}
+    except Exception:
+        return False
+    stack = list(dash.get("panels", []))
+    while stack:
+        p = stack.pop()
+        if p.get("id") == panel_id:
+            return True
+        stack.extend(p.get("panels", []))  # panels inside collapsed rows
+    return False
+
+
 def grafana_panel_image(dashboard_uid: str, panel_id: int, section: str, name: str,
                         width: int = 1000, height: int = 500,
                         time_range: str = "now-24h") -> str | None:
@@ -557,6 +572,11 @@ def grafana_panel_image(dashboard_uid: str, panel_id: int, section: str, name: s
     # theme=dark matches the blog's dark aesthetic explicitly (don't drift with the admin
     # user's Grafana UI preference); scale=2 renders at 2x pixel density for crisp text on
     # the blog — real numbers, just sharper, no image-model reinterpretation of the data.
+    # Grafana renders a missing dashboard/panel as a 200 PNG of its error page, so the PNG
+    # check below can't catch it -- confirm the panel exists first (dashboards get renamed).
+    if not _grafana_panel_exists(dashboard_uid, panel_id):
+        log(f"[grafana_panel_image] no panel {dashboard_uid}/{panel_id} in Grafana -- skipping embed")
+        return None
     url = resolve_url("grafana", f"/render/d-solo/{dashboard_uid}?panelId={panel_id}"
                        f"&width={width}&height={height}&from={time_range}&to=now&tz=America%2FLos_Angeles"
                        f"&theme=dark&scale=2")

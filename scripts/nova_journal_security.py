@@ -416,7 +416,7 @@ Write the PDB. If a section has no significant activity, mark it NOSIG and move 
         log(f"Image gen failed: {e}")
         img_path = None
 
-    snap = nova_journal.grafana_panel_image("security-posture", 5, "operations", "daily-briefing-posture")
+    snap = nova_journal.grafana_panel_image("nova-sec", 33, "operations", "daily-briefing-posture")
     if snap:
         body += f"\n\n---\n\n**Our own posture, for context:**\n\n![Endpoint events by severity]({snap})"
 
@@ -538,7 +538,7 @@ Only include confirmed information; flag uncertainty explicitly. Never ask for a
     except Exception:
         img_path = None
 
-    snap = nova_journal.grafana_panel_image("nova-security", 8, "operations", "breaking-alert-posture")
+    snap = nova_journal.grafana_panel_image("nova-sec", 7, "operations", "breaking-alert-posture")
     if snap:
         body += f"\n\n---\n\n**Recent high-severity events at publish time:**\n\n![Recent high-severity events]({snap})"
 
