@@ -123,6 +123,20 @@ def reconcile_hazard(text, hazard):
     return None
 
 
+_FLAMES = re.compile(r"\b(flames?|burning|blaze|wildfire|on fire|fire (?:is )?visible|active fire)\b", re.I)
+
+
+def hazard_level(hazard, text):
+    """Only visible flames page Jordan; smoke/haze alone goes to the digest (coagency #183, Jordan 2026-10-19:
+    65 false fire/smoke pages in a week, mostly ordinary LA hillside haze). Floods still page."""
+    if hazard == "flood":
+        return "critical"
+    if hazard in ("fire", "smoke"):
+        clauses = re.split(r"[.;\n]+", text or "")
+        return "critical" if any(_FLAMES.search(c) and not _NEGATION.search(c) for c in clauses) else "info"
+    return "warning"
+
+
 def watch(role=None, limit=None):
     cams = list(TRAFFIC_CAMERAS.items())
     if role:
@@ -171,7 +185,7 @@ def watch(role=None, limit=None):
 
     for cid, cam, hazard, text in hazards:
         emoji = {"smoke": "🌫️", "fire": "🔥", "flood": "🌊"}.get(hazard, "🚨")
-        level = "critical" if hazard in ("fire", "smoke", "flood") else "warning"
+        level = hazard_level(hazard, text)
         slack_post(
             f"{emoji} {hazard.upper()} — {cam['name']} ({cam['area']})\n{text}\n"
             f"https://cwwp2.dot.ca.gov/vm/iframemap.htm?long={cam['lon']}&lat={cam['lat']}&zoom=18",
@@ -201,6 +215,12 @@ def selftest():
     assert reconcile_hazard("Moderate traffic. There is smoke rising from the hillsides.", "smoke") == "smoke"
     assert reconcile_hazard("Flames visible on the ridge.", "fire") == "fire"
     assert reconcile_hazard(neg, "crash") == "crash"
+    # paging bar (#183): flames page, haze/smoke alone is digest, flood pages
+    assert hazard_level("fire", "Flames visible on the ridge.") == "critical"
+    assert hazard_level("smoke", "Smoke and haze are visible on the hillsides.") == "info"
+    assert hazard_level("fire", "Smoke rising. Fire: None visible.") == "info"
+    assert hazard_level("flood", "Water across lanes.") == "critical"
+    assert hazard_level("crash", "Two cars collided.") == "warning"
     # junk token ignored, empty safe
     assert parse_hazard("Clear.\nHAZARD: banana")[1] is None
     assert parse_hazard(None) == ("", None)

@@ -140,8 +140,34 @@ def parse_json(txt: str):
         return []
 
 
+_STOP = frozenset("that this with from have will must never always only when what which their there about into than then they them your nova jordan rule rules should would could every each other".split())
+
+
+def _words(text) -> set:
+    return {w for w in re.findall(r"[a-z][a-z_]{3,}", (text or "").lower()) if w not in _STOP}
+
+
+def is_brief(text) -> bool:
+    """A one-off instruction handed to a sub-agent (captured by the Claude Code hook) is not a standing rule."""
+    return (text or "").lstrip().startswith("[sub-agent brief")
+
+
+def plausible(c) -> bool:
+    """Deterministic guard on the 8B judge (2026-10-19: all 12 open conflicts were unrelated pairs, e.g. Asimov's laws vs
+    the ingest executor 'colliding' over an RSS dedup). Both rules must be standing rules, and the situation must share
+    at least one content word with EACH rule. ponytail: lexical overlap, upgrade to embedding similarity if it misses."""
+    a, b, sit = c.get("directive_a", ""), c.get("directive_b", ""), c.get("situation", "")
+    if is_brief(a) or is_brief(b):
+        return False
+    s = _words(sit)
+    return bool(s & _words(a)) and bool(s & _words(b))
+
+
 def record(cur, kind, c, dry=False):
-    sig = hashlib.sha1(f"{kind}|{c.get('directive_a','')[:80]}|{c.get('directive_b','')[:80]}|{c.get('action_type','')}".lower().encode()).hexdigest()[:20]
+    if kind in ("latent", "live") and not plausible(c):   # review mode has its own judge
+        log(f"skip implausible {kind} pair: {c.get('directive_a','')[:50]!r} vs {c.get('directive_b','')[:50]!r} :: {c.get('situation','')[:60]}")
+        return False
+    sig =hashlib.sha1(f"{kind}|{c.get('directive_a','')[:80]}|{c.get('directive_b','')[:80]}|{c.get('action_type','')}".lower().encode()).hexdigest()[:20]
     if dry:
         log(f"DRY {kind}: {c.get('directive_a','')[:60]!r} vs {c.get('directive_b','')[:60]!r} :: {c.get('situation','')[:80]}"); return False
     cur.execute("""INSERT INTO directive_conflicts (kind, signature, directive_a, source_a, directive_b, source_b, situation,

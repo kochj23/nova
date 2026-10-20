@@ -165,7 +165,7 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(VA.remember.call_args.kwargs["source"], "traffic_cams")
         msg, kw = VA.slack_post.call_args[0][0], VA.slack_post.call_args.kwargs
         self.assertTrue(msg.startswith("🌫️ SMOKE — SR-134 Pass (Glendale)"))
-        self.assertEqual((kw["level"], kw["dedup_key"]), ("critical", "trafficcam-c1-smoke"))
+        self.assertEqual((kw["level"], kw["dedup_key"]), ("info", "trafficcam-c1-smoke"))   # smoke without flames -> digest (#183, 2026-10-19)
 
     def test_all_offline_stores_and_alerts_nothing(self):
         _reset()

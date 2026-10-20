@@ -114,6 +114,7 @@ DIGEST_CATEGORIES = frozenset({
     "calendar", "telemetry", "syslog", "block_report", "network", "home",
     "analytics", "morning_brief", "finance", "tv", "security", "digest",
     "news", "garden", "backup",
+    "traffic_watch",   # info = smoke/haze without flames (coagency #183, 2026-10-19); flames stay critical
 })
 
 # Tickets, not pages (2026-10-13, SRE book ch.6 / Workbook ch.5): cause-based alerts that an SLO in

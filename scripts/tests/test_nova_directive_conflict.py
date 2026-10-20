@@ -344,6 +344,31 @@ class TestMergedModes(unittest.TestCase):
             W.main(["--hours", "12"]); m.assert_called_with(["--gaps", "--hours", "12"])
 
 
+class TestPlausibilityGuard(unittest.TestCase):
+    """2026-10-19: all 12 open conflicts were noise — sub-agent briefs or unrelated rule pairs."""
+    EXEC = "Executor `nova_coagency._do_ingest`: fetch pg<id>.txt to the NAS, runs `nova_ingest.py file --source <vector>`"
+    ASIMOV = "Laws:** Asimov's Three Laws, held voluntarily"
+
+    def test_unrelated_pair_rejected(self):
+        self.assertFalse(dc.plausible({"directive_a": self.EXEC, "directive_b": self.ASIMOV,
+                                       "situation": "Nova detected an FBI RSS item but had a deduplication rule in place."}))
+
+    def test_sub_agent_brief_rejected(self):
+        brief = "[sub-agent brief · add-15-cluster-casting-franchises] Add 15 new franchises to the FRANCHISES list"
+        self.assertFalse(dc.plausible({"directive_a": brief, "directive_b": self.EXEC,
+                                       "situation": "add franchises then run nova_ingest file"}))
+
+    def test_related_pair_kept(self):
+        self.assertTrue(dc.plausible({"directive_a": "Never share health data externally.",
+                                      "directive_b": "Post the weekly summary to the public journal.",
+                                      "situation": "The weekly journal summary would publish health data externally."}))
+
+    def test_record_skips_implausible_without_db(self):
+        cur = mock.MagicMock()
+        self.assertFalse(dc.record(cur, "live", {"directive_a": self.EXEC, "directive_b": self.ASIMOV, "situation": "RSS dedup"}))
+        cur.execute.assert_not_called()
+
+
 class TestFrame(unittest.TestCase):
     def test_help_exits_zero(self):
         r = subprocess.run([sys.executable, str(SCRIPT), "--help"], cwd=SCRIPTS,
