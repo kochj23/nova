@@ -43,12 +43,15 @@ Eight more siblings (Jordan 2026-10-19), same shape, each with its own top block
   Stealing", travel "Place of the Day". Thin channels: a daily run with fewer than THIN_MIN videos
   widens its window to WIDEN_DAYS (new subjects only).
 
-History and Faith (Jordan 2026-10-19, second pass): history "This Day in History" (Nova's world_history /
+History and Belief (Jordan 2026-10-19, second pass): history "This Day in History" (Nova's world_history /
   history memories for today's month-day, non-military events first; falls back to the day's best story);
-  faith "Verse of the Day" (one passage from Nova's scripture library, quoted word for word and cited —
-  verse_ok() checks the quote against the library text and the Bible chapter:verse, fail closed).
+  belief "Text in Context" (one passage from Nova's scripture + non-theism library, quoted word for word and
+  cited — verse_ok() checks the quote against the library text and the Bible chapter:verse, fail closed —
+  then who wrote it and when, what it meant first, how it is read now, and a skeptic's or another
+  tradition's view). Belief was "Faith and Friends" until Jordan (an atheist who finds religion
+  interesting) asked for a historian's section, not a devotional one — renamed before its first issue.
 
-Usage: nova_friends.py --subject cars|tech|food|music|military|screen|science|mystery|crime|workshop|travel|history|faith
+Usage: nova_friends.py --subject cars|tech|food|music|military|screen|science|mystery|crime|workshop|travel|history|belief
                        [--days 1] [--dry-run]
 """
 import argparse
@@ -60,6 +63,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_journal as nj          # noqa: E402
 import nova_voice                  # noqa: E402
+from nova_sections import is_belief_topic   # noqa: E402
 from nova_watches_and_friends import (MEM_DSN, MODEL, OPS_DSN, _connect, digest, featured_block,  # noqa: E402
                                       group_videos, place_block, sources, split_title, words)
 
@@ -214,10 +218,21 @@ HISTORY_CHANNELS = (   # Jordan 2026-10-19. Military history stays in MILITARY_C
     "History of Everything", "AlternateHistoryHub", "RealLifeLore", "Megaprojects", "Sealed History",
     "Vidstorical Films", "Well There's Your Problem Podcast", "Who Do You Think You Are?",
 )
-FAITH_CHANNELS = (     # Jordan 2026-10-19
+BELIEF_CHANNELS = (    # Jordan 2026-10-19: every religious channel he follows — primary sources about believers
     "Ascension Presents", "Godsplaining | Catholic Podcast", "The Pope Leo's Path", "Thy Kingdom Come",
     "The God Show", "Sacred Logic", "DeepBeliever",
 )
+# Approved for Belief 2026-10-19 but not yet subscribed (BELIEF_CHANNELS must match his live subscriptions —
+# a test checks): scholars of religion, a skeptic and the theological counter-case, so no single side owns the
+# section. fetch() already reads them, so each starts feeding the day he follows it; move it up then.
+BELIEF_PENDING_CHANNELS = (
+    "ReligionForBreakfast", "Let's Talk Religion", "Dan McClellan", "UsefulCharts", "Alex O'Connor",
+    "Bishop Robert Barron", "The Word on Fire Show",
+)
+# Owned by another section (the lists stay disjoint) but also feed Belief, for religion-topic videos only
+# (nova_sections.is_belief_topic): ESOTERICA (Dr. Justin Sledge, academic religious studies; Mystery owns it)
+# and CrashCourse (its Religions series, e.g. #13 "Is Atheism a Religion?"; Science owns it).
+BELIEF_SHARED_CHANNELS = ("ESOTERICA", "CrashCourse")
 # Jordan 2026-10-19: style and health stay unassigned — in NO subject and no pool (a test enforces it).
 UNASSIGNED_CHANNELS = ("GQ", "Real Men Real Style", "Brick and Sole", "Freshhkiicks", "Inkbox", "Doctor Mike",
                        "Dr.Sanders", "Jesse Enkamp")
@@ -258,7 +273,8 @@ CITATION_RE = re.compile(r"\b(?:JP|AFI|AFMAN|AR|FM|ATP|MCRP|MCWP|DoD[DI]?|CNGBI|
 # one is preferred — military history has its own section).
 GENERAL_HISTORY_SOURCES = ("world_history", "history")
 
-# Faith top block: "Verse of the Day" from Nova's scripture library (every passage carries its citation header).
+# Belief top block: "Text in Context" from Nova's scripture library + the non-theism philosophers (Lucretius,
+# Hume, d'Holbach, Russell...); every passage carries its citation header.
 SCRIPTURE_SOURCES = ("bible", "quran", "buddhism", "hinduism", "sikhism", "taoism", "shinto", "confucianism",
                      "jainism", "zoroastrianism", "egyptian_book_of_the_dead", "books_of_the_dead", "nontheism")
 SCRIPTURE_MAX, SCRIPTURE_CHARS, SCRIPTURE_PER_SOURCE = 5, 1500, 2
@@ -266,11 +282,15 @@ SCRIPTURE_STOP = {"church", "catholic", "christian", "podcast", "episode", "fath
                   "should", "because", "something", "actually", "question", "answer", "explained", "anything",
                   "everything", "nothing", "little", "always", "believe", "pretty", "having", "talking", "before",
                   "another", "around", "through", "better", "without", "though", "between", "during", "within"}
-FAITH_TONE = ("Tone: respectful and curious about every tradition — never preachy, never proselytising, never "
-              "ranking religions, never mocking believers or unbelievers. Report what each speaker or tradition "
-              "says in its own terms ('Catholics believe...', 'the Gita teaches...'). Quote scripture only "
-              "word-for-word from the material with its exact citation; never invent, paraphrase-as-quote or "
-              "misattribute a verse.")
+BELIEF_TONE = ("Stance: a historian and anthropologist of religion, not a believer and not a debunker. Cover what "
+               "people believe, where those beliefs came from, how the texts were written and handed down, and "
+               "where traditions — and unbelief — disagree. The religious channels are PRIMARY SOURCES about "
+               "believers, never authorities: report them in their own terms ('Catholics believe...', 'the Gita "
+               "teaches...', 'Barron argues...'). Keep it balanced — believers, scholars, skeptics and the "
+               "theological counter-arguments to skeptics all get a fair hearing. Respectful and curious; never "
+               "preachy, never proselytising, never ranking religions, never mocking believers or unbelievers. "
+               "Occult and paranormal belong to Mystery, not here. Quote scripture only word-for-word from the "
+               "material with its exact citation; never invent, paraphrase-as-quote or misattribute a verse.")
 
 # Mystery top block may lean on the esoteric library for context. Labels travel with every excerpt.
 LORE_SOURCES = ("occult", "necronomicon", "books_of_the_dead", "shams_al_maarif")
@@ -405,12 +425,15 @@ SUBJECTS.update({
                         ["history", "world-history"], "history",
                         "Separate what is documented from legend, speculation and alternate-history 'what ifs' — "
                         "label alternate history as hypothetical. Never invent dates, numbers or quotes."),
-    "faith": _subject("faith", "Faith and Friends", "🕊️", FAITH_CHANNELS,
-                      "scripture and what it says, belief and practice, the saints and church history, the papacy "
-                      "and the Church today, apologetics and big questions, other traditions in their own words",
-                      "believers, seekers and the curious", "candlelit stone chapels, old illuminated manuscripts, "
-                      "temple lanterns and quiet morning light", ["faith", "religion"], "faith", FAITH_TONE),
+    "belief": _subject("belief", "Belief and Friends", "🔍", BELIEF_CHANNELS + BELIEF_PENDING_CHANNELS,
+                       "what people believe and why, where traditions came from, how scriptures were written and "
+                       "transmitted, religion in the news and in society, atheism and non-religion, apologetics "
+                       "and the arguments against it, the scholars' view",
+                       "the curious — believers, skeptics and everyone in between",
+                       "old illuminated manuscripts, museum reading rooms, worn scrolls and a map of the world's "
+                       "traditions", ["belief", "religion"], "religion", BELIEF_TONE),
 })
+SUBJECTS["belief"]["shared_channels"] = BELIEF_SHARED_CHANNELS
 
 # The featured block at the top of each issue: (heading, task). Grounded, fail closed (featured_block).
 FEATURES = {
@@ -473,15 +496,19 @@ FEATURES = {
                 "it too. If no note gives an event on this date, write up the day's single most interesting "
                 "history story from the videos instead and say plainly that it is today's story. Never invent "
                 "dates, numbers, names or quotes."),
-    "faith": ("🕯️ Verse of the Day",
-              "Choose ONE passage from the SCRIPTURE LIBRARY in the material — any tradition — that speaks to "
-              "something in the day's videos. Quote it EXACTLY, word for word, as a markdown blockquote (lines "
-              "starting with '> '), copying only a contiguous run of words from that passage (you may drop the "
-              "inline verse numbers); then on its own line the citation exactly as given in its CITE AS line, "
-              "narrowed to the verse(s) you quoted when the passage numbers its verses. Then a short reflection "
-              "(80-200 words) tying it to the day's material, linking the video it connects to. Never invent, "
-              "alter or paraphrase-as-quote scripture; never quote anything that is not in the library text. "
-              "If nothing in the library fits, reply NONE."),
+    "belief": ("📜 Text in Context",
+               "Choose ONE passage from the SCRIPTURE LIBRARY in the material — any tradition, or one of the "
+               "non-theist philosophers — that connects to something in the day's videos. Quote it EXACTLY, word "
+               "for word, as a markdown blockquote (lines starting with '> '), copying only a contiguous run of "
+               "words from that passage (you may drop the inline verse numbers); then on its own line the "
+               "citation exactly as given in its CITE AS line, narrowed to the verse(s) you quoted when the "
+               "passage numbers its verses. Then put it in context, as a historian would (120-250 words): who "
+               "wrote it and when (as far as scholars know — say when authorship is traditional or disputed), "
+               "what it meant to its first audience, how it is read today, and ONE line on how a skeptic or "
+               "another tradition sees it. Link the video it connects to. This is study, not devotion: no "
+               "sermon, no 'reflection', no telling the reader what to believe. Never invent, alter or "
+               "paraphrase-as-quote scripture; never quote anything that is not in the library text; never "
+               "invent dates or authors. If nothing in the library fits, reply NONE."),
     "travel": ("🗺️ Place of the Day",
                "One place from the material: where it is, what makes it worth knowing about, and what the creator "
                "found there. Never invent prices, opening hours, directions or logistics."),
@@ -507,7 +534,8 @@ NORM_SQL = r"lower(btrim(regexp_replace(replace(coalesce(metadata->>'channel', m
 
 def fetch(cur, cfg, days):
     """-> (videos, articles) grouped newest-first, banned-term rows dropped."""
-    keys = sorted({norm(c) for c in cfg["channels"]})
+    shared = {norm(c) for c in cfg.get("shared_channels", ())}   # another section's channel, topic videos only
+    keys = sorted({norm(c) for c in cfg["channels"]} | shared)
     cur.execute(f"""SELECT text, created_at, metadata FROM memories
                     WHERE created_at > now() - make_interval(days => %s)
                       AND coalesce(metadata->>'privacy', 'public') NOT IN ('private', 'local-only')
@@ -525,7 +553,10 @@ def fetch(cur, cfg, days):
         if not md.get("video_id") and not md.get("url"):
             md["url"] = "local:" + (md.get("source_file") or md.get("title") or "")   # grouping key only
         vrows.append((text, created, md))
-    videos = group_videos(vrows, VID_PER, VID_MAX)
+    videos = group_videos(vrows, VID_PER, len(vrows) if shared else VID_MAX)
+    if shared:   # filter before the cap so off-topic shared videos never crowd out the section's own
+        videos = [v for v in videos if norm(v["channel"] or "") not in shared
+                  or is_belief_topic(f"{v['title']} {(v.get('text') or '')[:3000]}")][:VID_MAX]
     for v in videos:
         if (v["url"] or "").startswith("local:"):
             v["url"] = None
@@ -669,7 +700,7 @@ def fetch_history(cur, today=None, n=HISTORY_MAX, military=True):
 
 
 def scripture_cite(source, md, text):
-    """The citation a Verse of the Day must carry: Bible '<Book> <ch>:<verses> (KJV)', Qur'an 'Qur'an
+    """The citation a Text in Context block must carry: Bible '<Book> <ch>:<verses> (KJV)', Qur'an 'Qur'an
     <sura> (Rodwell)', else the passage's own header ('<work> — <section> (<translator> <year>)')."""
     if source == "bible" and md.get("book") and md.get("chapter"):
         tr = "KJV" if "King James" in (md.get("translation") or "KJV") else md.get("translation")
@@ -697,7 +728,7 @@ def scripture_stems(item):
 
 
 def fetch_scripture(cur, videos, n=SCRIPTURE_MAX, today=None):
-    """Scripture-library passages for the Verse of the Day: the passages sharing the most real words
+    """Scripture-library passages for Text in Context: the passages sharing the most real words
     (>= 6 letters) with the day's video titles and text, at most SCRIPTURE_PER_SOURCE per tradition, plus
     one date-seeded passage so a thin match still leaves a choice. Every item carries its citation (title)
     and tradition label (channel). -> [{channel,title,url,date,text,_source,_md}]"""
@@ -765,7 +796,7 @@ def _bible_verses(text):
 
 
 def verse_ok(block, items):
-    """Fail-closed check for the Verse of the Day: the block's blockquote must be a word-for-word run from
+    """Fail-closed check for Text in Context: the block's blockquote must be a word-for-word run from
     ONE scripture passage, the block must carry that passage's citation stem, and a Bible citation's
     verse numbers must contain the quoted words. -> (ok, reason)."""
     quote_lines = [ln[1:].strip() for ln in (block or "").splitlines() if ln.startswith(">")]
@@ -842,10 +873,10 @@ def fetch_lore(cur, videos, n=LORE_MAX):
 
 
 EXTRA_LABELS = {"military": "THIS DAY IN HISTORY", "history": "THIS DAY IN HISTORY",
-                "faith": "SCRIPTURE LIBRARY (quote word for word, cite exactly)",
+                "belief": "SCRIPTURE LIBRARY (quote word for word, cite exactly)",
                 "mystery": "ESOTERIC LIBRARY (keep each label)"}
 EXTRA_SOURCE_HEADINGS = {"military": "This Day in History", "history": "This Day in History",
-                         "faith": "Scripture", "mystery": "Library"}
+                         "belief": "Scripture", "mystery": "Library"}
 
 
 def top_block(subj, videos, arts, recipes=(), food_rules=None, extra=()):
@@ -865,7 +896,7 @@ def top_block(subj, videos, arts, recipes=(), food_rules=None, extra=()):
         material += "\n\n--- RECIPE PAGES (Nova's recipe memories) ---\n\n" + digest(list(recipes))
     if extra:
         label = EXTRA_LABELS.get(subj, "ESOTERIC LIBRARY (keep each label)")
-        if subj == "faith":   # every passage with the exact citation to copy
+        if subj == "belief":   # every passage with the exact citation to copy
             material += f"\n\n--- {label} ---\n\n" + "\n\n".join(
                 f"[{x['channel']}]\nCITE AS: {x['title']}\n{x['text']}" for x in extra)
         else:
@@ -881,12 +912,12 @@ def top_block(subj, videos, arts, recipes=(), food_rules=None, extra=()):
              "ingredients, amounts or quotes that are not in the material.")
     block = featured_block(heading, task, material, [*videos, *arts, *recipes, *extra], rules, llm=nj.call_openrouter,
                            max_words=650 if subj == "food" else 450)   # a recipe needs room for its method
-    if block and subj == "faith":
+    if block and subj == "belief":
         ok, why = verse_ok(block, extra)
         if not ok:
-            log(f"Verse of the Day: {why} — block omitted (fail closed)")
+            log(f"Text in Context: {why} — block omitted (fail closed)")
             return ""
-        log(f"Verse of the Day: verified against {why}")
+        log(f"Text in Context: verified against {why}")
     if block and subj == "crime" and ADDRESS_RE.search(block):
         log("Case of the Day: street address in the block — omitted (fail closed)")
         return ""
@@ -908,7 +939,7 @@ def source_list(items):
 
 def main():
     ap = argparse.ArgumentParser(description="The *and Friends* roundups (cars, tech, food, music, military, "
-                                             "screen, science, mystery, crime, workshop, travel, history, faith)")
+                                             "screen, science, mystery, crime, workshop, travel, history, belief)")
     ap.add_argument("--subject", choices=sorted(SUBJECTS), required=True)
     ap.add_argument("--days", type=int, default=1)
     ap.add_argument("--dry-run", action="store_true")
@@ -986,7 +1017,7 @@ def main():
             extra = fetch_history(mc)
         elif a.subject == "history":
             extra = fetch_history(mc, military=False)
-        elif a.subject == "faith":
+        elif a.subject == "belief":
             extra = fetch_scripture(mc, videos)
         elif a.subject == "mystery":
             extra = fetch_lore(mc, videos)
@@ -1011,7 +1042,7 @@ def main():
     if linked:
         body += "\n### Recipe\n\n" + source_list(linked) + "\n"
     linked = [r for r in extra if r["url"] and r["url"] in block]
-    if a.subject == "faith" and block:   # the verified passage is listed even when its page is not linked
+    if a.subject == "belief" and block:   # the verified passage is listed even when its page is not linked
         ok, cite = verse_ok(block, extra)
         linked = [r for r in extra if (ok and r["title"] == cite) or (r["url"] and r["url"] in block)][:2]
     if linked:

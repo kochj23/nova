@@ -56,7 +56,7 @@ SECTIONS = {
     "workshop": "a woodworking shop bench, hand tools, sawdust and a half-built table",
     "travel": "an open road, an old train yard, a ghost town and a sweeping map",
     "history": "an old atlas, marble columns, archival photographs and a museum hall",
-    "faith": "candlelit stone chapels, old illuminated manuscripts, temple lanterns and quiet morning light",
+    "belief": "old illuminated manuscripts, museum reading rooms, worn scrolls and a map of the world's traditions",
     "after-dark": "late night talk show set, purple blue neon, moody spotlight",
     # Burbank and Ops = Operations + Local merged 2026-10-19 (Research absorbed Essays + Synthesis;
     # Dreams retired). Older covers keep their static/images/<oldsection>/ paths.

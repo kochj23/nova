@@ -42,7 +42,7 @@ FLAVOR_SECTIONS = {"burbank-ops", "nova", "after-dark", "meta", "digests", "dige
                    "cars", "food", "watches", "art", "security", "pilot",
                    "news", "weird", "fishbowl"}
 FLAVOR_SECTIONS |= {"music", "military", "screen", "science", "mystery", "crime", "workshop", "travel"}  # and Friends 2026-10-19
-FLAVOR_SECTIONS |= {"history", "faith"}  # History and Friends / Faith and Friends 2026-10-19
+FLAVOR_SECTIONS |= {"history", "belief"}  # History and Friends / Belief and Friends 2026-10-19
 
 
 def _canon(section: str) -> str:

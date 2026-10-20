@@ -1154,9 +1154,9 @@ tasks:
     timeout: 3600
     overlap: skip
 
-  faith_and_friends:            # Jordan 2026-10-19: faith channels -> /faith/ ("Verse of the Day", quote verified against the scripture library); 5-min stagger
+  belief_and_friends:           # Jordan 2026-10-19: religion as a historian sees it -> /belief/ ("Text in Context", quote verified against the scripture + non-theism library; was faith_and_friends, renamed before its first run); 5-min stagger
     script: nova_friends.py
-    args: ["--subject", "faith", "--days", "1"]
+    args: ["--subject", "belief", "--days", "1"]
     schedule: cron 5 8 * * *
     timeout: 3600
     overlap: skip

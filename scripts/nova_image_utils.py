@@ -69,7 +69,7 @@ SECTION_MODEL_MAP = {
     "food": "quality",
     "music": "quality", "military": "quality", "screen": "cinematic", "science": "quality",
     "mystery": "cinematic", "crime": "cinematic", "workshop": "quality", "travel": "quality",
-    "history": "quality", "faith": "quality",
+    "history": "quality", "belief": "quality",
     # retired names still passed by older callers (nova_sections.SECTION_REDIRECTS)
     "research": "quality", "opinions": "quality", "operations": "quality", "local": "quality", "essays": "quality", "synthesis": "premium",
     "digests": "balanced",

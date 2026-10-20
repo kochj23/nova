@@ -42,7 +42,7 @@ MAX_ARTICLE_PAIRS = 10
 ARTICLE_DIST_MAX = 0.2
 ARTICLE_SECTIONS = ("nova", "opinions", "research", "tech", "cars", "watches", "food", "security",
                     "music", "military", "screen", "science", "mystery", "crime", "workshop", "travel",
-                    "history", "faith")
+                    "history", "belief")
 MODEL = os.environ.get("NOVA_CORRECTIONS_MODEL", "anthropic/claude-sonnet-4.5")
 HUGO_ROOT = Path.home() / "nova-journal"
 SKIP_PREFIX = re.compile(r"^(work_lessons|ops|pursuit|chat|dream)s?:", re.I)

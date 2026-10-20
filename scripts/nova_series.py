@@ -69,7 +69,7 @@ SERIES_RULES = [
     ("Food and Friends", lambda m: m["section"] == "food" and m["title"].startswith("food and friends")),
     *[(f"{s.title()} and Friends", (lambda s: lambda m: m["section"] == s and m["title"].startswith(f"{s} and friends"))(s))
       for s in ("music", "military", "screen", "science", "mystery", "crime", "workshop", "travel",
-                "history", "faith")],   # 2026-10-19
+                "history", "belief")],   # 2026-10-19
     ("The Fishbowl",
      lambda m: m["section"] == "watches" and {"fishbowl", "opinion"} <= m["tags"]),
     ("LA County Emergency Recap",
@@ -90,7 +90,7 @@ TOP_BLOCK_KINDS = {"watches": "The Big Story", "cars": "The Big Story",
                    "screen": "🍿 What to Watch Tonight", "science": "🌌 The Coolest Thing I Learned",
                    "mystery": "🕯️ The Rabbit Hole of the Day", "crime": "🔦 Case of the Day",
                    "workshop": "🔨 Project Worth Stealing", "travel": "🗺️ Place of the Day",
-                   "history": "🏛️ This Day in History", "faith": "🕯️ Verse of the Day"}
+                   "history": "🏛️ This Day in History", "belief": "📜 Text in Context"}
 # Public-journal scrub for anything we lift into front matter (it surfaces on the homepage).
 _SCRUB = [(re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), "[redacted]"),
           (re.compile(r"(?i)\b(?:nova-core\d*|office-m4[\w-]*|pg-primary)\b"), "the cluster"),

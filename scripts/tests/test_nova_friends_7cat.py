@@ -553,8 +553,8 @@ NEW = ("music", "military", "screen", "science", "mystery", "crime", "workshop",
 LISTS = {"cars": m.CARS_CHANNELS, "tech": m.TECH_CHANNELS, "food": m.FOOD_CHANNELS, "music": m.MUSIC_CHANNELS,
          "military": m.MILITARY_CHANNELS, "screen": m.SCREEN_CHANNELS, "science": m.SCIENCE_CHANNELS,
          "mystery": m.MYSTERY_CHANNELS, "crime": m.CRIME_CHANNELS, "workshop": m.WORKSHOP_CHANNELS,
-         "travel": m.TRAVEL_CHANNELS, "history": m.HISTORY_CHANNELS, "faith": m.FAITH_CHANNELS}
-NEW2 = ("history", "faith")
+         "travel": m.TRAVEL_CHANNELS, "history": m.HISTORY_CHANNELS, "belief": m.BELIEF_CHANNELS}
+NEW2 = ("history", "belief")
 import nova_channel_pools as ncp  # noqa: E402
 # Every channel belongs to exactly one subject OR non-Friends pool (Jordan 2026-10-19).
 OWNERS = {**LISTS, **{f"pool:{k}": v for k, v in ncp.POOLS.items()}}
@@ -788,9 +788,9 @@ class TestNewSectionTopBlocks(unittest.TestCase):
             self.assertEqual(nova_series.assign_series(subj, f"{name}: Some Day", []), name)
 
 
-# ── History and Friends / Faith and Friends (Jordan 2026-10-19, second pass) ───────────────────
-SAMPLE2 = {"history": "OverSimplified", "faith": "Ascension Presents"}
-HEADINGS2 = {"history": "🏛️ This Day in History", "faith": "🕯️ Verse of the Day"}
+# ── History and Friends / Belief and Friends (Jordan 2026-10-19, second pass; Faith renamed Belief) ───────────────────
+SAMPLE2 = {"history": "OverSimplified", "belief": "Ascension Presents"}
+HEADINGS2 = {"history": "🏛️ This Day in History", "belief": "📜 Text in Context"}
 KJV = "https://www.gutenberg.org/cache/epub/10/pg10.txt"
 PSALM = ("[Psalms 23:1-4 (KJV)] 1 The LORD is my shepherd; I shall not want. 2 He maketh me to lie down in green "
          "pastures: he leadeth me beside the still waters. 3 He restoreth my soul: he leadeth me in the paths of "
@@ -813,12 +813,12 @@ def verse_block(quote, cite, extra=""):
             + "reflect " * 40 + extra)
 
 
-class TestHistoryFaith(unittest.TestCase):
+class TestHistoryBelief(unittest.TestCase):
     def test_lists_jordans_channels_and_style_health_stay_unassigned(self):
         for n in ("OverSimplified", "Who Do You Think You Are?", "Well There's Your Problem Podcast", "RealLifeLore"):
             self.assertIn(m.norm(n), {m.norm(c) for c in m.HISTORY_CHANNELS})
         for n in ("Godsplaining | Catholic Podcast", "The Pope Leo's Path", "DeepBeliever"):
-            self.assertIn(m.norm(n), {m.norm(c) for c in m.FAITH_CHANNELS})
+            self.assertIn(m.norm(n), {m.norm(c) for c in m.BELIEF_CHANNELS})
         owned = {m.norm(c) for chans in OWNERS.values() for c in chans}
         for n in m.UNASSIGNED_CHANNELS:
             self.assertNotIn(m.norm(n), owned, n)
@@ -834,7 +834,9 @@ class TestHistoryFaith(unittest.TestCase):
         for subj in NEW2:
             rc, nj, cur = run_main(["--subject", subj], videos=[vrow("x", "v1", chan=SAMPLE2[subj])])
             self.assertEqual(rc, 0, subj)
-            self.assertEqual(set(cur.calls[0][1][1]), {m.norm(c) for c in LISTS[subj]}, subj)
+            want = {m.norm(c) for c in (*m.SUBJECTS[subj]["channels"], *m.SUBJECTS[subj].get("shared_channels", ()))}
+            self.assertTrue({m.norm(c) for c in LISTS[subj]} <= want, subj)
+            self.assertEqual(set(cur.calls[0][1][1]), want, subj)
             a = nj.publish_hugo.call_args.args
             self.assertTrue(a[0].startswith(m.SUBJECTS[subj]["name"] + ": "), a[0])
             self.assertEqual(a[2], subj)
@@ -878,16 +880,16 @@ class TestHistoryFaith(unittest.TestCase):
             got = m.fetch_history(Cur([], [], history=rows), today="2026-10-19", military=False)
         self.assertEqual([g["url"] for g in got], ["https://w/library", "https://w/army"])
 
-    def test_faith_verse_verified_cited_and_listed(self):
+    def test_belief_text_in_context_verified_cited_and_listed(self):
         seen = []
         block = verse_block("The LORD is my shepherd; I shall not want.", "Psalms 23:1 (KJV)")
-        rc, nj, cur = run_main(["--subject", "faith"], videos=[vrow("trust and the shepherd", "v1", chan="Ascension Presents",
+        rc, nj, cur = run_main(["--subject", "belief"], videos=[vrow("trust and the shepherd", "v1", chan="Ascension Presents",
                                                                      title="The Good Shepherd")],
                                scripture=[srow(PSALM, PSALM_MD, "bible"), srow(DHP, DHP_MD, "buddhism")],
                                llm=block_llm(block, seen))
         self.assertEqual(rc, 0)
         body = published_body(nj)
-        self.assertTrue(body.startswith("## 🕯️ Verse of the Day"), body[:80])
+        self.assertTrue(body.startswith("## 📜 Text in Context"), body[:80])
         self.assertIn("### Scripture", body)
         self.assertIn("Psalms 23:1-4 (KJV)", body.split("## Sources")[1])
         system, user = next(x for x in seen if "very TOP" in x[0])
@@ -897,14 +899,14 @@ class TestHistoryFaith(unittest.TestCase):
         sql = next(c[0] for c in cur.calls if "scripture_library" in c[0])
         self.assertIn("metadata->>'type' IN ('scripture', 'philosophy')", sql)
 
-    def test_faith_invented_or_misattributed_scripture_is_never_published(self):
+    def test_belief_invented_or_misattributed_scripture_is_never_published(self):
         cases = {"invented": verse_block("Blessed are the debuggers, for they shall ship on time.", "Psalms 23:1 (KJV)"),
                  "wrong verse": verse_block("The LORD is my shepherd; I shall not want.", "Psalms 23:4 (KJV)"),
                  "uncited": verse_block("The LORD is my shepherd; I shall not want.", "an old song"),
                  "paraphrase": verse_block("The Lord is my shepherd, so I lack nothing at all.", "Psalms 23:1 (KJV)"),
                  "no quote": "Psalms 23:1 is lovely — [Ascension Presents — T](" + YT1 + "). " + "reflect " * 40}
         for name, block in cases.items():
-            rc, nj, _ = run_main(["--subject", "faith"], videos=[vrow("x", "v1", chan="Ascension Presents")],
+            rc, nj, _ = run_main(["--subject", "belief"], videos=[vrow("x", "v1", chan="Ascension Presents")],
                                  scripture=[srow(PSALM, PSALM_MD, "bible")], llm=block_llm(block))
             self.assertEqual(rc, 0, name)
             self.assertTrue(published_body(nj).startswith("## News"), name)
@@ -932,13 +934,47 @@ class TestHistoryFaith(unittest.TestCase):
         self.assertIn("philosophy, not scripture", nt["channel"])
         self.assertTrue(all(g["title"] for g in got))
 
-    def test_faith_tone_reaches_issue_and_block(self):
+    def test_belief_tone_reaches_issue_and_block(self):
         seen = []
-        run_main(["--subject", "faith"], videos=[vrow("x", "v1", chan="Sacred Logic")],
+        run_main(["--subject", "belief"], videos=[vrow("x", "v1", chan="Sacred Logic")],
                  scripture=[srow(PSALM, PSALM_MD, "bible")], llm=block_llm("NONE", seen))
         self.assertTrue(seen)
         for system, _ in seen:
             self.assertIn("never ranking religions", system)
+            self.assertIn("historian and anthropologist of religion", system)   # study, not devotion
+            self.assertIn("PRIMARY SOURCES about believers", system)
+            self.assertIn("skeptics", system)
+
+    def test_belief_is_study_not_devotion(self):
+        heading, task = m.FEATURES["belief"]
+        self.assertEqual(heading, "📜 Text in Context")
+        for need in ("who wrote it and when", "first audience", "read today", "skeptic", "not devotion"):
+            self.assertIn(need, task)
+        self.assertNotIn("faith", m.SUBJECTS)
+        self.assertEqual(m.SUBJECTS["belief"]["name"], "Belief and Friends")
+        self.assertIn("nontheism", m.SCRIPTURE_SOURCES)
+
+    def test_belief_scope_is_balanced(self):
+        feeds = {m.norm(c) for c in m.SUBJECTS["belief"]["channels"]}
+        for n in ("ReligionForBreakfast", "Dan McClellan", "Alex O'Connor", "Bishop Robert Barron"):
+            self.assertIn(m.norm(n), feeds, n)   # scholars, a skeptic and the theological counter-case
+        self.assertFalse({m.norm(c) for c in m.BELIEF_PENDING_CHANNELS} & {m.norm(c) for c in m.BELIEF_CHANNELS})
+        self.assertEqual(set(m.SUBJECTS["belief"]["shared_channels"]), {"ESOTERICA", "CrashCourse"})
+        science, mystery = {m.norm(c) for c in m.SCIENCE_CHANNELS}, {m.norm(c) for c in m.MYSTERY_CHANNELS}
+        self.assertIn(m.norm("CrashCourse"), science)    # shared, still owned by their own sections
+        self.assertIn(m.norm("ESOTERICA"), mystery)
+
+    def test_shared_channels_feed_belief_only_on_religion_topics(self):
+        cur = Cur([vrow("photosynthesis and the light reactions", "c1", chan="CrashCourse", title="Photosynthesis"),
+                   vrow("is atheism a religion? religious demographics and the new atheism", "c2",
+                        chan="CrashCourse", title="Is Atheism a Religion?: Crash Course Religions #13"),
+                   vrow("the gnostic demiurge in early christian texts", "e1", chan="ESOTERICA", title="The Demiurge"),
+                   vrow("anything at all", "a1", chan="Ascension Presents", title="Homily")], [])
+        vids, _ = m.fetch(cur, m.SUBJECTS["belief"], 1)
+        self.assertEqual(sorted(v["title"] for v in vids),
+                         sorted(["Is Atheism a Religion?: Crash Course Religions #13", "The Demiurge", "Homily"]))
+        sci, _ = m.fetch(cur, m.SUBJECTS["science"], 1)   # science still gets every CrashCourse video
+        self.assertIn("Photosynthesis", [v["title"] for v in sci])
 
     def test_history_gets_the_stance_only_when_the_war_comes_up(self):
         for text, want in (("the fall of Rome", False), ("how Russia's invasion of Ukraine began", True)):

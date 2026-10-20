@@ -54,7 +54,7 @@ def _get_tags(title: str, text: str, category: str) -> list[str]:
                     "opinions": ["opinion", "tech"], "tech": ["technology", "AI"], "cars": ["cars", "automotive"], "food": ["food", "cooking"],
                     "music": ["music"], "military": ["military"], "screen": ["film", "tv"], "science": ["science"],
                     "mystery": ["mystery"], "crime": ["crime"], "workshop": ["workshop", "diy"], "travel": ["travel"],
-                    "history": ["history"], "faith": ["faith", "religion"],
+                    "history": ["history"], "belief": ["belief", "religion"],
                     "after-dark": ["history", "comedy"], "art": ["art", "generative"],
                     "burbank-ops": ["burbank", "operations"], "watches": ["watches"]}
         return defaults.get(category, ["journal"])

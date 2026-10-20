@@ -28,7 +28,7 @@ CATEGORY_SEEDS = {
     "music": ["music"], "military": ["military", "military-history"], "screen": ["film", "tv", "comedy"],
     "science": ["science", "space"], "mystery": ["mystery", "folklore"], "crime": ["crime", "true-crime"],
     "workshop": ["workshop", "diy"], "travel": ["travel", "exploration"],
-    "history": ["history", "world-history"], "faith": ["faith", "religion"],
+    "history": ["history", "world-history"], "belief": ["belief", "religion"],
     "after-dark": ["history", "comedy", "monologue"],
     "art":       ["art", "generative", "visual"],
     "digests":   ["weekly", "reflection", "digest"],

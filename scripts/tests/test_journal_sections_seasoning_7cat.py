@@ -22,7 +22,8 @@ sys.path.insert(0, str(SCRIPTS))
 import nova_sections as ns  # noqa: E402
 import nova_lexicon as lx  # noqa: E402
 
-RETIRED = {"dreams", "operations", "local", "essays", "synthesis", "tech-today", "rando", "research", "opinions"}
+RETIRED = {"dreams", "operations", "local", "essays", "synthesis", "tech-today", "rando", "research", "opinions",
+           "faith"}   # Faith and Friends -> Belief and Friends 2026-10-19
 LIVE = {"burbank-ops", "nova", "watches", "cars", "tech", "food", "digests",
         "security", "meta", "after-dark", "pilot", "start-here",
         "music", "military", "screen", "science", "mystery", "crime", "workshop", "travel"}
@@ -106,11 +107,11 @@ class TestRetry(unittest.TestCase):
 class TestUnit(unittest.TestCase):
     def test_sections_shape(self):
         friends8 = {"music", "military", "screen", "science", "mystery", "crime", "workshop", "travel",  # 2026-10-19
-                    "history", "faith"}                                                                    # + second pass
+                    "history", "belief"}                                                                   # + second pass
         self.assertTrue(friends8 <= set(ns.LIVE_SECTIONS))
         self.assertEqual(set(ns.LIVE_SECTIONS) | friends8, LIVE | friends8)
         self.assertEqual(set(ns.SECTION_REDIRECTS) | set(ns.RETIRED_SECTIONS), RETIRED)
-        self.assertTrue(set(ns.SECTION_REDIRECTS.values()) <= LIVE)
+        self.assertTrue(set(ns.SECTION_REDIRECTS.values()) <= LIVE | friends8)
         self.assertEqual(ns.canon("Operations"), "burbank-ops")
         self.assertEqual(ns.canon("essays"), "nova")
         self.assertEqual(ns.canon("research"), "nova")

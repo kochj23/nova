@@ -389,7 +389,8 @@ class TestSectionRemap(unittest.TestCase):
     def test_merged_sections_route_to_nova(self):
         self.assertEqual(nj.SECTION_REMAP, {"rando": "burbank-ops", "tech-today": "tech", "operations": "burbank-ops",
                                             "local": "burbank-ops", "research": "nova", "opinions": "nova",
-                                            "essays": "nova", "synthesis": "nova"})
+                                            "essays": "nova", "synthesis": "nova",
+                                            "faith": "belief"})   # Belief and Friends 2026-10-19
         self.assertIs(nj.SECTION_REMAP, nj.SECTION_REDIRECTS)
         for old in ("research", "opinions", "essays", "synthesis"):
             self.assertEqual(nj._canon_section(old), "nova")

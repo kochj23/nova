@@ -46,7 +46,7 @@ SECTIONS = [("burbank-ops", "Burbank and Ops"), ("nova", "Nova and Friends"), ("
             ("music", "Music and Friends"), ("military", "Military and Friends"), ("screen", "Screen and Friends"),
             ("science", "Science and Friends"), ("mystery", "Mystery and Friends"), ("crime", "Crime and Friends"),
             ("workshop", "Workshop and Friends"), ("travel", "Travel and Friends"),
-            ("history", "History and Friends"), ("faith", "Faith and Friends"),
+            ("history", "History and Friends"), ("belief", "Belief and Friends"),
             ("digests", "Digests"), ("security", "Security")]
 SECTION_NAMES = dict(SECTIONS)
 SKIP_SECTIONS = {"about", "start-here", "search", "series", "tags", "categories"}

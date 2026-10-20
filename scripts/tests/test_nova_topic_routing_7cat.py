@@ -48,8 +48,8 @@ class TestUnit(unittest.TestCase):
                          "military")
 
 
-class TestHistoryFaith(unittest.TestCase):
-    """History and Friends / Faith and Friends join the router (Jordan 2026-10-19, second pass)."""
+class TestHistoryBelief(unittest.TestCase):
+    """History and Friends / Belief and Friends join the router (Jordan 2026-10-19, second pass)."""
 
     def test_clear_history(self):
         self.assertEqual(ns.topic_section("The fall of the Roman Empire and the medieval world"), "history")
@@ -60,25 +60,33 @@ class TestHistoryFaith(unittest.TestCase):
         self.assertEqual(ns.topic_section("The siege that ended a war", ["world_history"] * 5), "military")
         self.assertEqual(ns.topic_section("Ancient empires and their armies"), "military")
 
-    def test_clear_faith(self):
-        self.assertEqual(ns.topic_section("What the Bhagavad Gita says about duty", ["hinduism"] * 4), "faith")
-        self.assertEqual(ns.topic_section("The Pope, the Vatican and the Catholic Church"), "faith")
-        self.assertEqual(ns.topic_section("A quiet essay", ["buddhism", "taoism", "shinto"]), "faith")
+    def test_clear_belief(self):
+        self.assertEqual(ns.topic_section("What the Bhagavad Gita says about duty", ["hinduism"] * 4), "belief")
+        self.assertEqual(ns.topic_section("The Pope, the Vatican and the Catholic Church"), "belief")
+        self.assertEqual(ns.topic_section("A quiet essay", ["buddhism", "taoism", "shinto"]), "belief")
 
-    def test_figurative_history_and_faith_never_move(self):
+    def test_figurative_history_and_belief_never_move(self):
         for t in ("Git commit history and browser history", "Our tech evangelist found the holy grail",
                   "The history of Unix", "Stock hits historic highs", "The gospel of growth hacking"):
             self.assertIsNone(ns.topic_section(t), t)
 
-    def test_music_about_faith_goes_by_the_higher_score(self):
+    def test_music_about_religion_goes_by_the_higher_score(self):
         self.assertEqual(ns.topic_section("Hymns and the church choir", ["music"] * 3), "music")
 
     def test_route_only_touches_nova(self):
         t = "Buddhist monks and the sacred scriptures of Tibet"
-        self.assertEqual(ns.route_topic("nova", t), "faith")
+        self.assertEqual(ns.route_topic("nova", t), "belief")
         self.assertEqual(ns.route_topic("tech", t), "tech")
         self.assertIn("history", ns.LIVE_SECTIONS)
-        self.assertIn("faith", ns.LIVE_SECTIONS)
+        self.assertIn("belief", ns.LIVE_SECTIONS)
+        self.assertNotIn("faith", ns.LIVE_SECTIONS)
+        self.assertEqual(ns.canon("faith"), "belief")    # renamed before its first issue; stray writes follow
+
+    def test_is_belief_topic(self):
+        self.assertTrue(ns.is_belief_topic("Is Atheism a Religion? Crash Course Religions"))
+        self.assertTrue(ns.is_belief_topic("Gnostic texts and the early Christian church"))
+        self.assertFalse(ns.is_belief_topic("Photosynthesis: the light reactions"))
+        self.assertFalse(ns.is_belief_topic("Our tech evangelist found the holy grail"))
 
 
 class TestIntegration(unittest.TestCase):
@@ -129,7 +137,7 @@ class TestRetry(unittest.TestCase):
 class TestFunctional(unittest.TestCase):
     def test_scores_shape(self):
         s = ns.topic_scores("jazz and the army", ["jazz", "jazz", "jazz"])
-        self.assertEqual(set(s), {"music", "military", "history", "faith"})
+        self.assertEqual(set(s), {"music", "military", "history", "belief"})
         self.assertGreater(s["music"], s["military"])
 
 

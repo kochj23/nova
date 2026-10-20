@@ -2063,7 +2063,7 @@ def notify_slack(section: str, title: str, preview: str):
         "pilot": ":movie_camera:", "tech": ":computer:", "cars": ":red_car:", "food": ":fork_and_knife:",
         "music": ":headphones:", "military": ":military_medal:", "screen": ":popcorn:", "science": ":telescope:",
         "mystery": ":candle:", "crime": ":flashlight:", "workshop": ":hammer:", "travel": ":world_map:",
-        "history": ":classical_building:", "faith": ":dove_of_peace:", "watches": ":watch:",
+        "history": ":classical_building:", "belief": ":mag:", "watches": ":watch:",
         "digests": ":newspaper:", "security": ":shield:", "meta": ":bar_chart:",
         "art": ":art:",
     }
