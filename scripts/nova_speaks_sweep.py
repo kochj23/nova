@@ -25,6 +25,7 @@ PUSH_LOCK_KEY = 47110815   # == nova_journal._PUSH_LOCK_KEY: the fleet-wide jour
 SCRIPTS = pathlib.Path(__file__).resolve().parent
 LOCAL = os.uname().nodename
 REVIEW = "/Volumes/nas/nova-fs/videos/review"            # Studio's view of the review dir (UNAS)
+MAX_WORDS = 20000                                         # longest real essay is ~15k
 RULE_SINCE = "2026-10-03 19:30:00-07"                     # posts older than the rule are not queued
 DSN = os.environ.get("NOVA_OPS_DSN", "dbname=nova_ops user=kochj host=pg-primary.digitalnoise.net port=5432")
 SITE = "https://nova.digitalnoise.net"
@@ -146,7 +147,10 @@ def scan_new(cur, origin_ref=None):
         cands += [(JOURNAL / rel, (rel, text)) for rel, text in _origin_articles(origin_ref)]
     for p, remote in cands:
         if p.name.startswith("_"): continue
-        fm = frontmatter(remote[1] if remote else p.read_text(errors="ignore"))
+        text = remote[1] if remote else p.read_text(errors="ignore")
+        fm = frontmatter(text)
+        # ponytail: word cap -- the lessons-learned ledgers (37k-110k words) rendered as 10-16 h YouTube videos
+        if len(text.split()) > MAX_WORDS: continue
         if re.search(r"^draft:\s*true", fm, re.M): continue
         # machine-fired security alerts are not episodes: 37 UDM false positives went to YouTube by 2026-10-16
         if re.search(r'^tags:.*"breaking-alert"', fm, re.M): continue

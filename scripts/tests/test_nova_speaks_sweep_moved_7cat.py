@@ -68,6 +68,16 @@ class TestUnit(_Base):
         (_, params), = cur.writes("UPDATE nova_speaks_renders SET article_path")
         self.assertEqual(params, (str(p), "essays", "https://nova.digitalnoise.net/essays/glass-tides/", "glass-tides"))
 
+    def test_ledger_over_word_cap_is_not_queued(self):
+        p = self.article("lessons-learned-2026-10-19")
+        p.write_text(p.read_text() + " word" * (ss.MAX_WORDS + 1))
+        cur = _cur_with_row(None)
+        cur_exec = cur.execute
+        cur.execute = lambda sql, params=None: (cur_exec(sql, params), setattr(cur, "_last", None) if "WHERE slug=%s" in sql else None)
+        with patch.object(ss, "is_live", return_value=True):
+            self.assertEqual(ss.scan_new(cur), 0)
+        self.assertFalse(cur.writes("INSERT INTO nova_speaks_renders"))
+
     def test_existing_path_is_left_alone(self):
         p = self.article("glass-tides")
         cur = _cur_with_row(str(p))
