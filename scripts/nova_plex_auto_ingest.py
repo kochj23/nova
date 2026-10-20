@@ -218,7 +218,7 @@ def transcribe(wav_path: Path) -> str:
 SHOW_VECTOR_MAP = {
     "TheSmokingTirePodcast": "automotive", "TheSmokingTire": "automotive",
     "Wheeler Dealers": "automotive", "Roadkill": "automotive",
-    "David Freiburger": "automotive", "Peter Piccolino": "automotive",
+    "David Freiburger": "automotive", "Peter Piccolino": "horology",   # watch news (Jordan 2026-10-19)
     "Jay Leno's Garage": "automotive", "Jay Lenos Garage": "automotive",
     "Hot Rod Garage": "automotive", "Engine Masters": "automotive",
     "Rob Dahm": "automotive", "Car Wizard": "automotive",
