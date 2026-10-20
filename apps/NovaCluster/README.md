@@ -84,6 +84,27 @@ Tap the wordmark to step through **Cluster Map → Dashboard → Constellation**
 
 It reads the same `/cluster` poll as the other two views (no second hub client, no second token).
 
+### Machine drill-down and the UPS (1.1.0)
+
+Tap or click any machine (a station or its label on the map, a dashboard card, or a minion card), or open
+`novacluster://node?name=nova-core7`, and a sheet shows that machine:
+
+| Section | Shows |
+|---|---|
+| Now | Its LLM job line and its core purpose. |
+| Link | **Ethernet**: interface, up/down, negotiated speed and address. **Wi-Fi backdoor**: whether the KOCH_5G-2 fallback is up and its address (red if down, amber if the machine has none). **Route**: which interface traffic uses; amber when it's going over Wi-Fi (the cable dropped or was demoted). |
+| Temperatures | CPU, GPU, NVMe and NIC (Linux; macOS needs root, so Macs show none). Amber at 85 °C CPU/GPU or 70 °C NVMe. |
+| Power | The UPS the machine is on: load %, watts, charge, runtime left, and on line / ON BATTERY / LOW BATTERY. |
+| Machine | Chip · OS · cores, memory and load, loaded models. |
+| Last 10 jobs | Newest first: LLM jobs (`nova_journal @ mac-studio → qwen3:8b`), works read for lessons (📖) and episodes transcribed (🎙). |
+
+**On the map** a ⚡ follows the name of every machine on a monitored UPS, and the bottom-left badge reads
+each UPS: `⚡ MASTER BEDROOM UPS 20% load · 180 W · 100% · 28 min · on line`.
+
+The data comes from the hub (`/cluster`): probe 1.2 on each machine reports the link and temperatures; the
+hub reads the UPS from NUT and the job history from PostgreSQL in a background thread. Taps on a moon still
+show that model's tooltip.
+
 ### Kiosk mode (1.1.0)
 
 For the iPad on its stand, a Mac in full screen, or the Apple TV: the app steps
@@ -122,7 +143,11 @@ flowchart LR
         LLM["POST /llm<br/>probe samples, 1 s"]
         AGG["aggregate<br/>totals · today / all-time tokens<br/>events · llm_job · fleet"]
         CL["GET /cluster?node=…"]
+        EX["extras thread (read-only)<br/>UPS via NUT · recent jobs via PG"]
     end
+    NUT[("upsd on nova-core4<br/>Master Bedroom UPS")]
+    NUT -- "TCP 3493, LIST VAR" --> EX
+    EX --> CL
     PG[("nova_ops<br/>minion_nodes (purpose, alias)<br/>minion_activity · token usage")]
     P --> LLM --> AGG
     M --> AGG
@@ -134,12 +159,13 @@ flowchart LR
         MAP["ClusterMapView<br/>Canvas 30 fps"]
         DASH["DashboardView<br/>cards + TrafficStarfield"]
         CON["ConstellationView<br/>lesson stars + minion cards"]
+        DET["NodeDetailView<br/>link · backdoor · temps · UPS · last 10 jobs"]
         CORE["Shared/NovaConstellationCore<br/>StableHash · SeededRandom · LessonText · layout"]
         NL["NodeLines<br/>LLM job + purpose"]
     end
     CL -- "JSON, X-Minion-Token" --> CM
     CFG --> CM
-    CM --> MAP & DASH & CON
+    CM --> MAP & DASH & CON & DET
     CORE --> CON
     CORE --> SAVER["Nova Minion screensaver<br/>(Core Animation, own target)"]
     NL --> MAP & DASH
@@ -216,6 +242,7 @@ Nothing network-specific is compiled in. The hub can come from any of these sour
 | Environment on launch | `NOVA_CLUSTER_HUB`, `NOVA_CLUSTER_NODE`, `NOVA_CLUSTER_TOKEN` (`DEVICECTL_CHILD_…` / `SIMCTL_CHILD_…`) |
 | View switch | `novacluster://view?mode=map\|dashboard\|constellation` |
 | Kiosk | `novacluster://kiosk?on=1&interval=60` |
+| Drill-down | `novacluster://node?name=<node>` |
 | Debug | `-demoBusy YES` marks a few slots busy (prefill + generating) to check the visuals |
 
 ## Security
@@ -253,7 +280,7 @@ xcodebuild -project NovaCluster.xcodeproj -scheme NovaClusterMac -configuration 
   -destination 'platform=macOS' -derivedDataPath <dd> test
 ```
 
-There are 33 XCTest cases (`Tests/NodeLinesTests.swift`, `Tests/ConstellationTests.swift`, `Tests/KioskTests.swift`), all of which pass in 1.1.0. The constellation tests pin the shared hash and random stream so the screensaver's sky can't shift silently. The test bundle
+There are 40 XCTest cases (`Tests/NodeLinesTests.swift`, `Tests/ConstellationTests.swift`, `Tests/KioskTests.swift`, `Tests/NodeFactsTests.swift`), all of which pass in 1.1.0. The constellation tests pin the shared hash and random stream so the screensaver's sky can't shift silently. The test bundle
 is not hosted in the app: it has no window, no live hub, and no real UserDefaults or Keychain. The
 sources under test are compiled straight into the bundle. The network is stubbed with a `URLProtocol`.
 

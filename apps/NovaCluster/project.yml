@@ -122,6 +122,7 @@ targets:
       - path: NovaCluster/NodeLines.swift
       - path: NovaCluster/Palette.swift
       - path: NovaCluster/ConstellationFleet.swift
+      - path: NovaCluster/NodeFacts.swift
       - path: ../Shared/NovaConstellationCore.swift
     settings:
       base:

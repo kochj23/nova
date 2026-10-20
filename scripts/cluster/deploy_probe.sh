@@ -5,8 +5,8 @@
 set -euo pipefail
 HOST="${1:?ssh host}"; NODE="${2:?node}"; ENROLL="${3:-}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-STUDIO_IP="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1)"
-HUB="http://$STUDIO_IP:37590"
+# DNS name, never an IP (the Studio is nova-core8 in BIND).
+HUB="http://nova-core8.digitalnoise.net:37590"
 SSH=(ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOST")
 "${SSH[@]}" 'mkdir -p ~/.nova-probe && chmod 700 ~/.nova-probe' </dev/null
 scp -q -o BatchMode=yes "$HERE/nova_llm_probe.py" "$HOST:.nova-probe/nova_llm_probe.py"

@@ -20,6 +20,10 @@ screensaver draws: what this Mac is reading now, what it has learned for Nova to
                             Every node carries llm_job {state running|idle|none|silent, text, jobs[], model?, last?}
                             and purpose / alias / display_name / ip (minion_nodes columns, seeded from agent_docs).
   GET  /health
+1.1 (2026-10-19, Nova Cluster 1.1.0): /cluster also carries, from read-only caches a background thread refreshes
+(so a request never waits on the network): per node `net` (wired link speed + Wi-Fi backdoor), `temps`, and
+`recent_jobs` (last 10: LLM jobs from memory, works read and episodes transcribed from PG); top-level `ups` (every
+UPS in service_config service='ups', read from NUT's upsd over TCP 3493).
 CLI  --serve [--port 37590] | --enroll NODE [--url http://host:11434] [--dedicated | --viewer | --probe] | --list | --selftest
 A VIEWER (--viewer) is a display, not a minion: it never heartbeats and is never sent work; its token reads /fleet.
 
@@ -30,7 +34,9 @@ Written by Jordan Koch (via Claude).
 from __future__ import annotations
 
 import argparse
+import collections
 import hashlib
+import socket
 import json
 import os
 import re
@@ -229,6 +235,7 @@ LAST_JOB_MAX_S = 24 * 3600
 READER_PROCS = ("nova_work_lessons", "nova_media_reingest", "nova_minion_whisper")   # already named by minion_activity
 _JOBS: dict = {}               # node -> {job label: last seen epoch}
 _LAST_JOB: dict = {}           # node -> (text, epoch) — the last job seen, for "Idle · last: …"
+_RECENT_LLM: dict = {}         # node -> deque[(epoch, text)] — the last 10 distinct LLM jobs (machine drill-down)
 _ADDR = re.compile(r"^[0-9A-Fa-f:.]{2,45}:\d{1,5}$")
 _LABEL = re.compile(r"[^A-Za-z0-9._ -]")
 
@@ -328,7 +335,11 @@ def note_jobs(node: str, labels: list, model: str | None, now: float):
     for lab in [k for k, t in seen.items() if now - t > JOB_LINGER_S]:
         seen.pop(lab, None)
     if labels:
-        _LAST_JOB[node] = (" + ".join(labels) + (f" → {model}" if model else ""), now)
+        text = " + ".join(labels) + (f" → {model}" if model else "")
+        _LAST_JOB[node] = (text, now)
+        dq = _RECENT_LLM.setdefault(node, collections.deque(maxlen=10))
+        if not dq or dq[-1][1] != text or now - dq[-1][0] > 120:   # a new job, or the same one again later
+            dq.append((now, text))
 
 
 def slot_events(node: str, prev: dict | None, cur: dict, dt: float) -> tuple[list, float, float]:
@@ -416,6 +427,134 @@ def llm_push(node: str, snap: dict, cur=None, addr: str | None = None):
             log(f"token counter not updated ({e})")
 
 
+# ── Nova Cluster 1.1 extras: read-only collectors, refreshed in the background ───────────────────
+_EXTRAS: dict = {"ups": [], "recent_jobs": {}}
+_EXTRAS_LOCK = threading.Lock()
+_VAR = re.compile(r'^VAR (\S+) (\S+) "(.*)"$')
+UPS_VARS = ("ups.status", "ups.load", "ups.realpower.nominal", "battery.charge", "battery.runtime", "input.voltage",
+            "ups.model", "battery.charge.low", "battery.runtime.low")
+
+
+def parse_nut(text: str, ups: str) -> dict:
+    """NUT 'LIST VAR <ups>' reply -> {var: value} for the vars Nova shows (values are data, length-capped)."""
+    out = {}
+    for line in text.splitlines():
+        m = _VAR.match(line.strip())
+        if m and m.group(1) == ups and m.group(2) in UPS_VARS:
+            out[m.group(2)] = m.group(3)[:64]
+    return out
+
+
+def nut_vars(host: str, port: int, ups: str, timeout: float = 4.0) -> dict:
+    """Read one UPS from upsd (unauthenticated, read-only LIST VAR)."""
+    if not _NODE.match(ups):
+        raise ValueError("bad ups name")
+    with socket.create_connection((host, port), timeout=timeout) as s:
+        s.settimeout(timeout)
+        s.sendall(f"LIST VAR {ups}\n".encode())
+        buf = b""
+        while b"END LIST VAR" not in buf and b"ERR" not in buf[:16] and len(buf) < 65536:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+        try:
+            s.sendall(b"LOGOUT\n")
+        except OSError:
+            pass
+    text = buf.decode("utf-8", "replace")
+    if text.startswith("ERR"):
+        raise ValueError(text.split("\n")[0][:80])
+    return parse_nut(text, ups)
+
+
+def _num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def ups_view(key: str, conf: dict, raw: dict | None, err: str | None) -> dict:
+    """service_config row + NUT vars -> what the app draws. Status flags: OL online, OB on battery, LB low battery."""
+    st = (raw or {}).get("ups.status", "")
+    flags = set(st.split())
+    load = _num((raw or {}).get("ups.load"))
+    nominal = _num((raw or {}).get("ups.realpower.nominal"))
+    return {"key": key, "label": conf.get("label") or key, "model": ((raw or {}).get("ups.model") or conf.get("model") or "").strip() or None,
+            "monitor_node": conf.get("monitor_node"), "powers": [p for p in conf.get("powers", []) if isinstance(p, str)][:16],
+            "ok": raw is not None and err is None, "error": err, "status": st or None,
+            "on_battery": "OB" in flags, "low_battery": "LB" in flags, "online": "OL" in flags,
+            "load_pct": load, "watts": round(load * nominal / 100) if load is not None and nominal else None,
+            "charge_pct": _num((raw or {}).get("battery.charge")), "runtime_s": _num((raw or {}).get("battery.runtime")),
+            "input_v": _num((raw or {}).get("input.voltage")), "at": iso(datetime.now(timezone.utc))}
+
+
+def collect_ups(cur) -> list:
+    cur.execute("SELECT key, value FROM service_config WHERE service = 'ups' ORDER BY key")
+    out = []
+    for key, conf in cur.fetchall():
+        conf = conf if isinstance(conf, dict) else {}
+        try:
+            raw, err = nut_vars(str(conf.get("host") or ""), int(conf.get("port") or 3493), str(conf.get("ups") or "")), None
+        except Exception as e:  # noqa: BLE001 — a dark UPS is shown as unreachable, never breaks the view
+            raw, err = None, f"{e.__class__.__name__}: {str(e)[:60]}"
+        out.append(ups_view(key, conf, raw, err))
+    return out
+
+
+def collect_recent_jobs(cur) -> dict:
+    """Last 10 minion jobs per node from PG: works read for lessons and TV episodes transcribed."""
+    cur.execute("""
+        SELECT node, at, kind, text FROM (
+          SELECT node, at, kind, text, row_number() OVER (PARTITION BY node ORDER BY at DESC) rn FROM (
+            SELECT host AS node, processed_at AS at, 'reading' AS kind, title AS text
+              FROM work_lessons WHERE status = 'done' AND host IS NOT NULL AND processed_at > now() - interval '7 days'
+            UNION ALL
+            SELECT node, updated_at, 'transcribing', coalesce(title, show)
+              FROM media_reingest_queue WHERE status = 'done' AND node IS NOT NULL AND updated_at > now() - interval '7 days'
+          ) u
+        ) r WHERE rn <= 10""")
+    jobs: dict = {}
+    for node, at, kind, text in cur.fetchall():
+        jobs.setdefault(node, []).append({"at": iso(at), "t": at.timestamp(), "kind": kind, "text": (text or "")[:160]})
+    return jobs
+
+
+def recent_jobs_for(node: str, db_jobs: list, llm: list, limit: int = 10) -> list:
+    """Merge PG minion jobs with the hub's LLM job log, newest first."""
+    rows = [dict(j) for j in db_jobs] + [{"t": t, "at": iso(datetime.fromtimestamp(t, timezone.utc)), "kind": "llm", "text": x}
+                                         for t, x in llm]
+    rows.sort(key=lambda j: -j["t"])
+    return [{k: v for k, v in j.items() if k != "t"} for j in rows[:limit]]
+
+
+COLLECTORS = [("ups", collect_ups, 10), ("recent_jobs", collect_recent_jobs, 30)]
+
+
+def refresh_extras(force: bool = False):
+    """One pass: run every collector that is due (each failure is logged and keeps the last value)."""
+    now = time.time()
+    for name, fn, every in COLLECTORS:
+        last = _EXTRAS.get(f"_t_{name}", 0)
+        if not force and now - last < every:
+            continue
+        try:
+            v = fn(db())
+            with _EXTRAS_LOCK:
+                _EXTRAS[name] = v
+        except Exception as e:  # noqa: BLE001
+            _LOCAL.conn = None
+            log(f"extras {name} failed: {e}")
+        _EXTRAS[f"_t_{name}"] = now
+
+
+def extras_loop():
+    while True:
+        refresh_extras()
+        time.sleep(2)
+
+
 def cluster(cur) -> dict:
     now = time.time()
     cur.execute("SELECT node, role, state, last_seen > now() - %s * interval '1 second', purpose, alias, ip "
@@ -440,7 +579,8 @@ def cluster(cur) -> dict:
                           "free_gb": sn.get("free_gb"), "load": sn.get("load"), "loaded": sn.get("loaded", []),
                           "runners": runners, "busy": busy if live else 0, "tok_s": d["tok_s"] if live else 0,
                           "prefill_tok_s": d["prefill_tok_s"] if live else 0, "req_min": req, "vram_gb": vram,
-                          "llm": sn.get("llm"), **roles.get(node, {"role": None, "minion_state": None, "display_name": node})})
+                          "llm": sn.get("llm"), "net": sn.get("net"), "temps": sn.get("temps"),
+                          **roles.get(node, {"role": None, "minion_state": None, "display_name": node})})
             jobs_now[node] = [k for k, t in sorted(_JOBS.get(node, {}).items(), key=lambda kv: -kv[1])
                               if now - t <= JOB_LINGER_S]
             last_job[node] = _LAST_JOB.get(node)
@@ -487,7 +627,13 @@ def cluster(cur) -> dict:
         n["llm_job"] = job_view(bool(n.get("live")), n.get("age_s") or 0, n.get("llm"), len(n.get("loaded") or []),
                                 reading, jobs_now.get(n["node"], []), n.get("runners") or [],
                                 last_job.get(n["node"]), now)
-    return {"updated": iso(datetime.now(timezone.utc)), "totals": tot, "nodes": nodes, "events": events,
+    with _EXTRAS_LOCK:
+        ups, db_jobs = list(_EXTRAS.get("ups") or []), dict(_EXTRAS.get("recent_jobs") or {})
+    with _LLM_LOCK:
+        llm_jobs = {n: list(d) for n, d in _RECENT_LLM.items()}
+    for n in nodes:
+        n["recent_jobs"] = recent_jobs_for(n["node"], db_jobs.get(n["node"], []), llm_jobs.get(n["node"], []))
+    return {"updated": iso(datetime.now(timezone.utc)), "totals": tot, "nodes": nodes, "events": events, "ups": ups,
             "fleet_tonight": fl.get("fleet_tonight"), "queue": fl.get("queue"), "eta_days": fl.get("eta_days"),
             "recent_lessons": fl.get("recent_lessons", [])[:40]}
 
@@ -647,6 +793,29 @@ def selftest() -> int:
         "Idle · last: nova_journal → qwen3:8b · 4m ago"
     assert job_view(False, 125, True, 3, [], [], [], None, 1)["text"] == "Silent · probe last heard 2m ago"
     assert _NODE.match("nova-core10") and not _NODE.match("../etc") and not _NODE.match("")
+    # 1.1 extras: NUT parsing + UPS view + merged recent jobs
+    nut = 'BEGIN LIST VAR bedroom\nVAR bedroom ups.load "17"\nVAR bedroom ups.status "OB LB"\nVAR bedroom battery.charge "42"\n' \
+          'VAR bedroom battery.runtime "300"\nVAR bedroom ups.realpower.nominal "900"\nVAR other ups.load "99"\nVAR bedroom ups.serial "x"\nEND LIST VAR bedroom\n'
+    raw = parse_nut(nut, "bedroom")
+    assert raw == {"ups.load": "17", "ups.status": "OB LB", "battery.charge": "42", "battery.runtime": "300",
+                   "ups.realpower.nominal": "900"}
+    u = ups_view("master_bedroom", {"label": "Master Bedroom", "powers": ["nova-core4", 5]}, raw, None)
+    assert u["on_battery"] and u["low_battery"] and not u["online"] and u["watts"] == 153 and u["powers"] == ["nova-core4"]
+    assert u["charge_pct"] == 42.0 and u["runtime_s"] == 300.0 and u["ok"]
+    d = ups_view("x", {}, None, "ConnectionRefusedError: x")
+    assert not d["ok"] and d["load_pct"] is None and d["label"] == "x"
+    j = recent_jobs_for("n", [{"t": 100.0, "at": "a", "kind": "reading", "text": "Dune"}], [(200.0, "nova_journal → qwen3:8b"), (50.0, "x")])
+    assert [x["kind"] for x in j] == ["llm", "reading", "llm"] and "t" not in j[0]
+    _RECENT_LLM.clear(); _LAST_JOB.clear(); _JOBS.clear()
+    note_jobs("n", ["a"], "m", 1000.0); note_jobs("n", ["a"], "m", 1001.0); note_jobs("n", ["b"], None, 1002.0)
+    assert [t for _, t in _RECENT_LLM["n"]] == ["a → m", "b"]
+    note_jobs("n", ["b"], None, 1200.0)
+    assert len(_RECENT_LLM["n"]) == 3
+    try:
+        nut_vars("localhost", 1, "../x")
+        raise AssertionError("bad ups name accepted")
+    except ValueError:
+        pass
     print("selftest OK")
     return 0
 
@@ -679,6 +848,7 @@ def main(argv=None) -> int:
             ensure_schema(db())
         except Exception as e:  # noqa: BLE001 — a read-only replica moment must not stop the hub
             log(f"schema check skipped ({e})")
+        threading.Thread(target=extras_loop, name="extras", daemon=True).start()
         log(f"serving on :{a.port}")
         ThreadingHTTPServer(("0.0.0.0", a.port), Handler).serve_forever()
         return 0

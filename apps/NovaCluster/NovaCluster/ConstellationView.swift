@@ -226,6 +226,7 @@ struct ConstellationScreen<Mark: View>: View {
 // MARK: - Minion cards
 
 struct MinionStrip: View {
+    @Environment(\.selectNode) private var selectNode
     let minions: [ClusterSnapshot.Node]
     let colors: MachineColors
     let u: CGFloat
@@ -255,7 +256,11 @@ struct MinionStrip: View {
             Grid(alignment: .topLeading, horizontalSpacing: 14 * u, verticalSpacing: 14 * u) {
                 ForEach(rows.indices, id: \.self) { r in
                     GridRow {
-                        ForEach(rows[r]) { m in MinionCard(node: m, hue: colors.hue(for: m.node), u: u) }
+                        ForEach(rows[r]) { m in
+                            MinionCard(node: m, hue: colors.hue(for: m.node), u: u)
+                                .contentShape(Rectangle())
+                                .onTapGesture { selectNode(m.node) }
+                        }
                         ForEach(0..<(n - rows[r].count), id: \.self) { _ in
                             Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
                         }

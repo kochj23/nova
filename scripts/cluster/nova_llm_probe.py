@@ -16,6 +16,9 @@ Read-only and cheap. Every PUSH_S (1 s) it:
     ports ("clients") and this machine's own processes connected to LLM ports elsewhere ("calls"). A process is
     named only by its script/app name (nova_journal, NovaControl) — never its arguments. The hub joins one node's
     clients with another's calls, so a request is attributed to the job that sent it.
+  * 1.2 (2026-10-19, Nova Cluster's machine drill-down): the link — default-route interface, the wired port's
+    state and negotiated speed, and whether the Wi-Fi backdoor (KOCH_5G-2) is up with an address — and on Linux the
+    hwmon temperatures (CPU, GPU, NVMe, NIC). Cached 30 s / 15 s; macOS reports no temperatures (needs root).
 Config ~/.nova-probe/config.json {"node", "hub", "ollama_ports": [11434]}; token: Keychain service 'nova-minion'
 (account = node) or ~/.nova-probe/token or ~/.nova-minion/token (0600). Python 3.9 stdlib only.
   python3 nova_llm_probe.py [--once] [--selftest]
@@ -36,7 +39,7 @@ from datetime import datetime
 
 DIR = os.path.expanduser("~/.nova-probe")
 PUSH_S = 1          # 1 s: short requests and the last tokens before a request ends are not missed
-VERSION = "1.1"
+VERSION = "1.2"
 # LLM ports this machine may call elsewhere: Ollama, llama.cpp, MLX/MTPLX, the inference router
 CALL_PORTS = (11434, 11435, 5050, 37475)
 LINUX = platform.system() == "Linux"
@@ -392,6 +395,149 @@ def who(listen: set, conns: list | None = None, state: dict | None = None) -> di
     return {"clients": clients, "calls": calls, "ips": sorted(ips)[:8]}
 
 
+# ── link + temperatures (1.2) ─────────────────────────────────────────────────────────────────────
+_SKIP_IF = re.compile(r"^(lo|docker|veth|br-|virbr|tailscale|p2p|fan-|tun|utun|awdl|llw|anpi|bridge|gif|stf|ap\d)")
+_NET: dict = {"t": 0.0, "v": None}
+_TEMPS: dict = {"t": 0.0, "v": None}
+
+
+def parse_media_speed(media: str) -> int | None:
+    """'autoselect (1000baseT <full-duplex>)' -> 1000; '10Gbase-T' -> 10000; '2500Base-T' -> 2500."""
+    m = re.search(r"\b(\d+(?:\.\d+)?)(G?)base", media or "", re.I)
+    if not m:
+        return None
+    v = float(m.group(1)) * (1000 if m.group(2) else 1)
+    return int(v)
+
+
+def parse_ifconfig(out: str) -> dict:
+    """macOS `ifconfig <dev>` -> {'up', 'speed_mbps', 'ip'}."""
+    st = re.search(r"status:\s*(\w+)", out)
+    media = re.search(r"media:\s*(.+)", out)
+    ip = re.search(r"\binet (\d+\.\d+\.\d+\.\d+)", out)
+    return {"up": bool(st and st.group(1) == "active"), "speed_mbps": parse_media_speed(media.group(1)) if media else None,
+            "ip": ip.group(1) if ip else None}
+
+
+def parse_hwports(out: str) -> dict:
+    """`networksetup -listallhardwareports` -> {device: port name}."""
+    ports, name = {}, None
+    for line in out.splitlines():
+        if line.startswith("Hardware Port:"):
+            name = line.split(":", 1)[1].strip()
+        elif line.startswith("Device:") and name:
+            ports[line.split(":", 1)[1].strip()] = name
+    return ports
+
+
+def parse_proc_route(text: str) -> str | None:
+    """/proc/net/route -> the default route's interface (lowest metric)."""
+    best = None
+    for line in text.splitlines()[1:]:
+        f = line.split()
+        if len(f) > 6 and f[1] == "00000000" and f[7] == "00000000":
+            metric = int(f[6])
+            if best is None or metric < best[0]:
+                best = (metric, f[0])
+    return best[1] if best else None
+
+
+def _read(path: str) -> str:
+    try:
+        with open(path) as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def _linux_ip(iface: str) -> str | None:
+    m = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", sh("ip", "-4", "-o", "addr", "show", "dev", iface, timeout=3))
+    return m.group(1) if m else None
+
+
+def net_info() -> dict | None:
+    """{'default', 'eth': {'iface','up','speed_mbps','ip'}|None, 'wifi': {'iface','up','ip'}|None}, cached 30 s."""
+    if time.time() - _NET["t"] < 30:
+        return _NET["v"]
+    v = None
+    try:
+        if LINUX:
+            default = parse_proc_route(_read("/proc/net/route"))
+            eth = wifi = None
+            for i in sorted(os.listdir("/sys/class/net")):
+                if _SKIP_IF.match(i) or not os.path.exists(f"/sys/class/net/{i}/device"):
+                    continue
+                up = _read(f"/sys/class/net/{i}/operstate") == "up"
+                if os.path.isdir(f"/sys/class/net/{i}/wireless") or i.startswith("wl"):
+                    if wifi is None or up:
+                        wifi = {"iface": i, "up": up, "ip": _linux_ip(i) if up else None}
+                else:
+                    sp = _read(f"/sys/class/net/{i}/speed")
+                    cand = {"iface": i, "up": up, "speed_mbps": int(sp) if sp.isdigit() and int(sp) > 0 else None,
+                            "ip": _linux_ip(i) if up else None}
+                    if eth is None or i == default or (up and not eth["up"]):
+                        eth = cand
+            v = {"default": default, "eth": eth, "wifi": wifi}
+        else:
+            m = re.search(r"interface:\s*(\S+)", sh("/sbin/route", "-n", "get", "default", timeout=3))
+            ports = parse_hwports(sh("/usr/sbin/networksetup", "-listallhardwareports", timeout=5))
+            eth = wifi = None
+            for dev, name in ports.items():
+                if name == "Wi-Fi" and wifi is None:
+                    w = parse_ifconfig(sh("/sbin/ifconfig", dev, timeout=3))
+                    wifi = {"iface": dev, "up": w["up"] and bool(w["ip"]), "ip": w["ip"]}
+                elif "Ethernet" in name and "Thunderbolt" not in name and "Adapter" not in name and eth is None:
+                    e = parse_ifconfig(sh("/sbin/ifconfig", dev, timeout=3))
+                    eth = {"iface": dev, **e}
+            v = {"default": m.group(1) if m else None, "eth": eth, "wifi": wifi}
+    except Exception as e:  # noqa: BLE001 — the LLM view never fails for the link
+        log(f"net info unavailable ({e})")
+    _NET.update(t=time.time(), v=v)
+    return v
+
+
+def pick_temps(sensors: list) -> dict:
+    """[(hwmon name, label, °C)] -> {'cpu','gpu','nvme','nic'} (first plausible reading of each kind)."""
+    out: dict = {}
+    def put(k, c):
+        if k not in out and 1 <= c <= 125:
+            out[k] = round(c, 1)
+    for name, label, c in sensors:
+        n, lab = name.lower(), (label or "").lower()
+        if n in ("k10temp", "zenpower") and lab in ("tctl", "tdie", ""):
+            put("cpu", c)
+        elif n == "coretemp" and lab.startswith("package"):
+            put("cpu", c)
+        elif n == "amdgpu" and lab in ("edge", ""):
+            put("gpu", c)
+        elif n == "nvme" and lab in ("composite", ""):
+            put("nvme", c)
+        elif n.startswith(("en", "eth", "atlantic")) and lab in ("phy", "mac", ""):
+            put("nic", c)
+    for name, label, c in sensors:                       # fallback CPU: ACPI thermal zone
+        if name.lower() == "acpitz":
+            put("cpu", c)
+    return out
+
+
+def temps() -> dict | None:
+    """Linux hwmon temperatures, cached 15 s. macOS: None (no unprivileged sensor API)."""
+    if not LINUX:
+        return None
+    if time.time() - _TEMPS["t"] < 15:
+        return _TEMPS["v"]
+    sensors = []
+    for h in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
+        name = _read(f"{h}/name")
+        for t in sorted(glob.glob(f"{h}/temp*_input")):
+            raw = _read(t)
+            if raw.lstrip("-").isdigit():
+                sensors.append((name, _read(t.replace("_input", "_label")), int(raw) / 1000))
+    v = pick_temps(sensors) or None
+    _TEMPS.update(t=time.time(), v=v)
+    return v
+
+
 def snapshot(conf: dict) -> dict:
     rs = []
     by_api = api_names(conf.get("ollama_ports", [11434]))
@@ -425,7 +571,7 @@ def snapshot(conf: dict) -> dict:
         load1 = None
     return {"node": conf["node"], "os": os_label(), "chip": chip(), "cores": os.cpu_count(), "mem_gb": mem_gb(),
             "free_gb": free_gb(), "load": round(load1, 2) if load1 is not None else None, "probe": VERSION,
-            "runners": rs, "loaded": loaded, "llm": llm, **users}
+            "runners": rs, "loaded": loaded, "llm": llm, "net": net_info(), "temps": temps(), **users}
 
 
 def token(node: str) -> str:
@@ -500,6 +646,24 @@ def selftest() -> int:
             {"primed": True})
     assert w["clients"] == [{"peer": "127.0.0.1:7", "port": 11434, "proc": "x"}]
     assert w["calls"] == [{"src": "192.168.1.6:9", "dst": "192.168.1.77:11434", "proc": "y"}] and w["ips"] == ["192.168.1.6"]
+    # 1.2: link + temperatures
+    assert parse_media_speed("autoselect (1000baseT <full-duplex>)") == 1000
+    assert parse_media_speed("autoselect (10Gbase-T <full-duplex,flow-control>)") == 10000
+    assert parse_media_speed("2500Base-T") == 2500 and parse_media_speed("autoselect") is None
+    ifc = parse_ifconfig("en0: flags=8863<UP>\n\tinet 192.168.1.77 netmask 0xffffff00\n\tmedia: autoselect (1000baseT <full-duplex>)\n\tstatus: active\n")
+    assert ifc == {"up": True, "speed_mbps": 1000, "ip": "192.168.1.77"}
+    assert parse_ifconfig("en1: flags=8863\n\tstatus: inactive\n") == {"up": False, "speed_mbps": None, "ip": None}
+    hw = parse_hwports("Hardware Port: Ethernet\nDevice: en0\nEthernet Address: x\n\nHardware Port: Wi-Fi\nDevice: en1\n")
+    assert hw == {"en0": "Ethernet", "en1": "Wi-Fi"}
+    rt = ("Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n"
+          "wlp3s0\t00000000\t0101A8C0\t0003\t0\t0\t600\t00000000\n"
+          "enp1s0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\n"
+          "enp1s0\t0001A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\n")
+    assert parse_proc_route(rt) == "enp1s0" and parse_proc_route("") is None
+    assert pick_temps([("acpitz", "", 20.0), ("k10temp", "Tctl", 58.0), ("amdgpu", "edge", 48.0),
+                       ("nvme", "Composite", 33.9), ("nvme", "Sensor 1", 0.0), ("eno1", "PHY", 0.0)]) == \
+        {"cpu": 58.0, "gpu": 48.0, "nvme": 33.9}
+    assert pick_temps([("acpitz", "", 41.0)]) == {"cpu": 41.0} and pick_temps([]) == {}
     print("selftest OK")
     return 0
 

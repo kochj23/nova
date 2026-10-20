@@ -20,6 +20,8 @@ struct ContentView: View {
     @AppStorage(KioskPolicy.intervalKey) private var kioskInterval = KioskPolicy.defaultInterval
     @State private var lastSwitch = Date()
     @State private var lastTouch: Date?
+    /// The machine whose drill-down sheet is open.
+    @State private var selected: SelectedNode?
     #if os(macOS)
     @State private var keepAwake: NSObjectProtocol?
     @State private var lastPointer: CGPoint?
@@ -76,6 +78,10 @@ struct ContentView: View {
         .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in noteTouch() })
         #endif
         .onChange(of: modeRaw) { _, _ in lastSwitch = Date() }
+        .environment(\.selectNode, SelectNodeAction { name in selected = SelectedNode(name: name); noteTouch() })
+        .sheet(item: $selected) { sel in
+            NodeDetailView(cluster: cluster, name: sel.name) { selected = nil }
+        }
         .task(id: kioskOn) { await runKiosk() }
         #if os(macOS)
         .onChange(of: kioskOn, initial: true) { _, on in setKeepAwake(on) }
@@ -97,6 +103,7 @@ struct ContentView: View {
         .onOpenURL { url in
             if ClusterConfig.applyView(url: url) { return }
             if KioskPolicy.apply(url: url) { lastSwitch = Date(); return }
+            if let n = ClusterConfig.nodeLink(url: url) { selected = SelectedNode(name: n); return }
             if ClusterConfig.apply(url: url) { cluster.restart() }
         }
     }
@@ -187,7 +194,8 @@ struct ContentView: View {
             ZStack {
                 ClusterMapView(map: map, comets: cluster.comets, pointer: pointer, version: version,
                                dimmed: cluster.isOffline, paused: !isLive)
-                StationLabelsLayer(stations: map.stations, size: mg.size)
+                StationLabelsLayer(stations: map.stations, size: mg.size,
+                                   onUPS: Set((snap?.ups ?? []).flatMap { $0.powers ?? [] }))
                     .id(version)
                     .opacity(cluster.isOffline ? 0.6 : 1)
                 if map.stations.isEmpty {
@@ -205,7 +213,21 @@ struct ContentView: View {
                 }
             }
             #endif
-            .onTapGesture { loc in pointer.tap = loc }
+            .onTapGesture { loc in
+                // A station (core or label) opens its drill-down; anything else (a moon) shows its tooltip.
+                let g = MapGeometry(size: mg.size, stations: map.stations)
+                if let name = g.station(at: loc, stations: map.stations) {
+                    selected = SelectedNode(name: name)
+                } else {
+                    pointer.tap = loc
+                }
+            }
+            .overlay(alignment: .bottomLeading) {
+                if let ups = snap?.ups, !ups.isEmpty {
+                    let u = max(0.8, min(mg.size.width / 1040, mg.size.height / 760))
+                    UPSBadge(list: ups, u: u).padding(.leading, 18 * u).padding(.bottom, 6 * u)
+                }
+            }
         }
         .padding(.top, 12 * u)
     }

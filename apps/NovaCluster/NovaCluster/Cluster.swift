@@ -115,8 +115,51 @@ struct ClusterSnapshot: Codable, Equatable {
         /// false when the probe found no LLM server on the machine at all.
         var llm: Bool?
         var llm_job: LLMJob?
+        /// 1.1: the wired link and the Wi-Fi backdoor (probe 1.2), temperatures (°C, Linux only), last 10 jobs.
+        var net: Net?
+        var temps: [String: Double]?
+        var recent_jobs: [RecentJob]?
         var id: String { node }
         var isLive: Bool { live ?? false }
+    }
+    /// Probe 1.2's link view: the default-route interface, the wired port, and the Wi-Fi backdoor.
+    struct Net: Codable, Equatable {
+        struct Link: Codable, Equatable {
+            var iface: String?
+            var up: Bool?
+            var speed_mbps: Double?
+            var ip: String?
+        }
+        var `default`: String?
+        var eth: Link?
+        var wifi: Link?
+    }
+    struct RecentJob: Codable, Equatable {
+        var at: String?
+        /// llm | reading | transcribing
+        var kind: String?
+        var text: String?
+    }
+    /// A UPS the hub reads from NUT (service_config service='ups').
+    struct UPS: Codable, Equatable, Identifiable {
+        var key: String
+        var label: String?
+        var model: String?
+        var monitor_node: String?
+        var powers: [String]?
+        var ok: Bool?
+        var error: String?
+        var status: String?
+        var on_battery: Bool?
+        var low_battery: Bool?
+        var online: Bool?
+        var load_pct: Double?
+        var watts: Double?
+        var charge_pct: Double?
+        var runtime_s: Double?
+        var input_v: Double?
+        var at: String?
+        var id: String { key }
     }
     struct Event: Codable, Equatable {
         var node: String?
@@ -144,6 +187,7 @@ struct ClusterSnapshot: Codable, Equatable {
     var queue: [String: Double]?
     var eta_days: Double?
     var recent_lessons: [Lesson]?
+    var ups: [UPS]?
 
     var allNodes: [Node] { nodes ?? [] }
     var allEvents: [Event] { events ?? [] }

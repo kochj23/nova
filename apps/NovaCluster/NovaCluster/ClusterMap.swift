@@ -162,6 +162,24 @@ struct MapGeometry {
         return (CGPoint(x: p.x, y: up ? p.y - d : p.y + d), up)
     }
 
+    /// The station under a tap (1.1.0 drill-down): near its core, or anywhere on its label block.
+    /// Taps on moons fall through (nil) to the renderer's model tooltip.
+    func station(at q: CGPoint, stations: [StationVM]) -> String? {
+        var best: (String, CGFloat)?
+        for s in stations {
+            guard let p = points[s.name] else { continue }
+            let d = hypot(p.x - q.x, p.y - q.y) - coreRadius(s)
+            if d < 22 * u, d < (best?.1 ?? .infinity) { best = (s.name, d) }
+        }
+        if let b = best { return b.0 }
+        for s in stations {
+            let (a, up) = labelAnchor(s)
+            let w = (s.isHub ? 300 : 240) * u, h = 118 * u
+            if CGRect(x: a.x - w / 2, y: up ? a.y - h : a.y, width: w, height: h).contains(q) { return s.name }
+        }
+        return nil
+    }
+
     func moonAngle(_ s: StationVM, _ m: MoonVM, t: Double) -> Double {
         let dir = m.ring == 1 ? -0.65 : 1.0
         return s.phase + Double(m.ring) * 0.4 + Double(m.slot) * 2 * .pi / Double(max(1, m.ringCount)) + t * s.omega * dir
@@ -534,6 +552,8 @@ private struct TopAnchored: Layout {
 struct StationLabelsLayer: View {
     let stations: [StationVM]
     let size: CGSize
+    /// Machines on a monitored UPS get a ⚡ after their name.
+    var onUPS: Set<String> = []
     var body: some View {
         let g = MapGeometry(size: size, stations: stations)
         let u = g.u
@@ -543,7 +563,7 @@ struct StationLabelsLayer: View {
                     let (a, up) = g.labelAnchor(s)
                     let _ = p
                     TopAnchored(point: a, bottom: up) {
-                        StationLabel(s: s, u: u)
+                        StationLabel(s: s, u: u, onUPS: onUPS.contains(s.name))
                             .frame(width: (s.isHub ? 300 : 240) * u)
                     }
                 }
@@ -557,6 +577,7 @@ struct StationLabelsLayer: View {
 struct StationLabel: View {
     let s: StationVM
     let u: CGFloat
+    var onUPS = false
 
     private var n: ClusterSnapshot.Node { s.node }
     private var mono: Font { .system(size: 11 * u, design: .monospaced) }
@@ -577,6 +598,7 @@ struct StationLabel: View {
                         .layoutPriority(1)
                 }
                 badge
+                if onUPS { Text("⚡").font(.system(size: 10 * u)).accessibilityLabel("on UPS") }
             }
             .lineLimit(1)
             NodeRoleLines(node: n, u: u, size: 11, alignment: .center)

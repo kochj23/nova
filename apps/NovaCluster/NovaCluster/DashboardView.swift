@@ -168,6 +168,7 @@ struct DashboardScreen<Mark: View>: View {
     let cluster: ClusterModel
     let stations: [StationVM]
     let paused: Bool
+    @Environment(\.selectNode) private var selectNode
     @ViewBuilder let mark: (CGFloat) -> Mark
     @State private var stars = TrafficStarModel()
 
@@ -222,7 +223,11 @@ struct DashboardScreen<Mark: View>: View {
         return Grid(alignment: .topLeading, horizontalSpacing: 12 * u, verticalSpacing: 12 * u) {
             ForEach(rows.indices, id: \.self) { r in
                 GridRow {
-                    ForEach(rows[r]) { s in MachineCard(s: s, hue: colors.hue(for: s.name), u: u, lines: activityLines) }
+                    ForEach(rows[r]) { s in
+                        MachineCard(s: s, hue: colors.hue(for: s.name), u: u, lines: activityLines)
+                            .contentShape(Rectangle())
+                            .onTapGesture { selectNode(s.name) }
+                    }
                     ForEach(0..<(n - rows[r].count), id: \.self) { _ in
                         Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
                     }

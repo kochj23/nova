@@ -114,8 +114,8 @@ class TestIntegration(unittest.TestCase):
                                                               "calls": [], "ips": ["1.2.3.9"]}):
             snap = probe.snapshot({"node": "n", "ollama_ports": [11434]})
         self.assertTrue(snap["llm"])
-        self.assertEqual(snap["probe"], "1.1")
-        for k in ("clients", "calls", "ips", "runners", "loaded"):
+        self.assertEqual(snap["probe"], "1.2")
+        for k in ("clients", "calls", "ips", "runners", "loaded", "net", "temps"):
             self.assertIn(k, snap)
         json.dumps(snap)
 
@@ -159,6 +159,35 @@ class TestFrame(unittest.TestCase):
 
     def test_import_does_not_run_main(self):
         self.assertTrue(callable(probe.main))
+
+
+class TestLinkAndTemps(unittest.TestCase):
+    """1.2 (2026-10-19): the wired link, the Wi-Fi backdoor and hwmon temperatures for the drill-down."""
+
+    def test_media_speeds(self):
+        self.assertEqual(probe.parse_media_speed("autoselect (2500Base-T <full-duplex>)"), 2500)
+        self.assertEqual(probe.parse_media_speed("10Gbase-T"), 10000)
+        self.assertIsNone(probe.parse_media_speed("none"))
+
+    def test_default_route_picks_lowest_metric(self):
+        rt = ("Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n"
+              "wlp194s0\t00000000\t0101A8C0\t0003\t0\t0\t600\t00000000\n"
+              "eno1\t00000000\t0101A8C0\t0003\t0\t0\t20100\t00000000\n")
+        self.assertEqual(probe.parse_proc_route(rt), "wlp194s0")   # the NM penalty case on nova-core7
+
+    def test_temps_ignore_dead_sensors(self):
+        t = probe.pick_temps([("eno1", "PHY", 0.0), ("nvme", "Composite", 33.9), ("k10temp", "Tctl", 130.0)])
+        self.assertEqual(t, {"nvme": 33.9})
+
+    def test_net_info_is_cached(self):
+        probe._NET.update(t=time.time(), v={"default": "x"})
+        with mock.patch.object(probe, "sh", side_effect=AssertionError("re-read")):
+            self.assertEqual(probe.net_info(), {"default": "x"})
+        probe._NET.update(t=0.0, v=None)
+
+    def test_macos_has_no_temps(self):
+        with mock.patch.object(probe, "LINUX", False):
+            self.assertIsNone(probe.temps())
 
 
 if __name__ == "__main__":

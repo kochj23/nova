@@ -63,6 +63,16 @@ struct ClusterConfig: Equatable {
         return true
     }
 
+    /// `novacluster://node?name=nova-core7` opens that machine's drill-down. Returns the name (validated), or nil.
+    static func nodeLink(url: URL) -> String? {
+        guard url.scheme?.lowercased() == "novacluster",
+              let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              (comps.host ?? "").lowercased() == "node",
+              let n = comps.queryItems?.first(where: { $0.name == "name" })?.value,
+              n.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$"#, options: .regularExpression) != nil else { return nil }
+        return n
+    }
+
     /// Apply `novacluster://setup?hub=…&node=…&token=…`. Missing fields keep their current value.
     @discardableResult
     static func apply(url: URL) -> Bool {

@@ -57,8 +57,9 @@ class FakeCur:
 
 
 def reset():
-    for d in (hub._LLM, hub._JOBS, hub._LAST_JOB):
+    for d in (hub._LLM, hub._JOBS, hub._LAST_JOB, hub._RECENT_LLM):
         d.clear()
+    hub._EXTRAS.update(ups=[], recent_jobs={})
     del hub._EVENTS[:]
     hub._IPS.update(t=0.0, map={})
 
@@ -231,6 +232,85 @@ class TestFrame(unittest.TestCase):
     def test_import_does_not_serve(self):
         self.assertTrue(callable(hub.main))
         self.assertEqual(hub._LLM.__class__, dict)
+
+
+class TestClusterExtras(unittest.TestCase):
+    """1.1 (2026-10-19): UPS from NUT, per-node link/temps passthrough and recent jobs, all read-only."""
+
+    NUT = ('BEGIN LIST VAR bedroom\nVAR bedroom ups.load "18"\nVAR bedroom ups.status "OL"\n'
+           'VAR bedroom battery.charge "100"\nVAR bedroom battery.runtime "1764"\nVAR bedroom ups.realpower.nominal "900"\n'
+           'VAR bedroom ups.model "Back-UPS BGM1500-US "\nEND LIST VAR bedroom\n')
+
+    def setUp(self):
+        reset()
+
+    # Security: hub text from NUT is data, capped; ups names can't smuggle protocol commands
+    def test_security_nut_values_capped_and_name_validated(self):
+        raw = hub.parse_nut('VAR u ups.status "' + "X" * 500 + '"\n', "u")
+        self.assertEqual(len(raw["ups.status"]), 64)
+        for bad in ("bedroom\nFSD bedroom", "../x", ""):
+            with self.assertRaises(ValueError):
+                hub.nut_vars("localhost", 1, bad)
+
+    # Unit: the view the app draws
+    def test_unit_ups_view(self):
+        u = hub.ups_view("master_bedroom", {"label": "Master Bedroom", "powers": ["nova-core4"]},
+                         hub.parse_nut(self.NUT, "bedroom"), None)
+        self.assertTrue(u["online"] and u["ok"] and not u["on_battery"])
+        self.assertEqual((u["load_pct"], u["watts"], u["charge_pct"], u["runtime_s"]), (18.0, 162, 100.0, 1764.0))
+        self.assertEqual(u["model"], "Back-UPS BGM1500-US")
+
+    # Retry / resilience: an unreachable UPS is reported, never raised
+    def test_retry_unreachable_ups_is_shown_not_raised(self):
+        class Cur(FakeCur):
+            def fetchall(self_inner):
+                return [("master_bedroom", {"host": "127.0.0.1", "port": 1, "ups": "bedroom", "label": "MB"})]
+        out = hub.collect_ups(Cur())
+        self.assertEqual(len(out), 1)
+        self.assertFalse(out[0]["ok"])
+        self.assertTrue(out[0]["error"])
+
+    # Integration: a fake upsd on a local socket
+    def test_integration_reads_a_live_upsd(self):
+        import socket, threading
+        srv = socket.socket(); srv.bind(("127.0.0.1", 0)); srv.listen(1)
+        port = srv.getsockname()[1]
+        def serve():
+            c, _ = srv.accept(); c.recv(100); c.sendall(self.NUT.encode()); c.close(); srv.close()
+        threading.Thread(target=serve, daemon=True).start()
+        v = hub.nut_vars("127.0.0.1", port, "bedroom", timeout=3)
+        self.assertEqual(v["ups.load"], "18")
+
+    # Functional: /cluster carries net, temps, recent_jobs and ups
+    def test_functional_cluster_payload(self):
+        now = time.time()
+        hub._LLM["nova-core7"] = {"snap": {"node": "nova-core7", "net": {"eth": {"iface": "eno1", "up": True, "speed_mbps": 1000}},
+                                           "temps": {"cpu": 50.4}, "runners": [], "loaded": []},
+                                  "t": now, "tok_s": 0, "prefill_tok_s": 0}
+        hub.note_jobs("nova-core7", ["nova_journal @ mac-studio"], "qwen3:8b", now)
+        hub._EXTRAS.update(ups=[{"key": "master_bedroom"}],
+                           recent_jobs={"nova-core7": [{"t": now - 60, "at": "x", "kind": "transcribing", "text": "Cannon"}]})
+        with mock.patch.object(hub, "fleet", return_value={"minions": []}):
+            out = hub.cluster(FakeCur())
+        n = next(x for x in out["nodes"] if x["node"] == "nova-core7")
+        self.assertEqual(n["net"]["eth"]["speed_mbps"], 1000)
+        self.assertEqual(n["temps"], {"cpu": 50.4})
+        self.assertEqual([j["kind"] for j in n["recent_jobs"]], ["llm", "transcribing"])
+        self.assertEqual(out["ups"], [{"key": "master_bedroom"}])
+
+    # Performance: /cluster never calls a collector inline
+    def test_performance_cluster_does_not_collect(self):
+        with mock.patch.object(hub, "collect_ups", side_effect=AssertionError("inline")), \
+             mock.patch.object(hub, "fleet", return_value={"minions": []}):
+            hub.cluster(FakeCur())
+
+    # Frame: the refresher keeps the last value when a collector fails
+    def test_frame_refresher_keeps_last_value(self):
+        hub._EXTRAS["ups"] = [{"key": "old"}]
+        with mock.patch.object(hub, "COLLECTORS", [("ups", mock.Mock(side_effect=RuntimeError("boom")), 0)]), \
+             mock.patch.object(hub, "db", return_value=FakeCur()):
+            hub.refresh_extras(force=True)
+        self.assertEqual(hub._EXTRAS["ups"], [{"key": "old"}])
 
 
 if __name__ == "__main__":
