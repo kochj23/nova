@@ -33,6 +33,8 @@ struct MacSettingsView: View {
                 LabeledContent("Machines", value: "\(cluster.snapshot?.allNodes.count ?? 0)")
             }
 
+            KioskSettingsSection()
+
             HStack {
                 if saved { Text("Saved").foregroundStyle(.secondary) }
                 Spacer()

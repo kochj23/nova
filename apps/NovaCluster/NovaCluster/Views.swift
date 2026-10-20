@@ -15,6 +15,15 @@ struct ContentView: View {
     /// Mac: View › Cluster Map (⌘1) / Dashboard (⌘2) / Constellation (⌘3).
     @AppStorage(ViewMode.key) private var modeRaw = ViewMode.map.rawValue
     private var mode: ViewMode { ViewMode(stored: modeRaw) }
+    /// Kiosk mode: cycle the three views on a timer; touches pause it (KioskPolicy).
+    @AppStorage(KioskPolicy.enabledKey) private var kioskOn = KioskPolicy.defaultEnabled
+    @AppStorage(KioskPolicy.intervalKey) private var kioskInterval = KioskPolicy.defaultInterval
+    @State private var lastSwitch = Date()
+    @State private var lastTouch: Date?
+    #if os(macOS)
+    @State private var keepAwake: NSObjectProtocol?
+    @State private var lastPointer: CGPoint?
+    #endif
     @State private var map = MapModel()
     @State private var pointer = MapPointer()
     @State private var version = 0
@@ -55,6 +64,22 @@ struct ContentView: View {
             }
         }
         .animation(.easeInOut(duration: 0.5), value: modeRaw)
+        #if os(macOS)
+        .onContinuousHover(coordinateSpace: .global) { ph in
+            // Hover re-fires as animated content moves under a still cursor: only a real move counts.
+            guard case .active(let p) = ph else { return }
+            if let q = lastPointer, hypot(p.x - q.x, p.y - q.y) < 3 { return }
+            if lastPointer != nil { noteTouch() }
+            lastPointer = p
+        }
+        #elseif os(iOS)
+        .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in noteTouch() })
+        #endif
+        .onChange(of: modeRaw) { _, _ in lastSwitch = Date() }
+        .task(id: kioskOn) { await runKiosk() }
+        #if os(macOS)
+        .onChange(of: kioskOn, initial: true) { _, on in setKeepAwake(on) }
+        #endif
         .preferredColorScheme(.dark)
         #if os(iOS)
         .statusBarHidden(true)
@@ -71,9 +96,42 @@ struct ContentView: View {
         .onChange(of: snap) { _, s in map.update(s); version &+= 1 }
         .onOpenURL { url in
             if ClusterConfig.applyView(url: url) { return }
+            if KioskPolicy.apply(url: url) { lastSwitch = Date(); return }
             if ClusterConfig.apply(url: url) { cluster.restart() }
         }
     }
+
+    /// Kiosk loop: once a second, step to the next view when the policy says so.
+    private func runKiosk() async {
+        lastSwitch = Date()
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(1))
+            let policy = KioskPolicy(enabled: kioskOn, interval: KioskPolicy.clamp(kioskInterval))
+            if policy.shouldAdvance(now: Date(), lastSwitch: lastSwitch, lastTouch: lastTouch) {
+                modeRaw = mode.next.rawValue
+                lastSwitch = Date()
+            }
+        }
+    }
+
+    /// Any touch / pointer movement pauses the kiosk cycle. Throttled: hover fires constantly.
+    private func noteTouch() {
+        let now = Date()
+        if let t = lastTouch, now.timeIntervalSince(t) < 1 { return }
+        lastTouch = now
+    }
+
+    #if os(macOS)
+    /// In kiosk mode the Mac is a wall display: keep the screen from sleeping.
+    private func setKeepAwake(_ on: Bool) {
+        if on, keepAwake == nil {
+            keepAwake = ProcessInfo.processInfo.beginActivity(options: [.idleDisplaySleepDisabled, .userInitiated],
+                                                              reason: "Nova Cluster kiosk mode")
+        } else if !on, let a = keepAwake {
+            ProcessInfo.processInfo.endActivity(a); keepAwake = nil
+        }
+    }
+    #endif
 
     private var mapScreen: some View {
         GeometryReader { geo in
@@ -706,6 +764,7 @@ struct SettingsSheet: View {
                     LabeledContent("Last heard", value: cluster.lastSuccess.map { Fmt.clock($0) } ?? "never")
                     LabeledContent("Machines", value: "\(cluster.snapshot?.allNodes.count ?? 0)")
                 }
+                KioskSettingsSection()
             }
             .navigationTitle("Nova Cluster")
             .navigationBarTitleDisplayMode(.inline)
@@ -720,3 +779,22 @@ struct SettingsSheet: View {
     }
 }
 #endif
+
+
+/// Kiosk controls (Mac Settings and the iPad sheet). They apply at once; no Save needed.
+struct KioskSettingsSection: View {
+    @AppStorage(KioskPolicy.enabledKey) private var on = KioskPolicy.defaultEnabled
+    @AppStorage(KioskPolicy.intervalKey) private var interval = KioskPolicy.defaultInterval
+
+    var body: some View {
+        Section {
+            Toggle("Kiosk mode", isOn: $on)
+            Stepper(value: $interval, in: 10...600, step: 10) {
+                LabeledContent("Each view", value: "\(Int(KioskPolicy.clamp(interval))) s")
+            }
+            .disabled(!on)
+        } header: { Text("Kiosk") } footer: {
+            Text("Cycles Cluster Map → Dashboard → Constellation. A touch pauses it for two minutes. Also novacluster://kiosk?on=1&interval=60.")
+        }
+    }
+}

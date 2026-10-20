@@ -84,6 +84,22 @@ Tap the wordmark to step through **Cluster Map → Dashboard → Constellation**
 
 It reads the same `/cluster` poll as the other two views (no second hub client, no second token).
 
+### Kiosk mode (1.1.0)
+
+For the iPad on its stand, a Mac in full screen, or the Apple TV: the app steps
+**Cluster Map → Dashboard → Constellation** every *N* seconds (default 60, 10–600 in Settings,
+10–3600 by deep link).
+
+- **Pause on touch.** Any touch (iPad), real pointer movement (Mac) or remote press (TV) pauses
+  the cycle for two minutes, or for one interval if that is longer, so someone can study a view.
+  Hover events caused by animation under a still cursor don't count.
+- **Screen stays awake.** The iPad's idle timer is off while the app is in front (as before). On the
+  Mac, kiosk mode holds a "Nova Cluster kiosk mode" display-sleep assertion, released when kiosk
+  mode is turned off.
+- **Turn it on:** Mac **View › Kiosk Mode (⇧⌘K)** or Settings › Kiosk; iPad long-press the wordmark ›
+  Kiosk; or `novacluster://kiosk?on=1&interval=60`. The Apple TV starts in kiosk mode.
+- The timing rule is `KioskPolicy` (pure, unit-tested); `ContentView` only runs it once a second.
+
 ### Resilience
 
 - If the hub misses two polls in a row, the app shows the offline banner. It keeps drawing from the
@@ -198,7 +214,8 @@ Nothing network-specific is compiled in. The hub can come from any of these sour
 | Settings | Mac: ⌘, · iPad: long-press the wordmark |
 | Deep link | `novacluster://setup?hub=…&node=…&token=…` (missing fields keep their current value) |
 | Environment on launch | `NOVA_CLUSTER_HUB`, `NOVA_CLUSTER_NODE`, `NOVA_CLUSTER_TOKEN` (`DEVICECTL_CHILD_…` / `SIMCTL_CHILD_…`) |
-| View switch | `novacluster://view?mode=map\|dashboard` |
+| View switch | `novacluster://view?mode=map\|dashboard\|constellation` |
+| Kiosk | `novacluster://kiosk?on=1&interval=60` |
 | Debug | `-demoBusy YES` marks a few slots busy (prefill + generating) to check the visuals |
 
 ## Security
@@ -236,7 +253,7 @@ xcodebuild -project NovaCluster.xcodeproj -scheme NovaClusterMac -configuration 
   -destination 'platform=macOS' -derivedDataPath <dd> test
 ```
 
-There are 28 XCTest cases (`Tests/NodeLinesTests.swift`, `Tests/ConstellationTests.swift`), all of which pass in 1.1.0. The constellation tests pin the shared hash and random stream so the screensaver's sky can't shift silently. The test bundle
+There are 33 XCTest cases (`Tests/NodeLinesTests.swift`, `Tests/ConstellationTests.swift`, `Tests/KioskTests.swift`), all of which pass in 1.1.0. The constellation tests pin the shared hash and random stream so the screensaver's sky can't shift silently. The test bundle
 is not hosted in the app: it has no window, no live hub, and no real UserDefaults or Keychain. The
 sources under test are compiled straight into the bundle. The network is stubbed with a `URLProtocol`.
 

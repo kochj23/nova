@@ -120,6 +120,61 @@ enum ViewMode: String, CaseIterable {
     }
 }
 
+/// Kiosk mode (1.1.0): for the iPad on its stand, a Mac in full screen, or the Apple TV.
+/// Steps map → dashboard → constellation every `interval` seconds; any touch, click, key
+/// or pointer movement pauses the cycle (for `pause` seconds) so someone can look at a view.
+struct KioskPolicy: Equatable {
+    var enabled: Bool
+    var interval: TimeInterval
+
+    static let enabledKey = "kiosk.enabled"
+    static let intervalKey = "kiosk.interval"
+    static let defaultInterval: TimeInterval = 60
+    static let intervalRange: ClosedRange<TimeInterval> = 10...3600
+    #if os(tvOS)
+    static let defaultEnabled = true          // the TV is a wall display
+    #else
+    static let defaultEnabled = false
+    #endif
+
+    /// Paused after a touch for at least two minutes, longer if the interval is longer.
+    var pause: TimeInterval { max(120, interval) }
+
+    static func clamp(_ v: TimeInterval) -> TimeInterval {
+        v.isFinite && v > 0 ? min(intervalRange.upperBound, max(intervalRange.lowerBound, v)) : defaultInterval
+    }
+
+    static func load(_ d: UserDefaults = .standard) -> KioskPolicy {
+        let on = d.object(forKey: enabledKey) as? Bool ?? defaultEnabled
+        let iv = d.object(forKey: intervalKey) as? Double ?? defaultInterval
+        return KioskPolicy(enabled: on, interval: clamp(iv))
+    }
+
+    /// True when the cycle should move to the next view now.
+    func shouldAdvance(now: Date, lastSwitch: Date, lastTouch: Date?) -> Bool {
+        guard enabled else { return false }
+        if let t = lastTouch, now.timeIntervalSince(t) < pause { return false }
+        return now.timeIntervalSince(max(lastSwitch, lastTouch ?? .distantPast)) >= interval
+    }
+
+    /// `novacluster://kiosk?on=1&interval=60` (either field optional). Returns true if handled.
+    @discardableResult
+    static func apply(url: URL, defaults d: UserDefaults = .standard) -> Bool {
+        guard url.scheme?.lowercased() == "novacluster",
+              let comps = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              (comps.host ?? "").lowercased() == "kiosk" else { return false }
+        for q in comps.queryItems ?? [] {
+            guard let v = q.value else { continue }
+            switch q.name {
+            case "on": d.set(["1", "true", "yes", "on"].contains(v.lowercased()), forKey: enabledKey)
+            case "interval": if let x = Double(v) { d.set(clamp(x), forKey: intervalKey) }
+            default: break
+            }
+        }
+        return true
+    }
+}
+
 enum Keychain {
     /// iOS: net.digitalnoise.NovaClusterPad · macOS: net.digitalnoise.NovaCluster
     private static let service = Bundle.main.bundleIdentifier ?? "net.digitalnoise.NovaCluster"

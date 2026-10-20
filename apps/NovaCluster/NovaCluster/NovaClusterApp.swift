@@ -13,6 +13,7 @@ import SwiftUI
 @main
 struct NovaClusterApp: App {
     @State private var cluster = ClusterModel()
+    @AppStorage(KioskPolicy.enabledKey) private var kioskOn = KioskPolicy.defaultEnabled
     #if os(macOS)
     @NSApplicationDelegateAdaptor(MacAppDelegate.self) private var appDelegate
     #endif
@@ -43,6 +44,8 @@ struct NovaClusterApp: App {
                     .keyboardShortcut("2", modifiers: .command)
                 Button("Constellation") { UserDefaults.standard.set(ViewMode.constellation.rawValue, forKey: ViewMode.key) }
                     .keyboardShortcut("3", modifiers: .command)
+                Toggle("Kiosk Mode", isOn: $kioskOn)
+                    .keyboardShortcut("k", modifiers: [.command, .shift])
                 Divider()
                 Button("Refresh Now") { Task { await cluster.pollOnce() } }
                     .keyboardShortcut("r", modifiers: .command)
