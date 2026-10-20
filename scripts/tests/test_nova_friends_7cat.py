@@ -22,8 +22,17 @@ import nova_friends as m  # noqa: E402
 import nova_watches_and_friends as w  # noqa: E402
 import nova_hear  # noqa: E402
 
-# Tests never reach YouTube: the music sound note is stubbed (TestSoundNote checks the hook itself).
-nova_hear.describe_track = lambda url, log=None: f"**🎧 What it sounds like:** stub for {url}"
+# Tests never reach YouTube: the music sound note is stubbed for this module only (TestSoundNote checks the hook).
+_hear_stub = patch.object(nova_hear, "describe_track",
+                          side_effect=lambda url, log=None: f"**🎧 What it sounds like:** stub for {url}")
+
+
+def setUpModule():
+    _hear_stub.start()
+
+
+def tearDownModule():
+    _hear_stub.stop()
 
 SRC = (SCRIPTS / "nova_friends.py").read_text()
 D = datetime(2026, 10, 19, 9, 0)

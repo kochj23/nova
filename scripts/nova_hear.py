@@ -242,7 +242,8 @@ def describe_track(url: str, log=_log) -> str | None:
             log(f"sound note skipped: writer returned {n} words")
             return None
         log(f"sound note: {n} words for {url} (tempo {r['tempo']['bpm']}, {r['loudness']['integrated_lufs']} LUFS)")
-        return f"**🎧 What it sounds like:** {text}"
+        # Jordan 2026-10-19: link the exact upload that was analyzed (never a guessed one)
+        return f"**🎧 What it sounds like:** {text} [Listen on YouTube]({url})"
     except Exception as e:  # noqa: BLE001 — the note never sinks the edition
         log(f"sound note skipped: {type(e).__name__}: {e}")
         return None
