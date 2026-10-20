@@ -64,6 +64,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_journal as nj          # noqa: E402
 import nova_voice                  # noqa: E402
 from nova_sections import is_belief_topic   # noqa: E402
+import nova_yt_direct                      # noqa: E402
 from nova_watches_and_friends import (MEM_DSN, MODEL, OPS_DSN, _connect, digest, featured_block,  # noqa: E402
                                       group_videos, place_block, sources, split_title, words)
 
@@ -222,33 +223,24 @@ BELIEF_CHANNELS = (    # Jordan 2026-10-19: every religious channel he follows �
     "Ascension Presents", "Godsplaining | Catholic Podcast", "The Pope Leo's Path", "Thy Kingdom Come",
     "The God Show", "Sacred Logic", "DeepBeliever",
 )
-# Approved for Belief 2026-10-19 but not yet subscribed (BELIEF_CHANNELS must match his live subscriptions —
-# a test checks): scholars of religion, a skeptic and the theological counter-case, so no single side owns the
-# section. fetch() already reads them, so each starts feeding the day he follows it; move it up then.
-BELIEF_PENDING_CHANNELS = (
-    # across traditions: scholars, a skeptic, the theological counter-case
-    "ReligionForBreakfast", "Let's Talk Religion", "Dan McClellan", "UsefulCharts", "Alex O'Connor",
-    "Bishop Robert Barron", "The Word on Fire Show", "Harvard Divinity School", "University of Chicago Divinity School",
-    # Buddhism: secular scholar, Theravada, Zen/Mahayana, Tibetan, a Zen iconoclast
-    "Doug's Dharma", "Buddhist Society of Western Australia", "Plum Village App", "Dalai Lama", "Hardcore Zen",
-    # Hinduism: academic, educator, Vedanta
-    "Oxford Centre for Hindu Studies", "HinduAcademy", "Vedanta Society of New York",
-    # Sikhism / Jainism
-    "Sikh Research Institute (SikhRI)", "Basics of Sikhi", "International School for Jain Studies", "Arihanta Institute",
-    # Taoism (practitioner; Confucianism and Shinto come through the scholars above)
-    "Benebell Wen",
-    # Judaism: historian, explainer, Orthodox, Conservative, Reform, an ex-Hasidic critic
-    "Henry Abramson", "Unpacked", "Chabad.org", "The Jewish Theological Seminary", "The Movement for Reform Judaism",
-    "Frieda Vizel",
-    # Islam: academic/reformist, Sunni scholarship, Sunni traditionalist (Sufi-leaning), Shia
-    "Dr. Javad T. Hashmi", "Yaqeen Institute", "Yasir Qadhi", "Zaytuna College", "Sayed Ammar Nakshawani",
-)
+# Ingested WITHOUT a subscription (Jordan 2026-10-19: "as long as you are grabbing them, I don't need to sub
+# to them"): nova_yt_direct.DIRECT_CHANNELS, fetched nightly by nova_yt_subs_audio by channel id — scholars of
+# religion, insiders, skeptics and critics across Abrahamic (incl. Orthodox churches and Islam's branches),
+# Dharmic and East Asian traditions, smaller Christian traditions and new religious movements, so no single
+# side owns the section. Broad ones ("topic") feed Belief only on religion-topic videos.
+_TOPIC_ONLY = set(nova_yt_direct.for_section("belief", "topic"))
+BELIEF_DIRECT_CHANNELS = tuple(c for c in nova_yt_direct.for_section("belief") if c not in _TOPIC_ONLY)
+# New religious movements and sects (LDS, Scientology, JW, cult-studies and survivor channels...): at most
+# NRM_MAX videos an issue, so the smaller movements never crowd out the world's major traditions.
+BELIEF_NRM_CHANNELS = nova_yt_direct.for_section("belief", "nrm")
+NRM_MAX = 8
 # Owned by another section (the lists stay disjoint) but also feed Belief, for religion-topic videos only
 # (nova_sections.is_belief_topic): ESOTERICA (Dr. Justin Sledge, academic religious studies; Mystery owns it),
 # CrashCourse (its Religions series, e.g. #13 "Is Atheism a Religion?"; Science), YaleCourses (Christine
 # Hayes' Introduction to the Hebrew Bible; Science), and the History channels' religion episodes.
 BELIEF_SHARED_CHANNELS = ("ESOTERICA", "CrashCourse", "YaleCourses", "History of Everything", "Biographics",
                           "RealLifeLore")
+# + the broad direct channels (explainers, museums, a charity, cult-recovery podcasts): same religion-topic filter
 # Jordan 2026-10-19: style and health stay unassigned — in NO subject and no pool (a test enforces it).
 UNASSIGNED_CHANNELS = ("GQ", "Real Men Real Style", "Brick and Sole", "Freshhkiicks", "Inkbox", "Doctor Mike",
                        "Dr.Sanders", "Jesse Enkamp")
@@ -303,6 +295,9 @@ TRADITION_FAMILIES = (
     ("Dharmic", ("hinduism", "buddhism", "sikhism", "jainism")),
     ("East Asian", ("taoism", "confucianism", "shinto")),
     ("Non-theist and ancient", ("nontheism", "zoroastrianism", "egyptian_book_of_the_dead", "books_of_the_dead")),
+    # No library texts of their own yet (no Book of Mormon, Science and Health...): on this day the block may use
+    # any passage, read through how a new movement or sect uses or rereads it.
+    ("New religious movements and sects", ()),
 )
 FAMILY_MIN = 2
 
@@ -324,7 +319,13 @@ BELIEF_TONE = ("Stance: a historian and anthropologist of religion, not a believ
                "theological counter-arguments to skeptics all get a fair hearing, and so do the world's "
                "traditions — Abrahamic (Jewish, Christian, Muslim: Sunni, Shia, Sufi), Dharmic (Hindu, Buddhist, "
                "Sikh, Jain), East Asian (Taoist, Confucian, Shinto) and non-religious; when the material is mostly "
-               "one faith, say so rather than writing as if it were the whole picture. Respectful and curious; never "
+               "one faith, say so rather than writing as if it were the whole picture. New religious movements and "
+               "sects are described the same way — what they teach, where they came from, how many follow them — "
+               "and documented abuses, crimes or court findings are reported factually with their source, never "
+               "as a verdict on the doctrine. Never call any group's doctrine 'wrong', 'false' or 'heretical' in "
+               "Nova's own voice, and never promote, recruit for or link joining information for any group; "
+               "extremist or hate movements are covered only through scholars, journalists and former members. "
+               "Respectful and curious; never "
                "preachy, never proselytising, never ranking religions, never mocking believers or unbelievers. "
                "Occult and paranormal belong to Mystery, not here. Quote scripture only word-for-word from the "
                "material with its exact citation; never invent, paraphrase-as-quote or misattribute a verse.")
@@ -462,7 +463,7 @@ SUBJECTS.update({
                         ["history", "world-history"], "history",
                         "Separate what is documented from legend, speculation and alternate-history 'what ifs' — "
                         "label alternate history as hypothetical. Never invent dates, numbers or quotes."),
-    "belief": _subject("belief", "Belief and Friends", "🔍", BELIEF_CHANNELS + BELIEF_PENDING_CHANNELS,
+    "belief": _subject("belief", "Belief and Friends", "🔍", BELIEF_CHANNELS + BELIEF_DIRECT_CHANNELS,
                        "what people believe and why, where traditions came from, how scriptures were written and "
                        "transmitted, religion in the news and in society, atheism and non-religion, apologetics "
                        "and the arguments against it, the scholars' view",
@@ -470,7 +471,8 @@ SUBJECTS.update({
                        "old illuminated manuscripts, museum reading rooms, worn scrolls and a map of the world's "
                        "traditions", ["belief", "religion"], "religion", BELIEF_TONE),
 })
-SUBJECTS["belief"]["shared_channels"] = BELIEF_SHARED_CHANNELS
+SUBJECTS["belief"]["shared_channels"] = BELIEF_SHARED_CHANNELS + tuple(sorted(_TOPIC_ONLY))
+SUBJECTS["belief"]["capped_channels"] = (BELIEF_NRM_CHANNELS, NRM_MAX)
 
 # The featured block at the top of each issue: (heading, task). Grounded, fail closed (featured_block).
 FEATURES = {
@@ -593,7 +595,16 @@ def fetch(cur, cfg, days):
     videos = group_videos(vrows, VID_PER, len(vrows) if shared else VID_MAX)
     if shared:   # filter before the cap so off-topic shared videos never crowd out the section's own
         videos = [v for v in videos if norm(v["channel"] or "") not in shared
-                  or is_belief_topic(f"{v['title']} {(v.get('text') or '')[:3000]}")][:VID_MAX]
+                  or is_belief_topic(f"{v['title']} {(v.get('text') or '')[:3000]}")]
+        capped, cap = cfg.get("capped_channels", ((), 0))
+        capped, kept, n_capped = {norm(c) for c in capped}, [], 0
+        for v in videos:   # newest first: the newest NRM videos win the capped slots
+            if norm(v["channel"] or "") in capped:
+                if n_capped >= cap:
+                    continue
+                n_capped += 1
+            kept.append(v)
+        videos = kept[:VID_MAX]
     for v in videos:
         if (v["url"] or "").startswith("local:"):
             v["url"] = None
@@ -792,21 +803,22 @@ def fetch_scripture(cur, videos, n=SCRIPTURE_MAX, today=None):
                 (list(SCRIPTURE_SOURCES), seed))
     fallback = list(cur.fetchall())
     fam_name, fam_srcs = focus_family(seed)
-    fam_rows = []
-    if words_:   # the focus family's own word matches — the general query's LIMIT can crowd them out
+    fam_rows, fam_fallback = [], []
+    if words_ and fam_srcs:   # the focus family's own word matches — the general query's LIMIT can crowd them out
         cur.execute("""/* scripture_library family */ SELECT text, metadata, source FROM memories
                        WHERE source = ANY(%s) AND metadata->>'type' IN ('scripture', 'philosophy')
                          AND coalesce(metadata->>'privacy', 'public') NOT IN ('private', 'local-only')
                          AND text ~* %s
                        LIMIT 200""", (list(fam_srcs), r"\m(" + "|".join(words_) + r")\M"))
         fam_rows = list(cur.fetchall())
-    cur.execute("""/* scripture_library family */ SELECT text, metadata, source FROM memories
-                   WHERE source = ANY(%s) AND metadata->>'type' IN ('scripture', 'philosophy')
-                     AND coalesce(metadata->>'privacy', 'public') NOT IN ('private', 'local-only')
-                     AND length(text) > 200
-                   ORDER BY md5(coalesce(metadata->>'uid', '') || left(text, 60) || %s) LIMIT %s""",
-                (list(fam_srcs), seed, FAMILY_MIN))
-    fam_fallback = list(cur.fetchall())
+    if fam_srcs:
+        cur.execute("""/* scripture_library family */ SELECT text, metadata, source FROM memories
+                       WHERE source = ANY(%s) AND metadata->>'type' IN ('scripture', 'philosophy')
+                         AND coalesce(metadata->>'privacy', 'public') NOT IN ('private', 'local-only')
+                         AND length(text) > 200
+                       ORDER BY md5(coalesce(metadata->>'uid', '') || left(text, 60) || %s) LIMIT %s""",
+                    (list(fam_srcs), seed, FAMILY_MIN))
+        fam_fallback = list(cur.fetchall())
     scored = []
     for text, md, src in rows + fam_rows:
         md = md if isinstance(md, dict) else {}
@@ -942,10 +954,13 @@ def top_block(subj, videos, arts, recipes=(), food_rules=None, extra=()):
     if subj in ("military", "history"):
         task = task.replace("{today}", month_day())
     if subj == "belief":
-        fam = focus_family()[0]
-        task += (f" BALANCE: today's focus is the {fam} traditions — choose a passage from them when one "
-                 "connects at all, even if the day's videos are mostly about another faith; never let one "
-                 "tradition (Christianity included) own the block day after day.")
+        fam, srcs = focus_family()
+        task += (f" BALANCE: today's focus is the {fam} traditions — " +
+                 ("choose a passage from them when one connects at all, even if the day's videos are mostly about "
+                  "another faith; " if srcs else
+                  "choose any passage that a new movement or sect in the material quotes, rereads or rejects, and "
+                  "say how it reads it; ") +
+                 "never let one tradition (Christianity included) own the block day after day.")
     if subj == "food":
         if not food_rules:
             log("Recipe Recommendation: no house rules — block omitted (fail closed)")

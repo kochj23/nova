@@ -650,6 +650,13 @@ class TestNewSectionRouting(unittest.TestCase):
             self.assertEqual(missing, [], subj)
         missing = [c for c in m.UNASSIGNED_CHANNELS if m.norm(c) not in subs]
         self.assertEqual(missing, [])
+        # Every channel a section reads is either one he follows or on the explicit direct-ingest list
+        # (nova_yt_direct: ingested by channel id without a subscription, Jordan 2026-10-19).
+        direct = {m.norm(c[2]) for c in m.nova_yt_direct.DIRECT_CHANNELS}
+        for subj, cfg in m.SUBJECTS.items():
+            for c in (*cfg["channels"], *cfg.get("shared_channels", ())):
+                k = m.norm(c)
+                self.assertTrue(k in subs or k in direct or k in legacy, f"{subj}: {c}")
 
 
 class TestNewSectionTopBlocks(unittest.TestCase):
@@ -958,11 +965,13 @@ class TestHistoryBelief(unittest.TestCase):
         feeds = {m.norm(c) for c in m.SUBJECTS["belief"]["channels"]}
         for n in ("ReligionForBreakfast", "Dan McClellan", "Alex O'Connor", "Bishop Robert Barron"):
             self.assertIn(m.norm(n), feeds, n)   # scholars, a skeptic and the theological counter-case
-        self.assertFalse({m.norm(c) for c in m.BELIEF_PENDING_CHANNELS} & {m.norm(c) for c in m.BELIEF_CHANNELS})
+        self.assertFalse({m.norm(c) for c in m.BELIEF_DIRECT_CHANNELS} & {m.norm(c) for c in m.BELIEF_CHANNELS})
         self.assertTrue({"ESOTERICA", "CrashCourse", "YaleCourses"} <= set(m.SUBJECTS["belief"]["shared_channels"]))
         owned = {m.norm(c) for chans in OWNERS.values() for c in chans}
-        for c in m.SUBJECTS["belief"]["shared_channels"]:
-            self.assertIn(m.norm(c), owned, c)   # shared = owned elsewhere, topic-filtered here
+        topic_only = {m.norm(c) for c in m.nova_yt_direct.for_section("belief", "topic")}
+        for c in m.SUBJECTS["belief"]["shared_channels"]:   # owned elsewhere, or a broad direct channel
+            self.assertTrue(m.norm(c) in owned or m.norm(c) in topic_only, c)
+        self.assertFalse(topic_only & {m.norm(c) for c in m.SUBJECTS["belief"]["channels"]})
         science, mystery = {m.norm(c) for c in m.SCIENCE_CHANNELS}, {m.norm(c) for c in m.MYSTERY_CHANNELS}
         self.assertIn(m.norm("CrashCourse"), science)    # shared, still owned by their own sections
         self.assertIn(m.norm("ESOTERICA"), mystery)
@@ -980,10 +989,11 @@ class TestHistoryBelief(unittest.TestCase):
             for n in names:
                 self.assertIn(m.norm(n), feeds, f"{tradition}: {n}")
 
-    def test_focus_family_rotates_across_all_four(self):
-        days = [f"2026-10-{d:02d}" for d in range(19, 23)]
+    def test_focus_family_rotates_across_all_five(self):
+        days = [f"2026-10-{d:02d}" for d in range(19, 24)]
         self.assertEqual({m.focus_family(d)[0] for d in days},
-                         {"Abrahamic", "Dharmic", "East Asian", "Non-theist and ancient"})
+                         {"Abrahamic", "Dharmic", "East Asian", "Non-theist and ancient",
+                          "New religious movements and sects"})
         fam_srcs = {s for _, srcs in m.TRADITION_FAMILIES for s in srcs}
         self.assertEqual(fam_srcs, set(m.SCRIPTURE_SOURCES))   # every library source belongs to a family
 
@@ -1003,6 +1013,36 @@ class TestHistoryBelief(unittest.TestCase):
         _, user = next(x for x in seen if "very TOP" in x[0])
         system = next(x for x in seen if "very TOP" in x[0])[0]
         self.assertIn("BALANCE: today's focus is the " + m.focus_family("2026-10-19")[0], system + user)
+
+    def test_nrm_day_with_no_library_family_still_offers_passages(self):
+        day = next(f"2026-10-{d:02d}" for d in range(19, 24)
+                   if m.focus_family(f"2026-10-{d:02d}")[0] == "New religious movements and sects")
+        got = m.fetch_scripture(Cur([], [], scripture=[srow(PSALM, PSALM_MD, "bible")]),
+                                [{"title": "shepherd", "text": "shepherd shepherd", "channel": "c", "url": "u",
+                                  "date": "d"}], today=day)
+        self.assertTrue(got)
+
+    def test_nrm_videos_capped_per_issue(self):
+        nrm = m.BELIEF_NRM_CHANNELS[0]
+        vids = [vrow(f"mormon history and the latter-day saints {i}", f"n{i}", chan=nrm, title=f"N{i}")
+                for i in range(m.NRM_MAX + 5)] + [vrow("buddhist monks", "w1", chan="Plum Village App", title="W1")]
+        got, _ = m.fetch(Cur(vids, []), m.SUBJECTS["belief"], 1)
+        self.assertEqual(sum(v["channel"] == nrm for v in got), m.NRM_MAX)
+        self.assertIn("W1", [v["title"] for v in got])
+
+    def test_topic_only_direct_channels_are_filtered(self):
+        cur = Cur([vrow("vietnamese pork and cabbage salad", "m1", chan="Mennonite Central Committee", title="Salad"),
+                   vrow("mennonite peace churches and anabaptist history", "m2", chan="Mennonite Central Committee",
+                        title="Anabaptists")], [])
+        got, _ = m.fetch(cur, m.SUBJECTS["belief"], 1)
+        self.assertEqual([v["title"] for v in got], ["Anabaptists"])
+
+    def test_neutral_on_sects_never_ranks_doctrine(self):
+        for phrase in ("never as a verdict on the doctrine", "Never call any group's doctrine 'wrong'",
+                       "never promote, recruit for", "only through scholars, journalists and former members"):
+            self.assertIn(phrase, m.BELIEF_TONE)
+        for bad in ("wrong doctrine", "not as usable to join"):
+            self.assertNotIn(bad, m.SRC if hasattr(m, "SRC") else SRC)
 
     def test_shared_channels_feed_belief_only_on_religion_topics(self):
         cur = Cur([vrow("photosynthesis and the light reactions", "c1", chan="CrashCourse", title="Photosynthesis"),

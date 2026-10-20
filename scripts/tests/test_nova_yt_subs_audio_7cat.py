@@ -288,9 +288,10 @@ class TestIntegration(unittest.TestCase):
 
 
 class TestFunctional(unittest.TestCase):
-    def _main(self, argv, cur, subs=(("UC1", "@a", "A"),), mounted=True):
+    def _main(self, argv, cur, subs=(("UC1", "@a", "A"),), mounted=True, direct=()):
         conn = MagicMock(); conn.cursor.return_value = cur
         with patch.object(sys, "argv", ["x", *argv]), patch.object(m, "subscriptions", return_value=list(subs)), \
+                patch.object(m.nova_yt_direct, "DIRECT_CHANNELS", tuple(direct)), \
                 patch.object(m, "ni", fake_ni()), patch.object(m.psycopg2, "connect", return_value=conn), \
                 patch.object(m.time, "sleep"), patch.object(m.os.path, "ismount", return_value=mounted), \
                 patch.object(m, "latest_video", return_value=("v9", "Title")) as lv, \
@@ -326,6 +327,21 @@ class TestFunctional(unittest.TestCase):
     def test_baseline_refuses_unmounted_share(self):
         with self.assertRaises(SystemExit):
             self._main(["--baseline"], FakeCur(), mounted=False)
+
+    def test_direct_channels_ingested_without_a_subscription(self):
+        cur = FakeCur(done=True)
+        direct = (("UCdirect000000000000000a", "", "Direct A", "belief", ""),
+                  ("UC1", "@a", "A", "belief", ""))            # already followed: listed once, not twice
+        lv, dl, _ = self._main([], cur, direct=direct)
+        self.assertEqual(sorted(c.args[0] for c in lv.call_args_list), ["UC1", "UCdirect000000000000000a"])
+        self.assertEqual(dl.call_count, 2)
+        self.assertIn("sub:UCdirect000000000000000a", [p[0] for s_, p in cur.calls if s_.startswith("INSERT INTO yt_ingest_seen")])
+
+    def test_direct_list_is_valid(self):
+        import nova_yt_direct as d
+        ids = [c[0] for c in d.DIRECT_CHANNELS]
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertTrue(all(i.startswith("UC") and len(i) == 24 for i in ids))
 
     def test_empty_subscription_list_exits_nonzero(self):
         with self.assertRaises(SystemExit) as e:

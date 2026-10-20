@@ -89,6 +89,15 @@ class TestHistoryBelief(unittest.TestCase):
         for t in ("Sunni and Shia: how Islam split", "Inside a Hasidic synagogue", "Sufi poetry and the hadith",
                   "Theravada and Mahayana Buddhism", "A gurdwara and the Sikh sangha"):
             self.assertTrue(ns.is_belief_topic(t), t)
+        for t in ("The Book of Mormon and Joseph Smith", "Scientology, Dianetics and L. Ron Hubbard",
+                  "How Quakers and the Religious Society of Friends worship", "Coptic and Ethiopian Orthodox fasting",
+                  "The Ismaili imamat and the Aga Khan", "Mennonite and Amish life", "The Druze and the Alevis",
+                  "Inside the Branch Davidians: David Koresh", "Jehovah's Witnesses and the Watchtower Society"):
+            self.assertTrue(ns.is_belief_topic(t), t)
+        for t in ("Friends reunion special: the one with the witness", "A cocktail shaker and a salt shaker",
+                  "Orthodox economics and the nation state", "Family identity and company culture",
+                  "The vineyard at Bethel farm: a way of life", "Cult classic films with a cult following"):
+            self.assertFalse(ns.is_belief_topic(t), t)
         self.assertFalse(ns.is_belief_topic("Our tech evangelist found the holy grail"))
 
 

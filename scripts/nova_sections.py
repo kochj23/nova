@@ -91,7 +91,26 @@ _BELIEF_RX = _re.compile(
     r"sacred|sacraments?|atheis\w*|agnostic\w*|spiritual\w*|afterlife|book of the dead|"
     r"gnostic\w*|kabbal\w*|heres(?:y|ies)|heretic\w*|demiurge|deit(?:y|ies)|non-?religio\w*|secular\w*|"
     r"sunnis?|shi'?as?|shi'?ites?|sufi\w*|hadiths?|sharia|imams?|mosques?|caliph\w*|synagogues?|hasidi\w*|"
-    r"kosher|rabbinic\w*|gurdwaras?|sangha|vedanta|mahayana|theravada|bodhisattvas?)\b", _re.I)
+    r"kosher|rabbinic\w*|gurdwaras?|sangha|vedanta|mahayana|theravada|bodhisattvas?|"
+    # Orthodox and Eastern churches ('orthodox' alone never counts — orthodox economics)
+    r"(?:eastern|oriental|greek|russian|serbian|romanian|antiochian|ethiopian|eritrean) orthodox\w*|"
+    r"orthodox christian\w*|coptic\w*|tewahedo|armenian apostolic|syriac|malankara|church of the east|"
+    r"assyrian church|eastern catholic\w*|byzantine rite|patriarch(?:ate|s)?|"
+    # Islam's branches and offshoots ('nation' alone never counts)
+    r"ahmadiyy\w*|ahmadis?|isma'?ilis?|aga khan|zaydi\w*|ibadi\w*|alevis?|alawites?|druze|"
+    r"bah[aá]'?[ií]\w*|quranists?|salafi\w*|wahhabi\w*|nation of islam|five percent(?:ers| nation)|madhhab\w*|"
+    # new religious movements and smaller Christian traditions — each needs its own name or context
+    r"latter-day saints?|lds church|mormon\w*|joseph smith|brigham young|scientolog\w*|dianetics|"
+    r"l\.? ?ron hubbard|sea org|christian scien(?:ce|tists?)|mary baker eddy|jehovah'?s witness\w*|"
+    r"watchtower society|quakers?|quakerism|religious society of friends|the shakers|shaker (?:village|"
+    r"communit\w*|hymns?|sisters?|brothers?|faith|movement)|mennonites?|amish|anabaptists?|hutterites?|"
+    r"seventh-day adventists?|adventists?|unification church|moonies|sun myung moon|family federation|"
+    r"branch davidians?|david koresh|children of god|family international|david berg|subgenius|"
+    r"oneida community|hebrew israelites?|christian identity movement|new religious movements?|"
+    r"new apostolic reformation|prosperity gospel|word of faith movement|hillsong|bethel church|"
+    r"vineyard (?:church\w*|movement)|community of christ|twelve tribes|international church of christ|"
+    r"the way international|la luz del mundo|serpent handl\w*|high-control groups?|cult leaders?|"
+    r"cult members?|former members?|ex-members?)\b", _re.I)
 # Figurative belief-talk never counts (tech evangelists, holy grails, "the gospel of growth").
 _NOT_BELIEF = _re.compile(r"\b(?:holy grail|(?:tech|developer|product|brand) evangelis\w*|evangelis\w* for|"
                          r"gospel of (?:growth|wealth|productivity|hustle)|religious(?:ly)? (?:devot\w*|follow\w*)|"
