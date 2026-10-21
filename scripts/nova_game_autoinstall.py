@@ -6,7 +6,7 @@ Jordan, 2026-10-20: "Always install the latest versions of the game on my deskto
 Runs on the Studio from LaunchAgent net.digitalnoise.game-autoinstall every minute. For each game it finds the
 newest exported build under the binaries dir (highest CFBundleVersion, then version string) and, when it is newer than
 the installed copy AND the game is not running, swaps it in place: wherever /Applications/<Game>.app really points
-(CarTest's /Applications entry is a symlink to /Volumes/Data/Applications). A running game is never touched; it
+(2026-10-20: everything now lives directly in /Applications). A running game is never touched; it
 gets the update on the first run after he quits. No state: the installed bundle is the record.
 
 ponytail: a fixed game list; add a line when a new game ships.
