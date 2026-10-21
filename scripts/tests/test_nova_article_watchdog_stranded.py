@@ -93,6 +93,52 @@ class StrandedTests(unittest.TestCase):
              patch.object(wd, "regenerate", side_effect=AssertionError("must not run")):
             self.assertEqual(wd.main(), 1)
 
+    def _old_uncommitted(self, name="content/x/2026-10-21-orphan.md"):
+        import os, time
+        f = self.clone / name
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("orphan\n")
+        old = time.time() - 3600
+        os.utime(f, (old, old))
+        return name
+
+    def test_uncommitted_article_reported_not_committed(self):
+        name = self._old_uncommitted()
+        self.assertEqual(wd.uncommitted_articles(), [name])
+        self.assertEqual(wd.push_stranded(dry=False), 0)          # exit code unaffected
+        self.assertIn("??", git(self.clone, "status", "--porcelain"))  # still uncommitted
+
+    def test_fresh_uncommitted_article_ignored(self):
+        f = self.clone / "content/x/new.md"
+        f.parent.mkdir(parents=True)
+        f.write_text("mid-publish\n")
+        self.assertEqual(wd.uncommitted_articles(), [])
+
+    def test_all_hosts_sweeps_remote_and_flags_problems(self):
+        calls = []
+
+        def fake_run(cmd, cwd=None, timeout=900):
+            if cmd[0] == "ssh":
+                calls.append(cmd[-2])
+                out = ("=== stranded-commit check n2:/j ===\n  UNCOMMITTED content/a/b.md (written)\n"
+                       "  OK      no unpushed commits\n")
+                return subprocess.CompletedProcess(cmd, 0, out, "")
+            return real_run(cmd, cwd=cwd, timeout=timeout)
+        real_run = wd.run
+        with patch.object(wd, "publishing_nodes", lambda: ["n2"]), patch.object(wd, "run", fake_run):
+            self.assertEqual(wd.push_stranded_all_hosts(dry=True), 1)
+        self.assertEqual(calls, ["n2"])
+
+    def test_all_hosts_clean_and_unreachable(self):
+        ok = "=== stranded-commit check n2:/j ===\n  OK      no unpushed commits\n"
+        real_run = wd.run
+        for out, want in ((ok, 0), ("", 1)):
+            fake = lambda cmd, cwd=None, timeout=900, out=out: (
+                subprocess.CompletedProcess(cmd, 255 if not out else 0, out, "refused")
+                if cmd[0] == "ssh" else real_run(cmd, cwd=cwd, timeout=timeout))
+            with patch.object(wd, "publishing_nodes", lambda: ["n2"]), patch.object(wd, "run", fake):
+                self.assertEqual(wd.push_stranded_all_hosts(dry=False), want)
+
     def test_source_has_no_hardcoded_home(self):
         self.assertNotIn("/Users/" + "kochj/", (SCRIPTS / "nova_article_watchdog.py").read_text())
 

@@ -104,17 +104,53 @@ def alpha_ratio(t: str) -> float:
     return sum(c.isalpha() for c in t) / max(1, len(t))
 
 
+VISION_SRC = Path(__file__).with_name("nova_vision_ocr.swift")
+VISION_BIN = STAGING / ".bin" / "nova_vision_ocr"
+
+
+def vision_ocr_bin():
+    """Compiled Apple Vision OCR helper (macOS only), rebuilt when the .swift is newer; None if unavailable."""
+    import shutil, subprocess as sp
+    if sys.platform != "darwin" or not VISION_SRC.exists() or not shutil.which("swiftc"):
+        return None
+    try:
+        if not VISION_BIN.exists() or VISION_BIN.stat().st_mtime < VISION_SRC.stat().st_mtime:
+            VISION_BIN.parent.mkdir(parents=True, exist_ok=True)
+            sp.run(["swiftc", "-O", str(VISION_SRC), "-o", str(VISION_BIN)], check=True, capture_output=True, timeout=300)
+        return str(VISION_BIN)
+    except Exception as e:  # noqa: BLE001
+        print(f"[screenplay] Vision OCR helper unavailable ({str(e)[:100]}) — using tesseract", file=sys.stderr)
+        return None
+
+
+def split_cues(text: str) -> str:
+    """Vision keeps a character cue on its own line directly above the dialogue; put it in its own block
+    so reflow() joins it as "CUE: line"."""
+    return re.sub(r"(?m)^([A-Z0-9 .'()\-]{2,40})$", r"\n\1\n", text)
+
+
 def ocr_pdf(pdf_path: str, dpi: int = 300) -> str:
-    """pdftoppm -> tesseract per page. ~1-2 s/page on the Studio; a 100-page script is a couple of minutes."""
-    import subprocess as sp, tempfile, glob, os
+    """pdftoppm -> OCR per page. Apple Vision when available (2026-10-21: Texas Chain Saw 1974, a 1-bit 144-dpi
+    scan — tesseract --psm 6 put margin junk like '| ; oo' through every chunk; Vision: dict-word rate
+    0.847 -> 0.869, alpha 0.705 -> 0.771, no junk), else tesseract --psm 4 (keeps cue/dialogue columns apart)."""
+    import subprocess as sp, tempfile, glob, os, shutil
     d = tempfile.mkdtemp(prefix="ocr-")
-    sp.run(["pdftoppm", "-r", str(dpi), "-gray", pdf_path, f"{d}/p"], check=True, timeout=600)
-    pages = []
-    for png in sorted(glob.glob(f"{d}/p-*.pgm") + glob.glob(f"{d}/p-*.png")):
-        r = sp.run(["tesseract", png, "-", "--psm", "6", "-l", "eng"], capture_output=True, text=True, timeout=120)
-        pages.append(r.stdout); os.unlink(png)
-    os.rmdir(d)
-    return "\n\n".join(pages)
+    try:
+        sp.run(["pdftoppm", "-r", str(dpi), "-gray", "-png", pdf_path, f"{d}/p"], check=True, timeout=1200)
+        pngs = sorted(glob.glob(f"{d}/p-*.png"))
+        vb = vision_ocr_bin()
+        if vb:
+            r = sp.run([vb, *pngs], capture_output=True, text=True, timeout=1800)
+            if r.returncode == 0 and r.stdout.strip():
+                print(f"[screenplay] OCR engine: Apple Vision ({len(pngs)} pages)")
+                return split_cues(r.stdout)
+            print(f"[screenplay] Vision OCR failed rc={r.returncode} — falling back to tesseract", file=sys.stderr)
+        pages = [sp.run(["tesseract", png, "-", "--psm", "4", "-l", "eng"], capture_output=True, text=True,
+                        timeout=120).stdout for png in pngs]
+        print(f"[screenplay] OCR engine: tesseract ({len(pngs)} pages)")
+        return "\n\n".join(pages)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def main():
@@ -138,7 +174,7 @@ def main():
         print(f"[screenplay] PDF {pdf.split('?')[0].rsplit('/', 1)[-1]}: {len(body)} chars")
         if alpha_ratio(body) < 0.62 or a.ocr:            # scanned script with a garbage text layer (Hostel 2005: 0.53) -> re-OCR
             body = ocr_pdf(tmp)
-            print(f"[screenplay] re-OCR with tesseract: {len(body)} chars, alpha {alpha_ratio(body):.2f}")
+            print(f"[screenplay] re-OCR: {len(body)} chars, alpha {alpha_ratio(body):.2f}")
         Path(tmp).unlink(missing_ok=True)
     text = reflow(body)
     head = a.title or title or re.sub(r"[_-]+", " ", Path(a.url.split("?")[0]).stem).strip() or "screenplay"

@@ -129,6 +129,13 @@ tasks:
     timeout: 600
     overlap: skip
 
+  journal_stranded_fleet:            # 2026-10-21 (#3216): every publishing clone, not just .6's. Any core-scheduler node (leader_standby nova-scheduler-core) can lead and publish from its own ~/nova-journal; nova-core stranded 3 articles 2026-10-05 and nova-core3 left an uncommitted one 2026-10-21. Runs from .6 because .6 can ssh to every core node (core3 -> nova-core fails host-key). Pushes stranded commits on each node (its own creds) and fails (alerts) on UNCOMMITTED article files.
+    script: nova_article_watchdog.py
+    args: ["--stranded", "--all-hosts"]
+    schedule: every 1h
+    timeout: 900
+    overlap: skip
+
   index_integrity:
     script: nova_index_integrity.py
     args: ["--quiet"]

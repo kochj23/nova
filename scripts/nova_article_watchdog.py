@@ -21,13 +21,19 @@ Usage:
   --stranded   ONLY push commits stranded in THIS host's clone (committed, never pushed);
                never regenerates. Scheduled on nova-core (.2), which publishes from its own
                clone and was invisible to the .6 watchdog (3 articles stranded 2026-10-05).
-               Combine with --dry-run to report without pushing.
+               Combine with --dry-run to report without pushing. Also logs UNCOMMITTED
+               article files (written by a job that died before committing; never auto-committed).
+  --stranded --all-hosts   the same on THIS clone plus every core-scheduler node's clone over
+               ssh (leader_standby nova-scheduler-core). Scheduled on .6 as journal_stranded_fleet
+               (hourly): any node can lead and publish, and core nodes cannot always ssh to
+               each other. Exit 1 = some clone still has stranded/uncommitted articles.
 """
 import nova_dsn as _nova_dsn  # noqa: E402
 import argparse
 import datetime as dt
 import os
 import re
+import socket
 import subprocess
 import sys
 import urllib.request
@@ -322,10 +328,38 @@ def rebase_and_push():
         release(conn)
 
 
+UNCOMMITTED_MIN_AGE_S = 1800   # a generator mid-publish is younger than this
+
+
+def uncommitted_articles(min_age_s=UNCOMMITTED_MIN_AGE_S):
+    """Article .md files written into content/ but never committed (untracked or modified),
+    older than min_age_s. A job killed between publish_hugo and git_push leaves these
+    (nova-core3, 2026-10-21: security_patch_watch timed out after writing its article).
+    Reported, never auto-committed: the generator died, so the file may be partial or a
+    duplicate of something already live."""
+    import time as _t
+    r = run(["git", "status", "--porcelain", "--untracked-files=all", "content/"], cwd=HUGO, timeout=30)
+    out = []
+    for line in (r.stdout or "").splitlines():
+        path = line[3:].strip()
+        if not path.endswith(".md"):
+            continue
+        try:
+            if _t.time() - (HUGO / path).stat().st_mtime >= min_age_s:
+                out.append(path)
+        except OSError:
+            pass
+    return out
+
+
 def push_stranded(dry):
-    """Host-agnostic stranded-commit sweep of THIS host's clone. Exit 0 = clean/repaired."""
-    log(f"=== stranded-commit check {HUGO} ===")
+    """Host-agnostic stranded-commit sweep of THIS host's clone. Exit 0 = clean/repaired.
+    Uncommitted article files are logged as UNCOMMITTED (exit code unaffected; the
+    --all-hosts sweep counts them as a problem)."""
+    log(f"=== stranded-commit check {socket.gethostname()}:{HUGO} ===")
     run(["git", "fetch", "-q", "origin"], cwd=HUGO, timeout=90)   # else origin/main is stale
+    for p in uncommitted_articles():
+        log(f"  UNCOMMITTED {p} (written, never committed)")
     n = unpushed_count()
     if n == 0:
         log("  OK      no unpushed commits")
@@ -337,6 +371,60 @@ def push_stranded(dry):
         log("  DRY-RUN — not pushing")
         return 1
     return 0 if rebase_and_push() else 1
+
+
+REMOTE_STRANDED_CMD = ("~/.openclaw/venv/bin/python ~/.openclaw/scripts/nova_article_watchdog.py "
+                       "--stranded")
+
+
+def publishing_nodes():
+    """Every core-scheduler node (leader + standbys): any of them can lead and publish from
+    its own ~/nova-journal clone."""
+    try:
+        import psycopg2
+        with psycopg2.connect(_nova_dsn.pg_dsn("nova_ops"), connect_timeout=10) as c, c.cursor() as cur:
+            cur.execute("SELECT DISTINCT node FROM leader_standby "
+                        "WHERE name = 'nova-scheduler-core' AND node IS NOT NULL")
+            return sorted(r[0] for r in cur.fetchall())
+    except Exception as e:  # noqa: BLE001
+        log(f"  cannot list core scheduler nodes: {str(e)[:120]}")
+        return None
+
+
+def push_stranded_all_hosts(dry):
+    """--stranded on THIS host's clone, then on every other publishing clone over ssh (each
+    remote pushes with its own credentials). Runs from .6, which can ssh to every core node
+    (core nodes cannot always reach each other). Exit 1 if any clone still has stranded
+    commits, uncommitted articles, or could not be checked."""
+    problems = []
+    if push_stranded(dry) != 0:
+        problems.append(f"{socket.gethostname()}: stranded commits not pushed")
+    problems += [f"{socket.gethostname()}: uncommitted {p}" for p in uncommitted_articles()]
+    nodes = publishing_nodes()
+    if nodes is None:
+        problems.append("cannot list core scheduler nodes")
+        nodes = []
+    me = socket.gethostname().split(".")[0]
+    for node in nodes:
+        if node.split(".")[0] == me:
+            continue
+        r = run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", node,
+                 REMOTE_STRANDED_CMD + (" --dry-run" if dry else "")], timeout=600)
+        out = (r.stdout or "").strip()
+        for line in out.splitlines():
+            log(f"  [{node}] {line}")
+        if "stranded-commit check" not in out:
+            problems.append(f"{node}: unreachable ({(r.stderr or '').strip()[:100]})")
+            continue
+        if r.returncode != 0:
+            problems.append(f"{node}: stranded commits not pushed")
+        problems += [f"{node}: uncommitted {ln.split()[1]}" for ln in out.splitlines()
+                     if ln.strip().startswith("UNCOMMITTED")]
+    if problems:
+        log("=== PROBLEMS: " + "; ".join(problems) + " ===")
+        return 1
+    log("=== every publishing clone is clean ===")
+    return 0
 
 
 def regenerate(item, dry):
@@ -389,9 +477,11 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="with --fix, change nothing")
     ap.add_argument("--stranded", action="store_true",
                     help="only push commits stranded in this host's clone; never regenerate")
+    ap.add_argument("--all-hosts", action="store_true",
+                    help="with --stranded: also sweep every core-scheduler node's clone over ssh")
     a = ap.parse_args()
     if a.stranded:
-        return push_stranded(a.dry_run)
+        return push_stranded_all_hosts(a.dry_run) if a.all_hosts else push_stranded(a.dry_run)
 
     now = dt.datetime.now()
     log(f"=== article watchdog {now:%Y-%m-%d %H:%M} (grace {GRACE_MIN}m) ===")

@@ -106,6 +106,16 @@ class TestUnit(_Base):
                          "ANNIE: Hello there.\n\nINT. HOUSE - NIGHT: Rain falls.")
         self.assertEqual(si.reflow(""), "")
 
+    def test_split_cues_then_reflow_joins_vision_cues(self):
+        vision = "SALLY\n(Looks ahead)\nWhat's that?\nFranklin wheels around."
+        self.assertEqual(si.reflow(si.split_cues(vision)), "SALLY: (Looks ahead) What's that? Franklin wheels around.")
+        self.assertEqual(si.split_cues("EXTERIOR DAY: VAN\nThe van."), "EXTERIOR DAY: VAN\nThe van.")
+
+    def test_vision_bin_none_off_macos(self):
+        from unittest import mock
+        with mock.patch.object(si.sys, "platform", "linux"):
+            self.assertIsNone(si.vision_ocr_bin())
+
     def test_extract_title_skips_site_names(self):
         title, body = si.extract(PAGE)
         self.assertEqual(title, "Misery")
