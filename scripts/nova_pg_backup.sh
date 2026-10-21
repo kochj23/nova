@@ -37,6 +37,12 @@ export PATH="/opt/homebrew/opt/postgresql@17/bin:/opt/homebrew/bin:$PATH"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 notify() { "$SCRIPT_DIR/nova_slack_post.sh" "$1" "C0ATAF7NZG9" 2>/dev/null || true; }
+# Per-DB result -> telemetry.backup_runs (job pg-dump:<db>); nova_backup_monitor.py alarms when a
+# DB's newest off-box dump is older than its limit (the task-level check can't see WHICH DB).
+record() {
+    psql -U "$DB_USER" -d nova_ops -qtAc "INSERT INTO telemetry.backup_runs (ts, job, rc, elapsed_s, files, bytes, errors, ok)
+        VALUES (now(), 'pg-dump:$1', $2, $3, $4, $5, $([ "$6" = true ] && echo 0 || echo 1), $6)" >/dev/null 2>&1 || true
+}
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"; }
 
 # ── Pre-flight ───────────────────────────────────────────────────────────────
@@ -60,7 +66,9 @@ else
     DATABASES=($(psql -U "$DB_USER" -d postgres -tAc \
       "SELECT datname FROM pg_database WHERE datistemplate=false \
        AND datname NOT IN ('postgres') AND datname NOT LIKE '%restoretest%' \
-       ORDER BY pg_database_size(datname) DESC" 2>/dev/null))
+       ORDER BY pg_database_size(datname) ASC" 2>/dev/null))
+    # ASC (2026-10-21): smallest first, so a run the scheduler times out inside the huge
+    # nova_memories dump (10-19..10-21) still leaves nova/nova_media/nova_ops done.
 fi
 log "Starting backup of ${#DATABASES[@]} database(s): ${DATABASES[*]}"
 
@@ -79,11 +87,30 @@ backup_one() {
     # probe cycle by nova_lb.py whose ensure-schema ALTERs take ACCESS EXCLUSIVE —
     # that lock kills a parallel dump mid-run ("could not obtain lock"). The table
     # is recreated by nova_lb on startup; zero backup value.
-    PGOPTIONS="-c statement_timeout=0" \
-    pg_dump -U "$DB_USER" -d "$DB" --no-owner --no-privileges -Fd -j 4 \
-        --exclude-table='public.lb_pool_status' \
-        -f "$LOCAL_DIR/$DUMP_DIR" 2>>"$LOG_FILE"
-    local rc=$?
+    #
+    # Lock-conflict retry (2026-10-21, queue #3573): the nova_ops dump died on 10-07
+    # (public.nova_speaks_renders) and 10-13 (telemetry.incidents) with "could not obtain lock":
+    # a -j worker re-locks each table NOWAIT, so ANY ensure-schema `ALTER TABLE ... IF NOT EXISTS`
+    # (an ACCESS EXCLUSIVE request, even when it changes nothing) queued during the dump kills it.
+    # Excluding tables one at a time (lb_pool_status above) is whack-a-mole; the conflict is
+    # momentary, so retry the dump instead. 10-07 then had NO nova_ops dump at all because the
+    # scheduler's own retry never came (the run timed out in nova_memories).
+    local rc=1 attempt errf="$LOCAL_DIR/.${DUMP_DIR}.err"
+    for attempt in 1 2 3; do
+        rm -rf "$LOCAL_DIR/$DUMP_DIR"
+        PGOPTIONS="-c statement_timeout=0" \
+        pg_dump -U "$DB_USER" -d "$DB" --no-owner --no-privileges -Fd -j 4 \
+            --exclude-table='public.lb_pool_status' \
+            -f "$LOCAL_DIR/$DUMP_DIR" 2>"$errf"
+        rc=$?
+        cat "$errf" >> "$LOG_FILE"
+        if [ $rc -ne 0 ] && grep -q "could not obtain lock" "$errf" && [ $attempt -lt 3 ]; then
+            log "WARNING: pg_dump $DB lost a lock race (attempt $attempt/3) — retrying in 60s"
+            sleep 60; continue
+        fi
+        break
+    done
+    rm -f "$errf"
     # Zero bytes is not a backup. pg_dump can exit 0 having written nothing, and an empty
     # directory looked exactly like a healthy one every night for three days.
     #
@@ -108,6 +135,7 @@ backup_one() {
     fi
     if [ $rc -ne 0 ]; then
         log "ERROR: pg_dump $DB failed (exit $rc)"
+        record "$DB" "$rc" "$(( $(date +%s) - start ))" 0 0 false
         RESULTS+=("✗ $DB — DUMP FAILED (exit $rc)"); FAILED=$((FAILED+1)); return 1
     fi
     # integrity: archive TOC must be readable + non-empty
@@ -131,6 +159,7 @@ backup_one() {
     # rotation (per-DB)
     find "$LOCAL_DIR" -maxdepth 1 -name "${DB}_*" -type d -mtime +${RETENTION_DAYS} -exec rm -rf {} \; 2>/dev/null
     $NAS_AVAILABLE && find "$NAS_DIR" -maxdepth 1 -name "${DB}_*" -type d -mtime +${RETENTION_DAYS} -exec rm -rf {} \; 2>/dev/null
+    [ "$nas" = "NAS" ] && record "$DB" 0 "$dur" "$toc" "$(( $(du -sk "$NAS_DIR/$DUMP_DIR" | cut -f1) * 1024 ))" true
     log "$DB done: $size, ${toc} TOC entries, ${dur}s, $nas"
     RESULTS+=("✓ $DB — $size, ${dur}s, $nas")
     return 0

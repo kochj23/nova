@@ -405,7 +405,7 @@ tasks:
   pg_backup:
     script: nova_pg_backup.sh
     schedule: cron 0 2 * * *
-    timeout: 16200                 # 4.5h: nova_memories dump grew 3372s -> 8383s in Oct; run hit 10427s of 10800 on 2026-10-16
+    timeout: 21600                 # 6h (2026-10-21, #3573): 16200 killed 10-19/20/21 inside the nova_memories dump+rsync (~3.5h alone now); 4.5h: nova_memories dump grew 3372s -> 8383s in Oct; run hit 10427s of 10800 on 2026-10-16
     overlap: queue
 
 

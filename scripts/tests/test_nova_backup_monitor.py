@@ -222,7 +222,7 @@ class TestFunctional(unittest.TestCase):
 
     def test_error_path_exit_code_contract(self):
         # __main__ maps a non-empty issue list to exit 1 — the same expression, evaluated here
-        self.assertIn("sys.exit(1 if (_issues or _missed) else 0)", SRC)
+        self.assertIn("sys.exit(1 if (_issues or _missed or _dumps) else 0)", SRC)
         cur = _Cur(last={p: None for p in bm.JOBS})
         issues, _, _, _ = _check(cur)
         self.assertEqual(1 if issues else 0, 1)
@@ -309,3 +309,33 @@ class TestFrame(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCheckDumps(unittest.TestCase):
+    """Per-DB missed-night alarm (queue #3573): newest ok pg-dump:<db> row vs DUMPS limit."""
+    def _run(self, ages):
+        cur = MagicMock(); cur.__enter__.return_value = cur
+        cur.fetchone.side_effect = [(ages[db],) for db in bm.DUMPS]
+        n = MagicMock()
+        with patch.object(bm.psycopg2, "connect", MagicMock(return_value=_conn(cur))), \
+             patch.object(bm.nova_notify, "notify", n), redirect_stdout(io.StringIO()):
+            issues = bm.check_dumps()
+        for call in cur.execute.call_args_list:
+            self.assertIn("%s", call.args[0])
+        return issues, n
+
+    def test_fresh_is_quiet(self):
+        issues, n = self._run({db: 3.0 for db in bm.DUMPS})
+        self.assertEqual(issues, []); n.assert_not_called()
+
+    def test_missed_night_alarms(self):
+        ages = {db: 3.0 for db in bm.DUMPS}; ages["nova_ops"] = 30.0
+        issues, n = self._run(ages)
+        self.assertEqual([(d, lvl) for d, _, lvl in issues], [("nova_ops", "warning")])
+        self.assertEqual(n.call_args.kwargs["dedup_key"], "backup-missed:pg-dump:nova_ops")
+
+    def test_never_recorded_and_very_stale(self):
+        ages = {db: None for db in bm.DUMPS}; ages["nova_ops"] = 60.0
+        issues, _ = self._run(ages)
+        self.assertIn(("nova_ops", "critical"), [(d, lvl) for d, _, lvl in issues])
+        self.assertEqual(len(issues), len(bm.DUMPS))

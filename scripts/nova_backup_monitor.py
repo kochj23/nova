@@ -43,6 +43,15 @@ JOBS = {
     "nova-backup:external": 36,
 }
 
+# Per-DB nightly pg_dump that reached the NAS (rows written by nova_pg_backup.sh, 2026-10-21,
+# queue #3573). The task-level NIGHTLY check below can't tell WHICH DB is stale: on 10-07 and
+# 10-13 nova_ops failed while the others succeeded; on 10-19..21 nova_ops was fine and
+# nova_memories never landed.
+DUMPS = {
+    "nova_ops": 26,
+    "nova_memories": 26,
+}
+
 
 # scheduler task id -> max hours since its last SUCCESSFUL run (one missed night/week = alarm)
 NIGHTLY = {
@@ -159,7 +168,46 @@ def check_nightly():
     return issues
 
 
+def check_dumps():
+    """Missed-night alarm per DB: newest pg-dump:<db> row with ok=true older than DUMPS[db] h."""
+    conn = _connect()
+    issues = []
+    with conn.cursor() as cur:
+        for db, max_age_h in DUMPS.items():
+            cur.execute("SELECT extract(epoch FROM now() - max(ts)) / 3600 FROM telemetry.backup_runs "
+                        "WHERE job = %s AND ok", (f"pg-dump:{db}",))
+            age_h = cur.fetchone()[0]
+            if age_h is None:
+                issues.append((db, "no successful dump ever recorded", "warning"))
+            elif age_h > max_age_h:
+                level = "critical" if age_h > max_age_h * 2 else "warning"
+                issues.append((db, f"newest NAS dump {float(age_h):.1f}h old (limit {max_age_h}h) — missed night", level))
+    conn.close()
+    for db, msg, level in issues:
+        emit(f"Backup missed: {db} pg_dump", msg, level, dedup_key=f"backup-missed:pg-dump:{db}")
+    return issues
+
+
+def dump_freshness():
+    """`nova_backup_monitor.py --dumps`: print each DB's newest NAS dump age; exit 1 if any is stale. No alerts."""
+    conn = _connect()
+    stale = False
+    with conn.cursor() as cur:
+        cur.execute("SELECT split_part(job, ':', 2), extract(epoch FROM now() - max(ts)) / 3600 "
+                    "FROM telemetry.backup_runs WHERE job LIKE 'pg-dump:%%' AND ok GROUP BY 1 ORDER BY 1")
+        for db, age_h in cur.fetchall():
+            limit = DUMPS.get(db)
+            bad = limit is not None and age_h > limit
+            stale |= bad
+            print(f"{db:16s} newest dump {age_h:6.1f}h ago" + (f"  STALE (limit {limit}h)" if bad else ""))
+    conn.close()
+    return stale
+
+
 if __name__ == "__main__":
+    if "--dumps" in sys.argv:
+        sys.exit(1 if dump_freshness() else 0)
     _issues = check()
     _missed = check_nightly()
-    sys.exit(1 if (_issues or _missed) else 0)
+    _dumps = check_dumps()
+    sys.exit(1 if (_issues or _missed or _dumps) else 0)
