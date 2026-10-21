@@ -21,7 +21,7 @@ sys.path.insert(0, str(SCRIPTS))
 hl = importlib.import_module("nova_gateway.health")
 cfg = importlib.import_module("nova_gateway.config")
 SRC = (SCRIPTS / "nova_gateway" / "health.py").read_text()
-_KEYS = ("OLLAMA_URL", "MLX_URL", "LLAMACPP_URL", "OPENROUTER", "RESPONSE_RESERVE", "COMPACTION_THRESHOLD",
+_KEYS = ("OLLAMA_URL", "OLLAMA_URLS", "MLX_URL", "LLAMACPP_URL", "OPENROUTER", "RESPONSE_RESERVE", "COMPACTION_THRESHOLD",
          "SIGNAL_URL", "SIGNAL_TCP_HOST", "SIGNAL_TCP_PORT", "STARTUP_GRACE")
 
 
@@ -141,6 +141,12 @@ class TestRetry(_CfgGuard):
 
 
 class TestUnit(_CfgGuard):
+    def test_ollama_urls_list_reload(self):
+        ctx = _ctx(_Pool([{"key": "backends", "value": {"ollama_urls": ["http://a:1", "http://b:2"]}}]))
+        out = asyncio.run(hl.reload_config(ctx))
+        self.assertEqual(cfg.OLLAMA_URLS, ["http://a:1", "http://b:2"])
+        self.assertTrue(any(c.startswith("ollama_urls") for c in out["changes"]))
+
     def test_backend_change_rebuilds_router(self):
         ctx = _ctx(_Pool([{"key": "backends", "value": {"ollama_url": "http://o:1", "health_ttl": 5}}]))
         out = asyncio.run(hl.reload_config(ctx))

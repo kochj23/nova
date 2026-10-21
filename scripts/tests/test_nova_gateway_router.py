@@ -105,7 +105,8 @@ class TestRetry(unittest.TestCase):
         self.assertEqual(out, "from mlx")
         self.assertEqual(r.active_backend, "mlx")
         self.assertNotIn("ollama", r._health_cache)          # invalidated for a fresh probe next time
-        self.assertEqual(sum(1 for m, u, _ in http.calls if m == "POST"), 2)
+        # #3575: with no PG ranking the static OLLAMA_URLS list still gives OLLAMA_TRIES (2) ollama nodes, then mlx
+        self.assertEqual(sum(1 for m, u, _ in http.calls if m == "POST"), rt.OLLAMA_TRIES + 1)
 
     def test_all_backends_down_raises_summary(self):
         with self.assertRaises(RuntimeError) as e:
@@ -211,6 +212,36 @@ class TestFailover20261008(unittest.TestCase):
                                  ["http://192.168.1.7:11434", "http://192.168.1.6:11434", "http://192.168.1.86:11434"])
             rt._forget_sticky("http://192.168.1.7:11434")
             self.assertNotIn("last_ollama", rt._RANK_CACHE)
+        finally:
+            rt._RANK_CACHE.clear(); rt._RANK_CACHE.update(ts=0.0, val=None)
+
+    def test_ollama_health_falls_back_across_static_nodes(self):
+        # queue #3575: one dead static node (.86 kernel reboot 2026-10-13) must not mark the ollama pool down.
+        class H(_Http):
+            async def get(self, url, timeout=None):
+                self.calls.append(("GET", url, None))
+                return _Resp({}, 503 if url.startswith("http://dead") else 200)
+        http = H()
+        r = rt.ModelRouter()
+        with patch.object(rt._cfg, "OLLAMA_URLS", ["http://dead:1", "http://alive:2"]):
+            ok = asyncio.run(r._check_health("ollama", "http://dead:1", "/api/tags", ctx=SimpleNamespace(http=http)))
+        self.assertTrue(ok)
+        self.assertEqual([u for m, u, j in http.calls], ["http://dead:1/api/tags", "http://alive:2/api/tags"])
+        # every node dead -> still unhealthy; non-ollama backends never fan out
+        http2 = _Http(healthy=False)
+        r = rt.ModelRouter()   # fresh health cache
+        with patch.object(rt._cfg, "OLLAMA_URLS", ["http://a:1", "http://b:2"]):
+            self.assertFalse(asyncio.run(r._check_health("ollama", "http://a:1", "/api/tags", ctx=SimpleNamespace(http=http2))))
+            self.assertFalse(asyncio.run(r._check_health("mlx", "http://m:1", "/v1/models", ctx=SimpleNamespace(http=http2))))
+        self.assertEqual(len([c for c in http2.calls if "/v1/models" in c[1]]), 1)
+
+    def test_candidates_without_ranking_use_static_list(self):
+        rt._RANK_CACHE.clear(); rt._RANK_CACHE.update(ts=9e18, val=None)
+        try:
+            with patch.object(rt._cfg, "OLLAMA_URLS", ["http://s1:1", "http://s2:2", "http://s3:3"]), \
+                 patch.object(rt, "OLLAMA_TRIES", 2):
+                self.assertEqual(rt._ollama_candidates("http://s1:1"), ["http://s1:1", "http://s2:2"])
+                self.assertEqual(rt._ollama_candidates("http://d:9"), ["http://d:9", "http://s1:1"])
         finally:
             rt._RANK_CACHE.clear(); rt._RANK_CACHE.update(ts=0.0, val=None)
 

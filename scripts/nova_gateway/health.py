@@ -46,6 +46,10 @@ async def reload_config(ctx: GatewayContext) -> dict:
             if new_ollama != config.OLLAMA_URL:
                 changes.append(f"ollama_url: {config.OLLAMA_URL} -> {new_ollama}")
                 config.OLLAMA_URL = new_ollama
+            new_ollama_urls = b.get("ollama_urls")   # 2026-10-21 (#3575): static fallback list
+            if isinstance(new_ollama_urls, list) and new_ollama_urls and new_ollama_urls != config.OLLAMA_URLS:
+                changes.append(f"ollama_urls: {len(config.OLLAMA_URLS)} -> {len(new_ollama_urls)} nodes")
+                config.OLLAMA_URLS = [str(u) for u in new_ollama_urls]
             if new_mlx != config.MLX_URL:
                 changes.append(f"mlx_url: {config.MLX_URL} -> {new_mlx}")
                 config.MLX_URL = new_mlx

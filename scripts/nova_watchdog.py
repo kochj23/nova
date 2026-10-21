@@ -56,6 +56,9 @@ CHECKS = [
     ("mac-studio (.6) mesh-agent", "http", "http://192.168.1.6:37470/health"),
     # SPOF plan Phase 4 (2026-10-04): the memory HA front (alias target) and the new read replica.
     ("nova-core2 (.86) memory-ha", "http", "http://192.168.1.86:18790/health"),
+    # queue #3575 (2026-10-21): second memory front + the keepalived VIP the alias now points at.
+    ("nova-core5 (.10) memory-ha", "http", "http://192.168.1.10:18790/health"),
+    ("memory VIP (.240) front",    "http", "http://192.168.1.240:18790/health"),
     ("nova-core3 (.5) memory-replica", "http", "http://192.168.1.5:18790/health"),
     ("nova-core (.2) host",       "tcp",  ("192.168.1.2", 22)),
     ("nova-core (.2) pg-replica", "tcp",  ("192.168.1.2", 5432)),

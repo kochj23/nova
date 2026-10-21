@@ -19,6 +19,7 @@ from nova_gateway.config import (
     is_private_content,
 )
 from nova_gateway import overload
+from nova_gateway import config as _cfg
 from nova_gateway.overload import (
     LIMITER, AttemptGate, BackendSaturated, DeadlineExceeded, RetryBudgetExceeded, attempt_timeout,
 )
@@ -127,8 +128,11 @@ def _ollama_candidates(default: str) -> list:
                 out.append(r["url"])
     except Exception:
         pass
-    if default not in out:
-        out.append(default)
+    # 2026-10-21 (#3575): no ranking (PG down / stale) used to leave just [default] — one static node. Fall
+    # back across the static list so a single dead node never means "no ollama".
+    for u in [default] + list(getattr(_cfg, "OLLAMA_URLS", []) or []):
+        if u not in out:
+            out.append(u)
     return out[:OLLAMA_TRIES]
 
 
@@ -220,6 +224,21 @@ class ModelRouter:
                     healthy = resp.status_code == 200
         except Exception:
             healthy = False
+
+        # 2026-10-21 (#3575): ollama is a multi-node pool and the call path already tries other nodes, so the
+        # backend is healthy if ANY static fallback node answers — one dead node (the 10-13 .86 reboot) must not
+        # mark the whole backend down for HEALTH_TTL and push every turn to MLX/llama.cpp.
+        if not healthy and name == "ollama" and ctx is not None and getattr(ctx, "http", None) is not None:
+            for alt in getattr(_cfg, "OLLAMA_URLS", []) or []:
+                if alt == base_url:
+                    continue
+                try:
+                    r = await ctx.http.get(f"{alt}{health_path}", timeout=3.0)
+                    if r.status_code == 200:
+                        healthy = True
+                        break
+                except Exception:
+                    continue
 
         self._health_cache[name] = (healthy, now)
 

@@ -16,7 +16,16 @@ VERSION = "2.4.0"
 
 # ── URLs & Endpoints ─────────────────────────────────────────────────────────
 PG_DSN       = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
-OLLAMA_URL   = "http://192.168.1.86:11434"   # 2026-09-18: .6 ollama chat wedged; static fallback -> a working chat node
+# 2026-10-21 (queue #3575): ordered STATIC fallback list, used when the PG ranking (nova_llm_ping) / nova_lb
+# are unavailable. The single static .86 URL was a SPOF: its 2026-10-13 kernel reboot failed the health probe,
+# and that one result marked the whole 'ollama' backend down. Now the backend is healthy if ANY of these answers.
+# Override: env NOVA_OLLAMA_URLS (comma list) or service_config gateway.backends.ollama_urls (+ POST /reload).
+OLLAMA_URLS  = [u.strip() for u in os.environ.get(
+    "NOVA_OLLAMA_URLS",
+    "http://192.168.1.6:11434,http://192.168.1.77:11434,http://192.168.1.7:11434,"
+    "http://192.168.1.252:11434,http://192.168.1.5:11434,http://192.168.1.86:11434",
+).split(",") if u.strip()]
+OLLAMA_URL   = OLLAMA_URLS[0]
 MLX_URL      = "http://192.168.1.6:5050"
 LLAMACPP_URL = "http://192.168.1.6:11435"
 OPENROUTER   = "https://openrouter.ai/api/v1"
