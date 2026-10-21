@@ -12,12 +12,26 @@ sys.modules["nova_config"] = MagicMock()
 
 _SCRIPT = Path(__file__).parent.parent / "scripts" / "debug_unifi_auth.py"
 
+# Sensitive scan patterns are fetched from the fleet secret store at runtime, never
+# written as a literal in this tracked file (see scripts/nova_secret_patterns.py).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from nova_secret_patterns import assert_no_known_credentials
+
 
 class TestSecurity(unittest.TestCase):
     def test_no_hardcoded_credentials(self):
         src = _SCRIPT.read_text()
-        for pat in ["Jkoogie", "sk-", "ghp_", "api_key =", "password ="]:
+        for pat in ["sk-", "ghp_", "api_key =", "password ="]:
             self.assertNotIn(pat, src, f"Credential found: {pat!r}")
+
+    def test_no_known_credential_patterns(self):
+        """Known-bad credential strings come from the fleet secret store at runtime.
+        They are deliberately NOT literals here: this repo is public, so a tracked
+        pattern would publish the very secret it detects. Skips loudly (never passes
+        silently) when the store is unreachable -- see scripts/nova_secret_patterns.py.
+        """
+        assert_no_known_credentials(self, _SCRIPT.read_text(), _SCRIPT.name)
+
     def test_no_pii_emails(self):
         src = _SCRIPT.read_text()
         _at = "@"
@@ -34,7 +48,6 @@ class TestSecurity(unittest.TestCase):
         self.assertIn("Authorization", src, "Must use Authorization header")
     def test_no_plain_text_ip_credentials(self):
         src = _SCRIPT.read_text()
-        self.assertNotIn("Jkoogie", src)
         self.assertNotIn("admin:admin", src)
     def test_unifi_url_is_local(self):
         src = _SCRIPT.read_text()

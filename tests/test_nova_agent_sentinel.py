@@ -14,6 +14,12 @@ from unittest.mock import MagicMock, patch, AsyncMock
 
 _SCRIPT = Path(__file__).parent.parent / "scripts" / "nova_agent_sentinel.py"
 
+# Sensitive scan patterns are fetched from the fleet secret store at runtime, never
+# written as a literal in this tracked file (see scripts/nova_secret_patterns.py).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from nova_secret_patterns import assert_no_known_credentials
+
+
 _nova_cfg = MagicMock()
 _nova_cfg.SLACK_NOTIFY = "C0ATAF7NZG9"
 sys.modules["nova_config"] = _nova_cfg
@@ -67,8 +73,17 @@ class TestSecurity(unittest.TestCase):
 
     def test_no_hardcoded_credentials(self):
         src = _SCRIPT.read_text()
-        for p in ["sk-live", "ghp_", "AKIA", "xoxb-", "Jkoogie"]:
+        for p in ["sk-live", "ghp_", "AKIA", "xoxb-"]:
             self.assertNotIn(p, src, f"Credential found: {p!r}")
+
+
+    def test_no_known_credential_patterns(self):
+        """Known-bad credential strings come from the fleet secret store at runtime.
+        They are deliberately NOT literals here: this repo is public, so a tracked
+        pattern would publish the very secret it detects. Skips loudly (never passes
+        silently) when the store is unreachable -- see scripts/nova_secret_patterns.py.
+        """
+        assert_no_known_credentials(self, _SCRIPT.read_text(), _SCRIPT.name)
 
     def test_allowed_models_defined(self):
         """ALLOWED_MODELS must list all models that are permitted in config."""

@@ -10,6 +10,12 @@ import urllib.error
 sys.modules["nova_config"] = MagicMock()
 
 _SCRIPT = Path(__file__).parent.parent / "scripts" / "nova_unas_client.py"
+
+# Sensitive scan patterns are fetched from the fleet secret store at runtime, never
+# written as a literal in this tracked file (see scripts/nova_secret_patterns.py).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from nova_secret_patterns import assert_no_known_credentials
+
 _spec = importlib.util.spec_from_file_location("nova_unas_client", _SCRIPT)
 _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
@@ -23,8 +29,17 @@ _request = _mod._request
 class TestSecurity(unittest.TestCase):
     def test_no_hardcoded_credentials(self):
         src = _SCRIPT.read_text()
-        for pat in ["password =", "sk-", "ghp_", "Jkoogie"]:
+        for pat in ["password =", "sk-", "ghp_"]:
             self.assertNotIn(pat, src)
+
+    def test_no_known_credential_patterns(self):
+        """Known-bad credential strings come from the fleet secret store at runtime.
+        They are deliberately NOT literals here: this repo is public, so a tracked
+        pattern would publish the very secret it detects. Skips loudly (never passes
+        silently) when the store is unreachable -- see scripts/nova_secret_patterns.py.
+        """
+        assert_no_known_credentials(self, _SCRIPT.read_text(), _SCRIPT.name)
+
     def test_no_pii_emails(self):
         src = _SCRIPT.read_text()
         _at = "@"

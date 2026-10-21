@@ -17,6 +17,12 @@ from unittest.mock import MagicMock, patch
 # Load module under test — no external dependencies
 # ---------------------------------------------------------------------------
 _SCRIPT = Path(__file__).parent.parent / "scripts" / "nova_security_hardening.py"
+
+# Sensitive scan patterns are fetched from the fleet secret store at runtime, never
+# written as a literal in this tracked file (see scripts/nova_secret_patterns.py).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from nova_secret_patterns import assert_no_known_credentials
+
 _spec = importlib.util.spec_from_file_location("nova_security_hardening", _SCRIPT)
 _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
@@ -38,6 +44,15 @@ class TestSecurity(unittest.TestCase):
         for pattern in ["sk-live", "ghp_", "AKIA", "xoxb-", "password ="]:
             self.assertNotIn(pattern, src, f"Credential found: {pattern!r}")
 
+
+    def test_no_known_credential_patterns(self):
+        """Known-bad credential strings come from the fleet secret store at runtime.
+        They are deliberately NOT literals here: this repo is public, so a tracked
+        pattern would publish the very secret it detects. Skips loudly (never passes
+        silently) when the store is unreachable -- see scripts/nova_secret_patterns.py.
+        """
+        assert_no_known_credentials(self, _SCRIPT.read_text(), _SCRIPT.name)
+
     def test_no_pii_in_source(self):
         src = _SCRIPT.read_text()
         _at = "@"
@@ -52,8 +67,8 @@ class TestSecurity(unittest.TestCase):
     def test_nmap_scan_does_not_hardcode_subnet(self):
         """run_nmap_scan() should not hardcode external subnet in actual scan command."""
         src = _SCRIPT.read_text()
-        # LAN subnet reference in comments/docs is OK, but no hardcoded credentials
-        self.assertNotIn("Jkoogie", src, "UniFi credentials must not be hardcoded")
+        # LAN subnet reference in comments/docs is OK. The hardcoded-credential check
+        # lives in test_no_known_credential_patterns (patterns come from the secret store).
 
     def test_remember_uses_json_content_type(self):
         """remember() must send JSON with proper Content-Type header."""
