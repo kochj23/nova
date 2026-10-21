@@ -62,19 +62,20 @@ def remember(text, metadata):
         return False
 
 
-def get_synced_hashes(conn):
-    """Get hashes of already-synced memories from vector DB."""
+def get_synced_hashes() -> set:
+    """Content hashes already in vector memory, in ONE read of nova_memories (read-only).
+    The old per-memory check was a semantic /recall of the NAME with min_score=0.95 — a name never
+    scores 0.95 against the full text (~0.69), so every run re-POSTed all ~200 memories (~1 s each
+    through the embedder) and hit the 120 s task timeout daily (2026-10-21)."""
     try:
-        payload = json.dumps({"source": SOURCE, "n": 50000}).encode()
-        req = urllib.request.Request(
-            "http://memory-server.digitalnoise.net:18790/recall?source=claude_memory&n=1&q=test",
-            headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            data = json.loads(r.read())
-            count = data.get("total", 0)
-    except Exception:
-        count = 0
-    return count
+        with psycopg2.connect(_nova_dsn.pg_dsn("nova_memories", "connect_timeout=10")) as c, c.cursor() as cur:
+            # any source: the memory server dedups on text, and some were first stored as nova_project_docs
+            cur.execute("SELECT DISTINCT metadata->>'hash' FROM memories WHERE source = %s "
+                        "OR text LIKE '[Claude Memory: %%'", (SOURCE,))
+            return {r[0] for r in cur.fetchall() if r[0]}
+    except Exception as e:
+        log(f"could not read synced hashes ({e.__class__.__name__}) — syncing everything")
+        return set()
 
 
 def main():
@@ -89,22 +90,14 @@ def main():
 
     synced = 0
     skipped = 0
+    have = get_synced_hashes()
 
     for name, description, mem_type, content, updated_at in rows:
         text_hash = hashlib.md5(content.strip().encode()).hexdigest()
 
-        # Check if this exact content is already in vector memory
-        try:
-            check_url = f"http://memory-server.digitalnoise.net:18790/recall?q={urllib.parse.quote(name[:50])}&source={SOURCE}&n=1&min_score=0.95"
-            req = urllib.request.Request(check_url)
-            with urllib.request.urlopen(req, timeout=5) as r:
-                data = json.loads(r.read())
-                existing = data.get("memories", [])
-                if existing and existing[0].get("metadata", {}).get("hash") == text_hash:
-                    skipped += 1
-                    continue
-        except Exception:
-            pass
+        if text_hash in have:            # this exact content is already in vector memory
+            skipped += 1
+            continue
 
         # Ingest the memory
         metadata = {

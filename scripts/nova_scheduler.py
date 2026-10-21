@@ -325,6 +325,44 @@ class NovaScheduler:
                         s.catch_up_error = sdata.get("catch_up_error", "")
             except Exception:
                 pass
+        self._adopt_shared_last_runs()
+
+    def _adopt_shared_last_runs(self):
+        """Under leader election (nova_leader_wrapper exports NOVA_LEADER_NAME) the leader and the standby run
+        the SAME task set but keep separate state files. On takeover, adopt the newest run of each task from
+        scheduler_runs: last_run = max(local, shared) and, when that shared run succeeded, consecutive_failures=0.
+        Without this (2026-10-18 and 10-21): the standby took over with a days-old state file, fired every
+        interval task at once (a burst of ~100 sudo/TPM secret decrypts -> UniFi key lookups timed out), and its
+        stale failure counts quarantined tasks on their first failure ("12 consecutive failures"); the handback
+        to nova-core re-ran journal_essay's 09:00 slot the standby had already published. Best-effort."""
+        if not os.environ.get("NOVA_LEADER_NAME") or not self.tasks:
+            return
+        try:
+            import psycopg2
+            conn = psycopg2.connect(_nova_dsn.pg_dsn("nova_ops", "connect_timeout=8"))
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT DISTINCT ON (task_id) task_id, task_script, started_at, status "
+                                "FROM scheduler_runs WHERE task_id = ANY(%s) AND status <> 'running' "
+                                "AND started_at > (extract(epoch FROM now()) - 8*86400) * 1000 "
+                                "ORDER BY task_id, started_at DESC", (list(self.tasks),))
+                    rows = cur.fetchall()
+            finally:
+                conn.close()
+        except Exception as e:  # noqa: BLE001
+            log(f"shared last_run adoption skipped: {e}", level=LOG_WARN, source="scheduler")
+            return
+        adopted = 0
+        for tid, script, started_ms, status in rows:
+            t = self.tasks[tid]
+            if script == t.script and started_ms and started_ms / 1000 > t.state.last_run:
+                t.state.last_run = started_ms / 1000
+                if status == "success":
+                    t.state.consecutive_failures = 0
+                    t.state._retry_pending = False
+                adopted += 1
+        if adopted:
+            log(f"adopted shared last_run for {adopted} task(s) from scheduler_runs", level=LOG_INFO, source="scheduler")
 
     def _save_state(self):
         data = {"saved_at": time.time(), "tasks": {}}

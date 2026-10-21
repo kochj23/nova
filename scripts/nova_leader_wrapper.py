@@ -21,6 +21,13 @@ DSN = os.environ.get("NOVA_OPS_DSN", _nova_dsn.pg_dsn("nova_ops", "connect_timeo
 NODE = socket.gethostname().split(".")[0]
 RETRY_S = 10            # standby: how often to try for the lock
 BEAT_S = 30             # heartbeat / liveness check cadence
+# Preferred leader (2026-10-21): set NOVA_LEADER_PREFER=<node> on the STANDBY's unit only. Without it, any restart
+# of the preferred node's unit (10-21 06:36: unattended-upgrades/needrestart bounced every service on nova-core)
+# released the lock and the standby, polling every 10 s, won the race and kept leadership for 7 h. Now the
+# standby does not compete while the preferred node's heartbeat is fresher than PREFER_FRESH_S, and a standby
+# that is leading steps down as soon as the preferred node is back as a candidate (automatic handback).
+PREFER = os.environ.get("NOVA_LEADER_PREFER", "").strip()
+PREFER_FRESH_S = 45     # > BEAT_S: a leader beats every 30 s, so a restart in progress still looks alive
 DDL = """CREATE TABLE IF NOT EXISTS leader_standby (
   name text NOT NULL, node text NOT NULL, role text NOT NULL, pid int, ts timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (name, node));
@@ -57,8 +64,17 @@ def beat(conn, name, role, pid=None):
     except Exception as e:  # noqa: BLE001
         log(f"heartbeat failed: {e}"); return False
 
+def preferred_alive(conn, name, role=None):
+    """True when PREFER (another node) has heartbeated within PREFER_FRESH_S (optionally in a given role)."""
+    if not PREFER or PREFER == NODE:
+        return False
+    with conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM leader_standby WHERE name=%s AND node=%s AND ts > now() - make_interval(secs => %s)"
+                    + (" AND role=%s" if role else ""), (name, PREFER, PREFER_FRESH_S) + ((role,) if role else ()))
+        return cur.fetchone() is not None
+
 def run_leader(conn, name, cmd):
-    child = subprocess.Popen(cmd)
+    child = subprocess.Popen(cmd, env={**os.environ, "NOVA_LEADER_NAME": name})  # scheduler: adopt shared run state
     def fwd(sig, _f):
         log(f"forwarding signal {sig} to child {child.pid}"); child.send_signal(sig)
     for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
@@ -80,6 +96,16 @@ def run_leader(conn, name, cmd):
                 try: child.wait(20)
                 except subprocess.TimeoutExpired: child.kill()
                 return 75                                        # EX_TEMPFAIL: systemd restarts us as a candidate
+            try:
+                handback = preferred_alive(conn, name, "standby")
+            except Exception:  # noqa: BLE001 — the next beat decides about the session
+                handback = False
+            if handback:
+                log(f"preferred leader {PREFER} is back as a candidate — handing back")
+                child.terminate()
+                try: child.wait(60)
+                except subprocess.TimeoutExpired: child.kill()
+                return 0                                         # Restart=always rejoins us as a (quiet) standby
     log(f"child exited {child.returncode}")
     return child.returncode
 
@@ -90,7 +116,7 @@ def main():
         try:
             if conn is None or conn.closed:
                 conn = connect()
-            if try_lock(conn, name):
+            if not preferred_alive(conn, name) and try_lock(conn, name):
                 rc = run_leader(conn, name, cmd)
                 try:
                     with conn.cursor() as cur: cur.execute("SELECT pg_advisory_unlock_all()")

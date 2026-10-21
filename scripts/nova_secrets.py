@@ -34,10 +34,13 @@ def _load(name):
     """Resolve a credential across the fleet: systemd cred dir -> env -> macOS Keychain."""
     cd = os.environ.get("CREDENTIALS_DIRECTORY")           # Linux: systemd LoadCredential(Encrypted)
     if cd:
-        p = os.path.join(cd, name)
-        if os.path.exists(p):
-            with open(p) as f:
-                return f.read().rstrip("\n")
+        # .2/.86 load it as NOVA_SECRET_KEY, newer nodes (.5) as the kebab name their .cred was sealed with —
+        # missing the kebab file sent every lookup on .5 to sudo systemd-creds (TPM) and timed out under load.
+        for fn in (name, name.lower().replace("_", "-")):
+            p = os.path.join(cd, fn)
+            if os.path.exists(p):
+                with open(p) as f:
+                    return f.read().rstrip("\n")
     v = os.environ.get(name)                               # Linux: EnvironmentFile (e.g. nova-core5)
     if v:
         return v

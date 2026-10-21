@@ -52,6 +52,10 @@ BASE_DIR = Path(os.environ.get("NOVA_WAL_BASE_DIR", "/mnt/nas/backups/pg_basebac
 PG_BIN = Path(os.environ.get("NOVA_PG_BIN", "/home/linuxbrew/.linuxbrew/opt/postgresql@17/bin"))
 PG_UNIT = os.environ.get("NOVA_PG_UNIT", "postgresql-17")
 PG_PORT = os.environ.get("NOVA_PG_PRIMARY_PORT", "5434")
+# The primary BY NAME (same alias nova_dsn uses), never localhost: scheduler-core may run on its standby
+# nova-core3 (.5), where localhost:5434 refused (2026-10-18 and 10-21). Port 5434 is still the direct
+# postgres port (archiving facts are per-server, never via pgbouncer/socat).
+PG_HOST = os.environ.get("NOVA_PG_PRIMARY_HOST") or os.environ.get("NOVA_PG_HOST", "pg-primary.digitalnoise.net")
 LOCAL_CMD = Path(os.environ.get("NOVA_WAL_CMD_PATH", str(Path.home() / ".local/libexec/nova/nova_wal_archive_cmd.sh")))
 REPO_CMD = SCRIPTS_DIR / "nova_wal_archive_cmd.sh"
 GAP_LOG = Path(os.environ.get("NOVA_WAL_GAP_LOG", str(Path.home() / ".local/state/nova/wal_gaps.log")))
@@ -199,9 +203,27 @@ def file_sha(path: Path) -> str | None:
 
 # ── IO helpers ────────────────────────────────────────────────────────────────
 def connect(dbname="nova_ops"):
-    """Direct to the LOCAL primary (port 5434) — archiving facts are per-server, never via pgbouncer."""
+    """Direct to the primary's postgres port (5434) — archiving facts are per-server, never via pgbouncer."""
     import psycopg2
-    return psycopg2.connect(host="localhost", port=PG_PORT, dbname=dbname, user="kochj", connect_timeout=10)
+    return psycopg2.connect(host=PG_HOST, port=PG_PORT, dbname=dbname, user="kochj", connect_timeout=10)
+
+
+def on_primary_host() -> bool:
+    """True when this machine owns the primary's address: the archive_command copy and the gap log
+    it writes are local files there, so only there can they be checked."""
+    try:
+        ip = socket.gethostbyname(PG_HOST)
+        with socket.socket() as sk:
+            sk.bind((ip, 0))
+        return True
+    except OSError:
+        return False
+
+
+def pg_basebackup_bin() -> str:
+    """The linuxbrew postgresql@17 client on the primary; elsewhere (standby .5) the distro's."""
+    p = PG_BIN / "pg_basebackup"
+    return str(p) if p.exists() else (shutil.which("pg_basebackup") or str(p))
 
 
 def q1(cur, sql, params=None):
@@ -413,7 +435,7 @@ def basebackup(trigger="schedule") -> int:
              (socket.gethostname(), str(dest), trigger))[0]
     log(f"base backup -> {dest}")
     t0 = time.time()
-    r = subprocess.run([str(PG_BIN / "pg_basebackup"), "-h", "localhost", "-p", PG_PORT, "-U", "kochj", "-w",
+    r = subprocess.run([pg_basebackup_bin(), "-h", PG_HOST, "-p", PG_PORT, "-U", "kochj", "-w",
                         "-D", str(dest), "-Ft", "-X", "stream", "--compress=client-zstd:3",
                         "--checkpoint=fast", "--label", f"nova-{ts}", "-v"],
                        capture_output=True, text=True, timeout=8 * 3600)
@@ -488,7 +510,10 @@ def monitor() -> int:
     if level in ("warning", "critical"):
         notify(f"WAL archiving {'STALLED' if level == 'critical' else 'degraded'}", msg, level, "stall")
         problems += 1
-    if enabled:
+    local = on_primary_host()
+    if enabled and not local:
+        log(f"not on the primary ({PG_HOST}): archive_command drift + gap-log checks skipped (they are local files there)")
+    if enabled and local:
         if file_sha(LOCAL_CMD) != file_sha(REPO_CMD):
             changed = install()
             log(f"installed archive_command drifted from repo — {'re-installed' if changed else 'check'}")

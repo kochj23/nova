@@ -333,7 +333,23 @@ def fetch_memories_by_source(source: str, n: int = 25) -> list[dict]:
 # the atexit guard below is the catch-all for the ~40 that import this module.
 # Opt out per process: NOVA_LLM_FAIL_LOUD=0.
 EXIT_LLM_UNAVAILABLE = 75
-_RUN_STATE = {"llm_ok": 0, "llm_fail": [], "published": 0}
+
+
+def _shared_run_state() -> dict:
+    """One _RUN_STATE per process. `python nova_journal.py essay` loads this file as __main__, and helpers it
+    calls (nova_grounding, nova_channel_pools, ...) `import nova_journal` -> a SECOND copy with its own state
+    and its own atexit guard. 2026-10-21 journal_essay: __main__ counted the LLM successes + publish, the
+    helper copy counted one 180 s timeout, and ITS guard forced exit 75 on a published article."""
+    me = os.path.realpath(__file__)
+    for name in ("__main__", "nova_journal"):
+        m = sys.modules.get(name)
+        if (m is not None and m.__dict__ is not globals() and isinstance(getattr(m, "_RUN_STATE", None), dict)
+                and os.path.realpath(getattr(m, "__file__", "") or "") == me):
+            return m._RUN_STATE
+    return {"llm_ok": 0, "llm_fail": [], "published": 0}
+
+
+_RUN_STATE = _shared_run_state()
 
 
 def _is_generator_process() -> bool:

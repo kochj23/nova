@@ -602,10 +602,13 @@ def leader_items(leader: str | None, events: list, now: datetime) -> list:
     """Leader-change alerts. Pure: events = [(node, ts, note)] newest first."""
     out = []
     if leader and leader != PREFERRED_CORE_LEADER:
-        since = next((ts for n, ts, _ in events if n == leader), None)
+        # Only the NEWEST event dates the current leadership. An older event for the same node is a previous
+        # stint (10-21: hub said "since Sun 16:36" for a takeover at Wed 06:36 that an old wrapper never recorded).
+        since = events[0][1] if events and events[0][0] == leader else None
         out.append({"level": "warn", "kind": "failover", "source": "scheduler-core", "task": None,
                     "text": f"scheduler-core is running on the standby ({leader})"
-                            + (f" since {since.astimezone().strftime('%a %H:%M')}" if since else ""), "reason": None})
+                            + (f" since {since.astimezone().strftime('%a %H:%M')}" if since else
+                               " (takeover time not recorded)"), "reason": None})
     for n, ts, note in events[:4]:
         out.append({"level": "info", "kind": "leader", "source": "scheduler-core", "task": None,
                     "text": f"leader → {n} · {ts.astimezone().strftime('%a %H:%M')}",
@@ -1005,6 +1008,8 @@ def selftest() -> int:
     li = leader_items("nova-core3", ev[1:], datetime.now(timezone.utc))
     assert li[0]["kind"] == "failover" and "nova-core3" in li[0]["text"] and li[1]["kind"] == "leader"
     assert [x["kind"] for x in leader_items("nova-core", ev, datetime.now(timezone.utc))] == ["leader", "leader"]
+    stale = leader_items("nova-core3", ev, datetime.now(timezone.utc))[0]["text"]  # unrecorded re-takeover
+    assert "since" not in stale and "not recorded" in stale, stale
     lg = "@@200\n\ncontent/belief/2026-10-19-a.md\ncontent/belief/_index.md\nstatic/x.webp\n@@100\n\ncontent/nova/b.md\n"
     assert parse_added(lg) == [(200, "belief", "2026-10-19-a"), (100, "nova", "b")]
     assert front_title('---\ntitle: "🔍 Belief and Friends: \\"Q\\""\ndate: x\n---') == '🔍 Belief and Friends: "Q"'
