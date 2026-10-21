@@ -58,8 +58,11 @@ def team_of(app: Path) -> str | None:
     return m if m and m != "not set" else None
 
 
-def running(game: str) -> bool:
-    return subprocess.run(["pgrep", "-x", game], capture_output=True).returncode == 0
+def running(game: str, target: Path | None = None) -> bool:
+    """Only the installed copy counts: builders' muted XCTest hosts (DerivedData) must not block the install."""
+    if target is None:
+        return subprocess.run(["pgrep", "-x", game], capture_output=True).returncode == 0
+    return subprocess.run(["pgrep", "-f", f"^{target}/Contents/MacOS/"], capture_output=True).returncode == 0
 
 
 def install(src: Path, target: Path) -> None:
@@ -90,7 +93,7 @@ def check(game: str, apps: Path = APPS, root: Path = BINARIES, _running=running,
     want, got = _team(target), _team(src)
     if not want or got != want:
         return f"REFUSED {src.parent.name}: signature invalid or team {got} != installed {want}"
-    if _running(game):
+    if (_running(game, target) if _running is running else _running(game)):
         return f"newer build waiting ({src.parent.name}); {game} is running"
     _install(src, target)
     return f"installed {src.parent.name}"
