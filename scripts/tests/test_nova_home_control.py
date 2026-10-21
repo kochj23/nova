@@ -232,3 +232,27 @@ class TestFrame(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAppleTvDashboard(unittest.TestCase):          # queue #3113 tier 2
+    def test_tv_entity_rooms(self):
+        self.assertEqual(hc.tv_entity("Living Room"), "remote.living_room")
+        self.assertEqual(hc.tv_entity("Dylan\u2019s Room"), "remote.dylans_room_2")
+        self.assertEqual(hc.tv_entity("office tv"), "remote.office")
+        self.assertEqual(hc.tv_entity("kitchen"), "remote.kitchen_2")
+        with self.assertRaises(ValueError):
+            hc.tv_entity("garage")
+
+    def test_show_dashboard_wakes_home_screensaver(self):
+        calls = []
+        with patch.object(hc, "_ha_service", side_effect=lambda d, s, data: calls.append((s, data.get("command"))) or (True, 200)), \
+                patch.object(hc.time, "sleep"):
+            out = hc.show_dashboard("office")
+        self.assertEqual(calls, [("turn_on", None), ("send_command", "home"), ("send_command", "screensaver")])
+        self.assertTrue(out["woke"] and out["screensaver"])
+
+    def test_show_dashboard_reports_refused_screensaver(self):
+        with patch.object(hc, "_ha_service", side_effect=[(True, 200), (True, 200), (False, 500)]), patch.object(hc.time, "sleep"):
+            out = hc.show_dashboard("kitchen")
+        self.assertFalse(out["screensaver"])
+        self.assertIn("idle time", out["note"])

@@ -233,6 +233,29 @@ class TestRulePath20261008(unittest.TestCase):
         with self.assertRaises(ValueError):
             tl.home_control_args("garage", "power on")
 
+    def test_show_dashboard_is_run_script_tv_and_matches_its_notify_rule(self):   # queue #3113
+        import nova_gateway.autonomy as au
+        seen = {}
+
+        async def check(pool, tool, channel, params):
+            seen.update(tool=tool, params=params); return "auto"
+        ctx = _ctx(); ctx.pg_pool = object()
+        with mock.patch("nova_gateway.autonomy.check_autonomy", check), \
+                mock.patch.object(tl, "cell_gate", return_value=("allow", "")), \
+                mock.patch.object(tl, "_tool_run_script", mock.AsyncMock(return_value="ran")) as rs:
+            out = _run(tl.dispatch_tool(ctx, "show_dashboard", {"room": "Living Room; rm"}, session_id="gw2:slack:C1"))
+        args = {"script": "nova_home_control.py", "args": ["tv", "living_room_rm", "dashboard"]}
+        self.assertEqual((seen["tool"], seen["params"]), ("run_script", args))
+        rs.assert_awaited_once()
+        self.assertIn("ran", out)
+        pat = r'^\{"args": \["tv", "[a-z_]+", "dashboard"\], "script": "nova_home_control\.py"\}$'
+        with mock.patch.object(au, "_cache", {("__scoped__", "run_script"): [("*", re.compile(pat), "notify", 10)]}):
+            self.assertEqual(au.scoped_level("run_script", "slack", {"script": "nova_home_control.py",
+                                                                     "args": ["tv", "office", "dashboard"]}), "notify")
+            self.assertIsNone(au.scoped_level("run_script", "slack", {"script": "nova_home_control.py",
+                                                                      "args": ["tv", "office", "power"]}))
+        self.assertTrue(_run(tl.dispatch_tool(_ctx(), "show_dashboard", {"room": ""})).startswith("[error"))
+
     def test_only_readonly_extended_tools_can_merge(self):
         reg = {}
         with mock.patch.object(tl.os, "access", return_value=True):

@@ -212,6 +212,16 @@ TOOL_REGISTRY: dict[str, dict] = {
         },
         "required": ["device", "action"],
     },
+    "show_dashboard": {
+        "description": "Put the Nova Cluster dashboard on a room's Apple TV (wakes the TV and starts its Nova "
+                       "screensaver, an hourly picture of the dashboard). Rooms: office, kitchen, living_room, "
+                       "master_bedroom, dylans_room, outside. Use for 'show the dashboard on the office TV', "
+                       "'put Nova up in the kitchen'.",
+        "parameters": {
+            "room": {"type": "string", "description": "Room of the Apple TV: office, kitchen, living_room, master_bedroom, dylans_room, outside"},
+        },
+        "required": ["room"],
+    },
     "set_dial": {
         "description": "See or change Nova's personality dials (humor, snark, proactivity, bluntness, profanity, verbosity). Use when Jordan says e.g. 'set humor to 60', 'profanity off', 'show dials', 'reset snark'.",
         "parameters": {
@@ -328,7 +338,7 @@ _TOOL_TOPIC = {
     "scheduler_trigger": r"\b(run|trigger|kick|start|fire|schedule|task|job|rerun|re-run)\b",
     "memory_quality": r"\b(clean|cleanup|clean up|quality|purge|dedupe|tidy)\b",
     "set_dial": r"\b(dial|dials|humor|humour|snark|snarky|proactiv\w*|blunt\w*|profan\w*|swear\w*|verbos\w*|wordy|funn\w*)\b",
-    "run_script": r"\b(run|script|execute|exec|restart|start|stop|kill|check|scene|volume|mute|unmute|soundbar|speaker|receiver|tv|music|movie|goodnight|bedtime|turn|power|play)\b",
+    "run_script": r"\b(run|script|execute|exec|restart|start|stop|kill|check|scene|volume|mute|unmute|soundbar|speaker|receiver|tv|dashboard|music|movie|goodnight|bedtime|turn|power|play)\b",
 }
 _ASK_RE = re.compile(
     r"\b(please|pls|can you|could you|would you|will you|go ahead|do it|make it so|i need you to|i want you to|"
@@ -403,6 +413,11 @@ async def dispatch_tool(ctx: GatewayContext, tool_name: str, tool_params: dict,
     Jordan; approve → park it in autonomy_pending, tell Jordan how to approve, run nothing."""
     if tool_name not in TOOL_REGISTRY:
         return f"[error: unknown tool '{tool_name}']"
+    if tool_name == "show_dashboard":           # queue #3113: same nova_home_control.py run_script path as home_control
+        room = re.sub(r"[^a-z_]", "", (tool_params.get("room") or "").strip().lower().replace(" ", "_"))
+        if not room:
+            return "[error: room required]"
+        tool_name, tool_params = "run_script", {"script": "nova_home_control.py", "args": ["tv", room, "dashboard"]}
     if tool_name == "home_control":
         try:
             args = home_control_args(tool_params.get("device", ""), tool_params.get("action", ""))

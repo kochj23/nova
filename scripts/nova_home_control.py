@@ -1064,6 +1064,82 @@ def _cli_scene(args: list) -> None:
     print(_format_result(result))
 
 
+# ── Apple TV: show the Nova Cluster dashboard (queue #3113 tier 2, 2026-10-21) ──
+# All six Apple TVs are paired in Home Assistant (.6:8123, apple_tv integration: AirPlay+Companion+RAOP).
+# The dashboard reaches a TV as its screensaver: Home Sharing (TV-Movies-3 .7, folder ~/Pictures/NovaTV) shares
+# album "Nova" with the hourly frames from nova_cluster_render.py, and each TV's Screen Saver is set to it.
+# So show_dashboard = wake the TV, go Home, start the screensaver. tvOS gives no third-party way to put a live web
+# page on screen (AirPlay play_url is accepted but never fetched on tvOS 26; checked 2026-10-21). Companion app
+# launch works with pyatv 0.18 (HA 2026.2.3 pins 0.17, whose Companion commands all time out on tvOS 26).
+HA_URL = "http://192.168.1.6:8123"
+APPLE_TVS = {   # room -> HA remote entity (entity ids verified against HA 2026-10-21)
+    "office": "remote.office",
+    "kitchen": "remote.kitchen_2",
+    "living_room": "remote.living_room",
+    "master_bedroom": "remote.master_bedroom_4",
+    "bedroom": "remote.master_bedroom_4",
+    "dylans_room": "remote.dylans_room_2",
+    "dylan": "remote.dylans_room_2",
+    "outside": "remote.outside",
+    "patio": "remote.outside",
+}
+
+
+def tv_entity(room: str) -> str:
+    """Pure: room name -> HA remote entity, or raise ValueError."""
+    key = (room or "").strip().lower().replace("'", "").replace("\u2019", "").replace("-", "_").replace(" ", "_")
+    if key.endswith("_tv"):
+        key = key[:-3]
+    if key not in APPLE_TVS:
+        raise ValueError(f"unknown Apple TV room '{room}' (rooms: {', '.join(sorted(set(APPLE_TVS)))})")
+    return APPLE_TVS[key]
+
+
+def _ha_service(domain: str, service: str, data: dict) -> tuple:
+    import json
+    token = nova_config._keychain("nova-homeassistant-token")
+    req = urllib.request.Request(f"{HA_URL}/api/services/{domain}/{service}", data=json.dumps(data).encode(),
+                                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return True, r.status
+    except urllib.error.HTTPError as e:
+        return False, e.code
+    except OSError as e:
+        return False, str(e)
+
+
+def show_dashboard(room: str) -> dict:
+    """Wake the room's Apple TV, press Home, start its screensaver (album Nova = the Nova Cluster dashboard)."""
+    ent = tv_entity(room)
+    ok_on, on = _ha_service("remote", "turn_on", {"entity_id": ent})
+    time.sleep(4)
+    _ha_service("remote", "send_command", {"entity_id": ent, "command": "home"})
+    time.sleep(2)
+    ok_ss, ss = _ha_service("remote", "send_command", {"entity_id": ent, "command": "screensaver"})
+    out = {"room": room, "entity": ent, "woke": ok_on, "screensaver": ok_ss}
+    if not ok_ss:
+        # tvOS 26 times out the Companion HID screensaver press (pyatv 0.17 and 0.18, 2026-10-21); the TV is awake on
+        # Home, so its own idle timer starts the Nova screensaver (Settings > Screen Saver > Start After).
+        out["note"] = (f"TV is awake on the Home screen; it did not take the direct screensaver command (HA {ss}), so "
+                       "the Nova dashboard screensaver starts on its own after the TV's Start After idle time.")
+    return out
+
+
+def _cli_tv(args: list) -> None:
+    """Handle: tv <room> dashboard"""
+    if len(args) < 2 or args[1].lower() not in ("dashboard", "show_dashboard"):
+        print(f"Usage: tv <room> dashboard   rooms: {', '.join(sorted(set(APPLE_TVS)))}")
+        sys.exit(1)
+    try:
+        result = show_dashboard(args[0])
+    except ValueError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+    print(_format_result(result))
+    sys.exit(0 if result["woke"] else 1)
+
+
 def _format_result(result) -> str:
     """Format a result dict/value for CLI display."""
     import json
@@ -1080,6 +1156,7 @@ def main():
         print("  nova_home_control.py bose <device|all> <command> [value]")
         print("  nova_home_control.py onkyo <device> <command> [value]")
         print("  nova_home_control.py scene <name>")
+        print("  nova_home_control.py tv <room> dashboard   (Apple TV: show the Nova Cluster dashboard)")
         print("  nova_home_control.py weather")
         print("  nova_home_control.py status")
         print("")
@@ -1096,6 +1173,8 @@ def main():
         _cli_onkyo(sys.argv[2:])
     elif category == "scene":
         _cli_scene(sys.argv[2:])
+    elif category == "tv":
+        _cli_tv(sys.argv[2:])
     elif category == "weather":
         result = weather.get_current()
         if "error" in result:
@@ -1106,7 +1185,7 @@ def main():
         status = get_all_status()
         print(_format_status(status))
     else:
-        print(f"Unknown category: {category}. Use: bose, onkyo, scene, weather, status")
+        print(f"Unknown category: {category}. Use: bose, onkyo, scene, tv, weather, status")
         sys.exit(1)
 
 
