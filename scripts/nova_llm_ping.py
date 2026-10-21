@@ -47,7 +47,7 @@ ENDPOINTS = [
     ("nova-core2/.86",  "ollama",   "http://192.168.1.86:11434"),
     ("nova-core3/.5",   "ollama",   "http://192.168.1.5:11434"),
     # nova-core5/.10 serves nomic-embed only (embedding node) — covered by the memory prober, not a chat node
-    ("nova-core7/.125", "ollama",   "http://192.168.1.125:11434"),
+    ("nova-core7", "ollama",   "http://nova-core7.digitalnoise.net:11434"),
     ("nova-core9/.7",   "ollama",   "http://192.168.1.7:11434"),
     ("nova-core6/.252", "ollama",   "http://192.168.1.252:11434"),
     ("nova-core8/.6",   "mlx",      "http://192.168.1.6:5050"),
