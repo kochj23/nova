@@ -992,6 +992,7 @@ tasks:
     schedule: every 10m
     timeout: 120
     overlap: skip
+    enabled: false                 # 2026-10-21: no survey since 10-19 17:41 — nova-core7's AQC113 eno1 died (RX 0, every TX errors), so its AX200 wlp194s0 (the survey radio) is now the node's only uplink and nova-wifi-survey.timer is disabled. Re-enable after the NIC/cable swap: on core7 `mv /etc/NetworkManager/conf.d/99-nova-wifi-sensor.conf.disabled ...conf; systemctl enable --now nova-wifi-survey.timer`, then here.
 
   # ---- 2026-10-08: Baymax care check-in (nova_care_checkin.py) ----
   care_checkin_ask:                # Sunday 6pm — "are you satisfied with your care?" to #nova-chat: 3-4 items from the week, reply "1 yes 2 no 3 meh"; row in nova_care_checkins

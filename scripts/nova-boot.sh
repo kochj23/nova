@@ -395,20 +395,17 @@ else
     launchctl start net.digitalnoise.nova-memory-server 2>/dev/null
 fi
 
-# Gateway — kill any orphaned signal-cli before starting to avoid lock conflicts
-pkill -f "signal-cli" 2>/dev/null
-sleep 1
-if port_listening 18789; then
-    log "Gateway already running"
+# Gateway — Nova Gateway V2 (LaunchAgent net.digitalnoise.nova-gateway-v2, health :18792).
+# The legacy OpenClaw gateway (:18789, nova_gateway_start.sh) was retired 2026-06-18 — never start it.
+if http_ok "http://127.0.0.1:18792/health"; then
+    log "Gateway V2 already running"
 else
-    log "Starting Gateway..."
-    nohup ~/.openclaw/scripts/nova_gateway_start.sh \
-        >> ~/.openclaw/logs/gateway.log \
-        2>> ~/.openclaw/logs/gateway.err.log &
+    log "Starting Gateway V2..."
+    launchctl kickstart "gui/$(id -u)/net.digitalnoise.nova-gateway-v2" 2>/dev/null
 fi
 
 wait_for_port 18790 "Memory Server" 90
-wait_for_port 18789 "Gateway"       120
+wait_for_port 18792 "Gateway V2"    120
 
 # ─── Tier 2 Tests ─────────────────────────────────────────────────────────────
 log ""
@@ -423,11 +420,11 @@ else
     warn "Memory Server: HTTP health check inconclusive (port open but no HTTP response)"
 fi
 
-# Gateway: WebSocket port open (we can't easily test WS, but TCP is a start)
-if port_listening 18789; then
-    pass "Gateway: port 18789 accepting connections"
+# Gateway V2: HTTP health
+if http_ok "http://127.0.0.1:18792/health"; then
+    pass "Gateway V2: /health OK (:18792)"
 else
-    fail "Gateway: port 18789 not listening"
+    fail "Gateway V2: /health on :18792 not responding"
 fi
 
 # Gateway: check for EPERM issue (workspace-state.json)
@@ -439,15 +436,6 @@ if [ -f "$HOME/.openclaw/workspace/.openclaw/workspace-state.json" ]; then
     fi
 fi
 
-# Security: Gateway not exposed beyond loopback
-GW_BIND=$(lsof -iTCP:18789 -sTCP:LISTEN 2>/dev/null | grep -o "localhost\|127\.0\.0\.1\|\*" | head -1)
-if [ "$GW_BIND" = "localhost" ] || [ "$GW_BIND" = "127.0.0.1" ]; then
-    pass "Security: Gateway bound to loopback only"
-elif [ "$GW_BIND" = "*" ]; then
-    warn "Security: Gateway bound to ALL interfaces (should be loopback only)"
-else
-    pass "Security: Gateway binding appears safe ($GW_BIND)"
-fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TIER 3: Application Layer (depend on Tier 1 + 2)
