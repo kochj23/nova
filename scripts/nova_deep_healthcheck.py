@@ -235,9 +235,9 @@ def check_dns():
 
 
 def check_journal():
-    body, st = get("https://nova.digitalnoise.net/operations/index.xml", 12)
+    body, st = get("https://nova.digitalnoise.net/burbank-ops/index.xml", 12)  # operations merged into burbank-ops 2026-10-19
     if st == 200 and "<item>" in body:
-        return result("journal", True, "operations feed live with recent items")
+        return result("journal", True, "burbank-ops feed live with recent items")
     return result("journal", False, f"journal feed not serving (http {st})", needs_human=True)
 
 

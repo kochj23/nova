@@ -32,7 +32,8 @@ for name, rtsp_url in cameras.items():
     try:
         output_file = f"{storage_dir}/{name}_latest.jpg"
         cmd = [
-            FFMPEG, "-rtsp_transport", "tcp", "-i", rtsp_url,
+            FFMPEG, "-tls_verify", "0",  # Protect self-signed cert; ffmpeg>=8 verifies by default
+            "-rtsp_transport", "tcp", "-i", rtsp_url,
             "-frames:v", "1", "-update", "1", "-y", output_file
         ]
         result = subprocess.run(cmd, capture_output=True, timeout=10)
