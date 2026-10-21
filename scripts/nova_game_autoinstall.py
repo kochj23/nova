@@ -21,7 +21,7 @@ from pathlib import Path
 
 BINARIES = Path("/Volumes/Data/xcode/binaries")
 APPS = Path("/Applications")
-GAMES = ("GTNW", "CarTest", "Blompie")
+GAMES = ("GTNW", "CarTest", "Blompie", "StuntDriver")
 
 
 def log(m):
