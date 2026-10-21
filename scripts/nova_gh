@@ -1,0 +1,17 @@
+#!/bin/sh
+# nova-gh — `gh` with GH_TOKEN fetched from the fleet secret store at call time.
+#
+# For the NON-interactive paths (systemd units, cron, scheduler tasks, ssh one-liners)
+# that never source ~/.config/nova/cli-auth.sh. Interactive shells already have GH_TOKEN
+# exported by that hook, in which case this is just `gh`.
+#
+# No token touches the filesystem and none is baked into a unit file; `security` is the
+# Linux shim that answers from nova.secrets (and the real Keychain on macOS).
+# Deployed as /usr/local/bin/nova-gh on every core node. 2026-10-21.
+set -e
+if [ -z "${GH_TOKEN:-}" ]; then
+    GH_TOKEN=$(security find-generic-password -s nova-github-token -w 2>/dev/null) || true
+    [ -n "$GH_TOKEN" ] || { echo "nova-gh: no nova-github-token in the fleet store" >&2; exit 78; }
+    export GH_TOKEN GITHUB_TOKEN="$GH_TOKEN"
+fi
+exec gh "$@"

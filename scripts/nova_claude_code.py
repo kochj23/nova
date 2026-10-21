@@ -59,15 +59,30 @@ def resolve_claude_bin() -> str:
 
 def claude_oauth_token() -> str | None:
     """The long-lived CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`), resolved fail-safe
-    across the fleet. Order: an explicit env override, then the macOS Keychain (.6), then a
-    0600 file on the Linux nodes (delivered out-of-band). Returns None if none is available —
-    callers then fall through to the CLI's own file credential, so behaviour is never broken,
-    only improved: the long-lived token keeps `claude -p` authenticated even after the CLI's
-    short-lived file credential expires nightly (verified: the env token overrides an expired
-    file cred). 2026-08-12."""
+    across the fleet. Order: an explicit env override, then the FLEET SECRET STORE (1Password
+    vault "Nova" item `claude-code-oauth-token`, mirrored into nova.secrets — the source of
+    truth, so a rotation reaches every node with no file to push), then the macOS Keychain
+    (.6), then a 0600 file on the Linux nodes (a legacy cache that goes stale: .5's copy was
+    18 days old on 2026-10-21). Returns None if none is available — callers then fall through
+    to the CLI's own file credential, so behaviour is never broken, only improved: the
+    long-lived token keeps `claude -p` authenticated even after the CLI's short-lived file
+    credential expires (verified: the env token overrides an expired file cred, which is how
+    nova-core2/.86's 2026-10-03-expired ~/.claude/.credentials.json stopped mattering).
+    2026-08-12; fleet-store source added 2026-10-21."""
     tok = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
     if tok:
         return tok.strip()
+    # Fleet store / 1Password: works under systemd and cron (nova_secrets._load falls back to
+    # the sealed systemd credential), so the scheduler path is not tied to a login shell.
+    try:
+        sys.path[:0] = [p for p in ("/opt/nova", os.path.expanduser("~/.openclaw/scripts"))
+                        if p not in sys.path]
+        from nova_secrets import get_secret  # noqa: PLC0415
+        t = (get_secret("claude-code-oauth-token") or "").strip()
+        if t:
+            return t
+    except Exception:
+        pass
     if sys.platform == "darwin":
         try:
             r = subprocess.run(

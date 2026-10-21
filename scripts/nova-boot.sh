@@ -546,6 +546,17 @@ for agent in com.nova.agent-sentinel \
 done
 log "All agents and watchdog started"
 
+# Push a fresh Claude Code credential to every Linux node (2026-10-21). The scheduler runs
+# this hourly, but a node that rebooted — or a Studio that was down over a token expiry —
+# would otherwise sit with a dead ~/.claude/.credentials.json until the next slot, and every
+# scheduler task that shells out to `claude` would fail meanwhile. Idempotent: it skips any
+# node already holding the current token, so this is nearly free on a normal boot.
+if /usr/bin/python3 "$HOME/.openclaw/scripts/nova_claude_cred_sync.py" >>"$LOGFILE" 2>&1; then
+    pass "Claude credential sync pushed to the Linux fleet"
+else
+    warn "Claude credential sync failed — check nova_claude_cred_sync in $LOGFILE"
+fi
+
 # Give agents a moment to initialize
 sleep 5
 

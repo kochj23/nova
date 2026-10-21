@@ -673,10 +673,19 @@ tasks:
 
   claude_cred_sync:
     script: nova_claude_cred_sync.py
-    schedule: every 4h
-    timeout: 60
+    schedule: every 1h
+    timeout: 180
     overlap: skip
-    enabled: false   # 2026-10-03: every node now exports the long-lived CLAUDE_CODE_OAUTH_TOKEN (vault item claude-code-oauth-token); copying .6's short-lived creds is redundant
+    # 2026-10-03 this was disabled as "redundant" because every node exports the long-lived
+    # CLAUDE_CODE_OAUTH_TOKEN. 2026-10-21 RE-ENABLED: that reasoning left the fleet with ONE
+    # auth path and no fallback — by 10-21 every node's ~/.claude/.credentials.json was an
+    # empty shell (accessToken "", expiresAt 0), so an env var that failed to load meant a
+    # dead node, which is exactly what happened to .86 from 10-03 (its claude tasks failed
+    # silently for 18 days). Now: 1h (access token lives ~8h, so ~8x margin, and a rebooted
+    # node is current within the hour); each run skips nodes already holding the token, so the
+    # common path is a no-op; the refreshToken is stripped before the push; staleness and
+    # unreachability escalate via nova_notify. Tests: test_nova_claude_cred_sync.py.
+    enabled: true
 
   # Early warning before .6's Claude token expires (~8h life, doesn't auto-refresh headless).
   # Pages BEFORE articles fail instead of after. Permanent fix is `claude setup-token`.
