@@ -83,6 +83,19 @@ class TestSecurity(unittest.TestCase):
         self.assertNotIn(evil, ins[0])
         self.assertIn(evil, ins[1][1])
 
+    def test_one_question_per_kind_not_per_producer(self):   # #3647-#3650
+        cur = FakeCur({"RETURNING id": [(9,)]})
+        pairs = [{"kind": "k", "producer": f"bb {x}", "n": 69, "baseline": 54.5, "p": 0.001} for x in "abcd"]
+        C.file_question(cur, pairs, 5, 30)
+        ins = [p for s, p in cur.sql if "INSERT INTO claude_queue" in s]
+        self.assertEqual(len(ins), 1)
+        self.assertTrue(all(f"bb {x}" in ins[0][2] for x in "abcd"))
+
+    def test_open_question_of_same_kind_skips(self):
+        cur = FakeCur({"FROM claude_queue": [(3647,)]})
+        self.assertIsNone(C.file_question(cur, {"kind": "k", "producer": "p", "n": 3, "baseline": 0.1, "p": 0.01}, 5, 30))
+        self.assertFalse(any("INSERT INTO claude_queue" in s for s, _ in cur.sql))
+
     def test_question_never_gives_a_verdict_or_names_people(self):
         _desc, ctx = C.question({"kind": "k", "producer": "p", "n": 3, "baseline": 0.1, "p": 0.01}, 5, 30)
         self.assertIn("not a verdict", ctx)

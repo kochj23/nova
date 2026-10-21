@@ -236,16 +236,22 @@ def upsert(cur, rows: list) -> None:
 
 
 def file_queue(cur, unpurposed: list, new: list) -> int | None:
-    """One claude_queue item per RESURFACE_DAYS. Returns its id."""
-    rows = _q(cur, "SELECT id FROM claude_queue WHERE description=%s AND created_at > now() - make_interval(days => %s) "
-                   "ORDER BY id DESC LIMIT 1", (QUEUE_DESC, RESURFACE_DAYS))
-    if rows:
-        return rows[0][0]
+    """One claude_queue item per RESURFACE_DAYS; an item still open is refreshed, never duplicated. Returns its id."""
     ctx = (f"{len(unpurposed)} invitation(s) into Nova have no purpose (nova_threshold.py). Propose an owner, "
            "purpose and expiry for each (UPDATE threshold_ledger SET owner=..., purpose=..., expires_at=...), "
            "or propose rotation/revocation to Little Mister. Revocation is his decision.\n\n"
            + "\n".join(line(r) for r in unpurposed[:150])
            + ("\n\nNew since the last run:\n" + "\n".join(line(r) for r in new) if new else ""))
+    # 2026-10-21 (#3487 -> #3927 dup): an open item outlives the 7-day window; refresh it instead of filing anew.
+    rows = _q(cur, "SELECT id FROM claude_queue WHERE description=%s AND status IN ('pending','in_progress') "
+                   "ORDER BY id DESC LIMIT 1", (QUEUE_DESC,))
+    if rows:
+        cur.execute("UPDATE claude_queue SET context=%s, updated_at=now() WHERE id=%s", (ctx, rows[0][0]))
+        return rows[0][0]
+    rows = _q(cur, "SELECT id FROM claude_queue WHERE description=%s AND created_at > now() - make_interval(days => %s) "
+                   "ORDER BY id DESC LIMIT 1", (QUEUE_DESC, RESURFACE_DAYS))
+    if rows:
+        return rows[0][0]
     # claude_queue.session_id is a foreign key: register this organ's session first (2026-10-09 audit).
     cur.execute("INSERT INTO claude_sessions (session_id, status) VALUES (%s,'active') "
                 "ON CONFLICT (session_id) DO NOTHING", (QUEUE_SESSION,))

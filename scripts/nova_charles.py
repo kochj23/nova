@@ -177,13 +177,18 @@ def analyse(points, acts, since, until, window, shuffles=1000, min_pair=3, seed=
             "pairs": sorted(pairs, key=lambda r: (r["p"], -r["n"]))}
 
 
-def question(pair: dict, window_min: int, days: int) -> tuple:
-    """(description, context) of a claude_queue question. The description is stable per pair (dedup key)."""
-    desc = (f"Was this Charles? '{pair['kind']}' anomalies keep landing within ±{window_min} min "
-            f"of my own '{pair['producer']}'")
-    ctx = (f"nova_charles.py, last {days} days: {pair['n']} '{pair['kind']}' anomaly points had a "
-           f"'{pair['producer']}' action within ±{window_min} min; the same anomalies moved to other days "
-           f"(same time of day) got {pair['baseline']} on average (p={pair['p']}).\n"
+def question(pairs, window_min: int, days: int) -> tuple:
+    """(description, context) of one claude_queue question for one anomaly kind and every producer flagged
+    with it (2026-10-21, #3647-#3650: one anomaly cluster had filed four identical questions, one per
+    co-firing producer). The description is stable per kind (dedup key)."""
+    pairs = [pairs] if isinstance(pairs, dict) else list(pairs)
+    kind = pairs[0]["kind"]
+    desc = f"Was this Charles? '{kind}' anomalies keep landing within ±{window_min} min of my own actions"
+    ctx = (f"nova_charles.py, last {days} days, '{kind}' anomaly points with my own action within ±{window_min} min; "
+           "the same anomalies moved to other days (same time of day) got the baseline on average:\n"
+           + "\n".join(f"  {p['producer']}: {p['n']} vs {p['baseline']} (p={p['p']})" for p in pairs) + "\n"
+           "Producers with the same n and baseline are one anomaly cluster: check whether they share a cause "
+           "(they fire together) or the baseline (a producer that started or stopped inside the window).\n"
            "Coincidence is not cause: this is a question, not a verdict. Check whether that action could "
            "produce the anomaly (a restart that silences a feed, a probe that looks like a new device). "
            "If it does, add the hypothesis to the Buick 8 row; never set its cause without evidence.")
@@ -200,10 +205,13 @@ def settings(cur) -> dict:
         return dict(DEFAULTS)
 
 
-def file_question(cur, pair: dict, window_min: int, days: int):
-    desc, ctx = question(pair, window_min, days)
-    if _q(cur, "SELECT id FROM claude_queue WHERE description=%s AND created_at > now() - make_interval(days => %s)",
-          (desc, REQUEUE_DAYS)):
+def file_question(cur, pairs, window_min: int, days: int):
+    desc, ctx = question(pairs, window_min, days)
+    kind = (pairs if isinstance(pairs, dict) else pairs[0])["kind"]
+    # still-open question about this kind (any older per-producer wording too), or one asked this week: skip
+    if _q(cur, "SELECT id FROM claude_queue WHERE (description LIKE %s AND status IN ('pending','in_progress')) "
+               "OR (description=%s AND created_at > now() - make_interval(days => %s))",
+          (f"Was this Charles? '{kind}' anomalies%", desc, REQUEUE_DAYS)):
         return None
     cur.execute("INSERT INTO claude_sessions (session_id, status) VALUES (%s,'active') ON CONFLICT DO NOTHING",
                 (QUEUE_SESSION,))
@@ -241,7 +249,10 @@ def run(dry: bool = False, days: int | None = None) -> dict:
                     "VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb)",
                     (cfg["days"], cfg["window_min"], res["points"], res["coincident"], res["baseline"], res["p"],
                      json.dumps(res["by_source"]), json.dumps(res["pairs"])))
-        filed = [q for q in (file_question(cur, p, cfg["window_min"], cfg["days"]) for p in flagged) if q]
+        by_kind = {}
+        for p in flagged:
+            by_kind.setdefault(p["kind"], []).append(p)
+        filed = [q for q in (file_question(cur, ps, cfg["window_min"], cfg["days"]) for ps in by_kind.values()) if q]
         log(f"wrote charles_runs; {len(filed)} new question(s) to claude_queue {filed}")
         return res
     finally:
@@ -273,6 +284,9 @@ def selftest() -> int:
     got = anomaly_points([("k", t0 + timedelta(days=1), ev)], since, until)
     assert len(got) == 2 and got[1][0] == datetime(2026, 10, 2, 9, 0, tzinfo=W.TZ), got
     assert "never" in question({"kind": "k", "producer": "p", "n": 3, "baseline": 0.2, "p": 0.01}, 5, 30)[1]
+    two = [{"kind": "k", "producer": x, "n": 3, "baseline": 0.2, "p": 0.01} for x in ("p1", "p2")]
+    d, c = question(two, 5, 30)
+    assert d == question(two[:1], 5, 30)[0] and "p1" in c and "p2" in c, (d, c)
     print("selftest ok")
     return 0
 

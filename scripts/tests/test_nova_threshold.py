@@ -182,6 +182,12 @@ class TestIntegration(unittest.TestCase):
         self.assertEqual(T.file_queue(cur, [{"kind": "x", "host": "", "label": "a", "fingerprint": None}], []), 41)
         self.assertFalse(any("INSERT" in s for s, _ in cur.sql))
 
+    def test_open_item_is_refreshed_not_duplicated(self):   # #3487 -> #3927
+        cur = FakeCur({"status IN ('pending','in_progress')": [(3487,)]})
+        self.assertEqual(T.file_queue(cur, [{"kind": "x", "host": "", "label": "a", "fingerprint": None}], []), 3487)
+        self.assertTrue(any("SET context=" in s and p[1] == 3487 for s, p in cur.sql if p))
+        self.assertFalse(any("INSERT" in s for s, _ in cur.sql))
+
     def test_herd_rows_from_herd_config(self):
         fake = types.SimpleNamespace(HERD=[{"name": "Sam", "email": "Sam@Example.org", "profile": "p"}])
         with mock.patch.dict(sys.modules, {"herd_config": fake}):
