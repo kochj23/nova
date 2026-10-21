@@ -98,7 +98,10 @@ GAME_ABOUT = {
             "wars and the nuclear ladder turn by turn; it ends in victory, defeat, impeachment or nuclear fire",
     "cartest": "a car performance simulator: acceleration runs, two-lane drag races with a Christmas tree, "
                "multi-car drags and lap times on real tracks; in 'Beat Nova' (beat_nova events) he races a copy of "
-               "his own car that Nova tuned with the app's optimisers at a chosen difficulty",
+               "his own car that Nova tuned with the app's optimisers at a chosen difficulty; challenge events are seeded "
+               "daily/weekly challenges with personal bests, record events are all-time Hall of Fame records falling, "
+               "career_event is his tuner career (parts bought with race winnings, a ladder of events), and a drag "
+               "race with a 'matchup' is a curated era matchup (1969 vs 2026, EV vs ICE)",
     "blompie": "an endless, slightly absurd Zork-style text adventure narrated by a small local model",
     "blompie-mac": "an endless, slightly absurd Zork-style text adventure narrated by a small local model",
     "mush": "a web MUSH (multi-user text world): rooms, quests, credits and chat",
