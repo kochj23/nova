@@ -92,6 +92,7 @@ GAME_NAMES = {
     ("blompie", "web"): "Blompie",
     ("blompie-mac", "mac"): "Blompie for Mac",
     ("mush", "web"): "the Nova MUSH",
+    ("stuntdriver", "mac"): "Stunt Driver",
 }
 GAME_ABOUT = {
     "gtnw": "a Cold War presidential strategy simulator: you are President, run diplomacy, budgets, covert ops, "
@@ -105,6 +106,9 @@ GAME_ABOUT = {
     "blompie": "an endless, slightly absurd Zork-style text adventure narrated by a small local model",
     "blompie-mac": "an endless, slightly absurd Zork-style text adventure narrated by a small local model",
     "mush": "a web MUSH (multi-user text world): rooms, quests, credits and chat",
+    "stuntdriver": "a native Mac rebuild of Spectrum HoloByte's 1990 3D stunt-racing game: laps of stunt courses with "
+                   "jumps, loops and a drawbridge, AI opponent drivers, penalties for cutting the course, crashes, "
+                   "ghost races and seeded stunt challenges",
 }
 
 
