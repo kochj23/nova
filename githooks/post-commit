@@ -1,0 +1,29 @@
+#!/bin/bash
+# Publishes scripts/ to the shared /nova/scripts mount after every commit, so
+# nova-core (.2), nuk (.10), and nova-core2 (.86) -- which read scripts via a
+# symlink to /nova/scripts instead of keeping their own local copy -- see the
+# change immediately instead of silently drifting (see 2026-07-24 outage:
+# nova_rando_weird_memories.py failed every run for 2 weeks because .2's
+# stale copy never got the PG_DSN fix that landed here).
+#
+# Routed via SSH to .2 rather than a local /nova write: this Mac's /nova mount
+# is gated behind a known Full Disk Access issue (see memory
+# fda-volumes-data-route-around) that needs a one-time manual System Settings
+# grant. Going over SSH to a node with a working mount sidesteps that so this
+# hook doesn't silently no-op until that's fixed.
+# 2026-10-12 (later): the git worktree IS the NAS share (/Volumes/nas/nova-fs), so scripts/ is live
+# for every node the moment it is saved -- no publish step. Only core4's local scripts-fleet copy
+# (resilience node, deliberately off the share) still needs a push.
+:
+
+# core4 (.250) is the fleet's resilience node: it keeps a deliberate LOCAL copy
+# (~/.openclaw/scripts-fleet) instead of the /nova symlink, so its standby
+# gateway/services survive a NAS outage (2026-07-26: /nova mount failure took
+# the primary gateway down for 536 restart cycles — the standby must not share
+# that fate). Push it a copy on every commit so it stays fresh, not stale.
+rsync -aL --delete \
+    --exclude='__pycache__' --exclude='*.pyc' \
+    "$(git rev-parse --show-toplevel)/scripts/" \
+    192.168.1.250:.openclaw/scripts-fleet/ \
+    > /tmp/nova-scripts-sync-core4.log 2>&1 &
+disown
