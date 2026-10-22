@@ -1350,6 +1350,18 @@ tasks:
     schedule: cron 30 21 * * 0
     timeout: 900
     overlap: skip
+  bedroom_quiet_on:                # daily 21:30 — master-bedroom quiet window ON (Jordan 2026-10-22: "I don't want to hear the fans cycling on and off all night"). Measured cause: macOS relaunched com.apple.mediaanalysisd.photos.full 11x overnight on a ~67 min cycle on .77/nova-core10, re-analysing a 251 GB Photos library at 74-95 % CPU (stale embedding version 1 vs 5). Two levers: Low Power Mode on .77 (the only bedroom box that supports it; .252 answers "not supported on AC Power") + media_reingest/exclude_nodes for the bedroom whisper minions. THROTTLES, never stops: ollama still answers, every other task still runs.
+    script: nova_bedroom_quiet.py
+    args: ["on"]
+    schedule: cron 30 21 * * *
+    timeout: 300
+    overlap: skip
+  bedroom_quiet_off:               # daily 04:00 — quiet window OFF. Removes only the nodes bedroom_quiet_on itself added (tracked in service_config media_reingest/quiet_excluded), so a hand-made exclusion such as nova-core4 survives.
+    script: nova_bedroom_quiet.py
+    args: ["off"]
+    schedule: cron 0 4 * * *
+    timeout: 300
+    overlap: skip
   work_lessons:                    # Nova's work reader: lessons, not dialogue (Jordan 2026-10-15). Fills free nova-core10 slots (2) and its own Ollama (net.digitalnoise.ollama-bulk :11436, 3 slots) concurrently, else one Studio call at a time; backs off when embeddings slow; per-tier switches service_config work_lessons/backfill_enabled_{A,B,C}
     script: nova_work_lessons.py
     args: ["--scheduled", "--minutes", "20", "--streams", "5"]   # 20 + finishing in-flight reads (~8-12) < 30: back-to-back runs, no skipped slot (2026-10-16)
