@@ -52,6 +52,7 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -157,7 +158,11 @@ def to_remote(path: str) -> str:
     """/Volumes/external/videos/X -> /external/videos/X (nova-core's mount). Pure."""
     if not path.startswith(VIDEO_ROOT):
         raise ValueError(f"not under {VIDEO_ROOT}: {path}")
-    return REMOTE_ROOT + path[len(VIDEO_ROOT):]
+    # The queue stores some paths in NFD (decomposed, from a macOS/SMB-side scan) but nova-core's
+    # files are NFC; ffmpeg's exact-byte stat() then fails "No such file or directory" (rc 254) on
+    # every accented/non-ASCII name. NFC-normalise here, the one chokepoint every extraction passes
+    # through. Idempotent for already-NFC paths. (2026-10-22: 405 of 542 reingest errors were this.)
+    return unicodedata.normalize("NFC", REMOTE_ROOT + path[len(VIDEO_ROOT):])
 
 
 def plex_to_local(path: str) -> str | None:
@@ -1049,6 +1054,8 @@ def selftest() -> int:
     assert eligible(VIDEO_ROOT + "TVShows/A/Season 01/a.mkv", None) == "missing"
     assert eligible(VIDEO_ROOT + "TVShows/A/Season 01/a.mkv", 10**8) is None
     assert to_remote(VIDEO_ROOT + "TVShows/a b.mp4") == "/external/videos/TVShows/a b.mp4"
+    # NFD input (O + combining-diaeresis) must come out NFC (precomposed Ö), matching nova-core's files
+    assert to_remote(VIDEO_ROOT + "yt/Ö.mp4") == "/external/videos/yt/Ö.mp4"
     assert plex_to_local(PLEX_ROOT + "yt/x.mp4") == VIDEO_ROOT + "yt/x.mp4"
     assert priority(1, 0, 0, 0)[0] > priority(0, 0, 10**6, 10**4)[0]
     assert priority(0, 0, 5, 1)[1] == "memory_recall"
