@@ -1362,6 +1362,12 @@ tasks:
     schedule: cron 0 4 * * *
     timeout: 300
     overlap: skip
+  python_guard:                    # hourly — assert /opt/homebrew/bin/python3 is still python@3.14 (where Nova's site-packages live) and can import psycopg2/yaml/numpy/requests/psutil; relink + alert if not. Incident 2026-10-22 03:14-10:26: a brew run upgraded awscli/nmap/pipx/summarize/httpie, which had moved upstream onto python@3.15, so brew installed python@3.15 and linking it stole the unversioned python3 symlink. PINNING python@3.14 DOES NOT PREVENT THIS. ~17 tasks failed on ModuleNotFoundError psycopg2, and because 3.15 has no yaml the next scheduler restart would have left the scheduler dead. Not folded into brew_autoupdate.sh because that 03:14 run was NOT brew-autoupdate (Sundays 04:30, last ran 10-11) — an ad-hoc brew by anyone can cause it.
+    script: nova_python_guard.py
+    args: ["--repair", "--quiet"]
+    schedule: every 1h
+    timeout: 600
+    overlap: skip
   work_lessons:                    # Nova's work reader: lessons, not dialogue (Jordan 2026-10-15). Fills free nova-core10 slots (2) and its own Ollama (net.digitalnoise.ollama-bulk :11436, 3 slots) concurrently, else one Studio call at a time; backs off when embeddings slow; per-tier switches service_config work_lessons/backfill_enabled_{A,B,C}
     script: nova_work_lessons.py
     args: ["--scheduled", "--minutes", "20", "--streams", "5"]   # 20 + finishing in-flight reads (~8-12) < 30: back-to-back runs, no skipped slot (2026-10-16)
