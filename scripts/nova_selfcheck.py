@@ -391,7 +391,7 @@ def check_disks():
         record("disk", "ok")
 
 
-MOUNTS = {"/Volumes/nas": "192.168.1.69", "/Volumes/external": "192.168.1.69",   # want: server the share must come from
+MOUNTS = {"/Volumes/nas": "192.168.1.19", "/Volumes/external": "192.168.1.19",   # want: server the share must come from (UNAS 10G data IP since 2026-10-23; .69 = mgmt only)
           "/Volumes/Data": None, "/Volumes/MoreData": None}
 SHARE_MOUNT_JOB = "net.digitalnoise.nova-mac-share-mount"
 
