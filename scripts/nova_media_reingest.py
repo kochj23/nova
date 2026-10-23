@@ -76,6 +76,16 @@ STALE_RUNNING_H = 2
 MAX_ATTEMPTS = 3
 DEFAULT_HOURS = 7.0
 STOP_AT = "06:00"
+# No-fans-at-night (Jordan 2026-10-23): heavy transcription (the daytime batch AND the any-hour minions) stands down
+# overnight so the cluster stays quiet, and runs full-throttle during the day. Night = QUIET_FROM_H..QUIET_TO_H local.
+QUIET_FROM_H = 21   # 21:00 and later is night
+QUIET_TO_H = 8      # before 08:00 is night
+
+
+def night_quiet(_now=datetime.now) -> bool:
+    """True during the quiet overnight window. Pure (now injected)."""
+    h = _now().hour
+    return h >= QUIET_FROM_H or h < QUIET_TO_H
 MIN_FREE_GB = 20
 GPU_WHISPER_LOCK = "nova_gpu_whisper"          # shared: any other whisper batch should take the same lock
 MOVIE_JOB = "movie-ingest/run.py"
@@ -618,6 +628,8 @@ def guards(oc, check_movie: bool = True) -> str | None:
         return "service_config media_reingest/enabled is false"
     if kill_switch(oc):
         return "autonomy kill switch engaged"
+    if night_quiet():
+        return f"quiet hours ({QUIET_FROM_H:02d}:00-{QUIET_TO_H:02d}:00): no-fans-at-night — heavy transcription is daytime only"
     if check_movie and movie_job_running():
         return f"{MOVIE_JOB} is running"
     if shutil.disk_usage(tempfile.gettempdir()).free < MIN_FREE_GB * 1e9:
