@@ -65,7 +65,7 @@ DEFAULTS = {
     "pg_port": 5433,
     "pg_db": "games",
     "pg_user": "play_reader",
-    "sslrootcert": "/Volumes/Data/xcode/NovaGames/deploy/db/games-pg-ca.crt",
+    "sslrootcert": "/Volumes/nas/xcode/NovaGames/deploy/db/games-pg-ca.crt",
     "keychain_service": "nova-games-play-reader",
     "redline": ["disney", "imagineering", "espn", "hulu"],  # work content never reaches the site
     # WRITER_CHAIN — the ONE place the writing model is chosen. Tried in order; the next writer is used when one
