@@ -44,7 +44,7 @@ import sys
 from pathlib import Path
 
 SYNOLOGY = "192.168.1.11"
-UNAS = "192.168.1.69"
+UNAS = "192.168.1.19"
 UNAS_CREDS = "/etc/cifs-unas.creds"
 SYNOLOGY_CREDS = "/etc/cifs-nas.creds"
 # Roles since the 2026-09-10 cutover. primary_unc below is what fstab mounts (UNAS);
@@ -57,11 +57,11 @@ FALLBACK_CREDS = SYNOLOGY_CREDS if FALLBACK == SYNOLOGY else UNAS_CREDS
 # present on this host. The UNAS secondary UNCs were verified 2026-07-30 to mount
 # and hold the mirrored data (//69/nas and //69/External).
 MANAGED = [
-    {"mount": "/mnt/nas",  "primary_unc": "//192.168.1.69/nas",
+    {"mount": "/mnt/nas",  "primary_unc": "//192.168.1.19/nas",
      "secondary_unc": "//192.168.1.11/nas"},
-    {"mount": "/nas",      "primary_unc": "//192.168.1.69/nas",
+    {"mount": "/nas",      "primary_unc": "//192.168.1.19/nas",
      "secondary_unc": "//192.168.1.11/nas"},
-    {"mount": "/external", "primary_unc": "//192.168.1.69/External",
+    {"mount": "/external", "primary_unc": "//192.168.1.19/External",
      "secondary_unc": "//192.168.1.11/external"},
     # NOTE: the old NFS mount /mnt/nas-external (192.168.1.11:/volume1/external) was
     # retired 2026-07-30 — it exposed the same /volume1/external data as /external

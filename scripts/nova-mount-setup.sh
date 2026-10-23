@@ -14,7 +14,7 @@
 # Do NOT run on the flaky .7 node.
 set -euo pipefail
 
-HOST="${NOVA_SMB_HOST:-192.168.1.69}"   # live /nova source on .2: //192.168.1.69/nas/nova-fs (2026-10)
+HOST="${NOVA_SMB_HOST:-192.168.1.19}"   # live /nova source on .2: //192.168.1.69/nas/nova-fs (2026-10)
 SHARE="${NOVA_SMB_SHARE:-nas/nova-fs}"
 SMB_USER="${NOVA_SMB_USER:-kochj}"
 

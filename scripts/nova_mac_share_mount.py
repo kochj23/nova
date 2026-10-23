@@ -43,7 +43,7 @@ import sys
 import urllib.parse
 
 SYNOLOGY = "192.168.1.11"
-UNAS = "192.168.1.69"
+UNAS = "192.168.1.19"
 
 # Every share we keep mounted on a Mac. Share names differ by box: the Synology
 # serves `nas` and `external` (lowercase); the UNAS replica serves `nas` and
