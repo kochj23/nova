@@ -88,7 +88,12 @@ tasks:
 
   # ── Every 10 minutes ────────────────────────────────────────────────────
 
-
+  cc_stats_publish:                  # Claude Code usage (cctime --week/--day) → service_config cc_stats/latest → hub → Nova Cluster app. Fail-open, idempotent.
+    script: nova_cc_stats_publish.py
+    args: ["--once"]
+    schedule: every 10m
+    timeout: 180
+    overlap: skip
 
   article_watchdog:
     script: nova_article_watchdog.py

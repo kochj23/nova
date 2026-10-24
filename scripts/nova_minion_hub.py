@@ -520,6 +520,21 @@ def collect_ups(cur) -> list:
     return out
 
 
+def cc_stats(cur) -> dict | None:
+    """Claude Code usage from service_config (service='cc_stats', key='latest'), or None.
+
+    Published every 10 min by nova_cc_stats_publish.py (cctime --week/--day) on .6 — the compact
+    {"generated_at", "week", "day"} blob, served through to the Nova Cluster app as `claude_code`.
+    Fail-open: a missing row, a DB error, or a non-dict value yields None so the snapshot is
+    byte-identical to today when there is no data (the key is OMITTED, never null)."""
+    try:
+        cur.execute("SELECT value FROM service_config WHERE service = 'cc_stats' AND key = 'latest'")
+        row = cur.fetchone()
+    except Exception:  # noqa: BLE001 — CC stats are a nicety; never let them break the cluster view
+        return None
+    return row[0] if row and isinstance(row[0], dict) else None
+
+
 def collect_recent_jobs(cur) -> dict:
     """Last 10 minion jobs per node from PG: works read for lessons and TV episodes transcribed."""
     cur.execute("""
@@ -819,9 +834,13 @@ def cluster(cur) -> dict:
         llm_jobs = {n: list(d) for n, d in _RECENT_LLM.items()}
     for n in nodes:
         n["recent_jobs"] = recent_jobs_for(n["node"], db_jobs.get(n["node"], []), llm_jobs.get(n["node"], []))
-    return {"updated": iso(datetime.now(timezone.utc)), "totals": tot, "nodes": nodes, "events": events, "ups": ups, "alerts": alerts, "published": published,
+    snap = {"updated": iso(datetime.now(timezone.utc)), "totals": tot, "nodes": nodes, "events": events, "ups": ups, "alerts": alerts, "published": published,
             "fleet_tonight": fl.get("fleet_tonight"), "queue": fl.get("queue"), "eta_days": fl.get("eta_days"),
             "recent_lessons": fl.get("recent_lessons", [])[:40]}
+    cc = cc_stats(cur)                 # additive (2026-10-24): Claude Code usage card, OMITTED when there's no row
+    if cc is not None:
+        snap["claude_code"] = cc
+    return snap
 
 
 class Handler(BaseHTTPRequestHandler):
