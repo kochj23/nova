@@ -26,7 +26,9 @@ Only CORROBORATED may trigger anything above "ask".
 may_trigger(item, rung) is the gate other organs call. Rungs, least to most invasive:
 journal < ask < mention < recommend < escalate < act.
 
-Library only; no DB, no network. `--selftest` runs the worked examples.
+Library only; no network. may_trigger() leaves one guard_decisions row per gate decision via
+nova_guard_log (claim hashed, never stored; fail-open, off under tests): the timestamped record of
+claims and their evidence count (coagency #219). `--selftest` runs the worked examples.
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -213,7 +215,15 @@ def may_trigger(item: dict, rung: str, overrides: dict | None = None) -> tuple[b
     """Gate: (allowed, assessment). rung in RUNGS. Journal is always allowed."""
     a = assess(item, overrides)
     rung = rung if rung in RUNGS else "act"
-    return RUNGS.index(rung) <= RUNGS.index(a["max_rung"]), a
+    allowed = RUNGS.index(rung) <= RUNGS.index(a["max_rung"])
+    try:   # one guard_decisions row; never raises, never blocks, never alters the verdict
+        import nova_guard_log
+        nova_guard_log.log("spinnaker", "allow" if allowed else "hold", nova_guard_log.subject_hash(item.get("claim")),
+                           {"rung": rung, "verdict": a["verdict"], "independent": a["independent"],
+                            "types": a["independent_types"], "sources": [s for g in a["groups"] for s in g]})
+    except Exception:  # noqa: BLE001
+        pass
+    return allowed, a
 
 
 def line(a: dict) -> str:
@@ -229,6 +239,7 @@ def line(a: dict) -> str:
 
 
 def selftest() -> int:
+    __import__("os").environ["NOVA_GUARD_LOG"] = "0"   # worked examples never reach the live guard_decisions
     two_cams = {"claim": "person in yard", "sources": [{"id": "camera:front_yard"}, {"id": "camera:front_door"}]}
     a = assess(two_cams)
     assert a["independent"] == 1 and a["verdict"] == "SINGLE_SOURCE", a
