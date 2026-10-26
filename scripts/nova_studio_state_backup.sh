@@ -38,7 +38,7 @@ tar -czf - -C / \
     --exclude ".openclaw/media" --exclude ".openclaw/browser" --exclude ".openclaw/models" \
     --exclude ".openclaw/embeddings" --exclude ".openclaw/voice_out" --exclude "__pycache__" \
     "${HOME#/}/.local/share/signal-cli" "${HA#/}" "${HOME#/}/migrate/NovaHomeKit.app" "${HOME#/}/.openclaw" \
-    "${HOME#/}/Library/LaunchAgents" "Library/LaunchDaemons" \
+    "${HOME#/}/Library/LaunchAgents" $(cd / && echo Library/LaunchDaemons/net.digitalnoise.*) \
     -C "$STAGE" "${HA#/}/recorder-backup.sqlite" \
   | openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:NOVA_BK_KEY -out "$OUT.tmp"
 mv "$OUT.tmp" "$OUT"
