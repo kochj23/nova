@@ -9,6 +9,7 @@
 #     the recorder DB is copied with sqlite3 .backup so a live write can't corrupt it
 #   - NovaHomeKit.app                ~/migrate/NovaHomeKit.app
 #   - ~/.openclaw minus regenerable bulk (workspace images, logs, venvs, caches, models)
+#   - live LaunchAgents/LaunchDaemons (config/launchd/studio is a manual snapshot and drifts)
 # Output: /Volumes/nas/backups/studio-state/studio-state-<UTC stamp>.tar.gz.enc (AES-256, PBKDF2), last 7 kept.
 # Key: Keychain + 1Password item `nova-studio-backup-key`. Restore:
 #   NOVA_BK_KEY=$(security find-generic-password -s nova-studio-backup-key -w) openssl enc -d -aes-256-cbc -pbkdf2 -pass env:NOVA_BK_KEY \
@@ -37,6 +38,7 @@ tar -czf - -C / \
     --exclude ".openclaw/media" --exclude ".openclaw/browser" --exclude ".openclaw/models" \
     --exclude ".openclaw/embeddings" --exclude ".openclaw/voice_out" --exclude "__pycache__" \
     "${HOME#/}/.local/share/signal-cli" "${HA#/}" "${HOME#/}/migrate/NovaHomeKit.app" "${HOME#/}/.openclaw" \
+    "${HOME#/}/Library/LaunchAgents" "Library/LaunchDaemons" \
     -C "$STAGE" "${HA#/}/recorder-backup.sqlite" \
   | openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:NOVA_BK_KEY -out "$OUT.tmp"
 mv "$OUT.tmp" "$OUT"
