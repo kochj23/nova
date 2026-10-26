@@ -19,17 +19,22 @@ import argparse
 import json
 import re
 import sys
+import urllib.parse
+import urllib.request
 from datetime import date, datetime
 
 import psycopg2
 
 from nova_ask_one import ABOUT_HIM_RE, SKIP_SOURCES
 from nova_research_pass import OPS_DSN, is_allowed, llm, remember, searx
+from nova_research_pass import MEMSRV
 import nova_pg_schema  # noqa: E402 — lock-safe ensure-schema DDL (2026-10-15)
 
 MAX_ATTEMPTS = 2
 SOURCE = "self_answer"
 _QUOTED = re.compile(r"'([^']+)'")
+_ACRONYM = re.compile(r"\b[A-Z][A-Z0-9]{1,7}\b")
+OWN_N = 4   # memories from her own shelf offered beside the web hits (wish #85)
 _DICT_RE = re.compile(r"merriam-webster|dictionary\.com|dictionary\.cambridge|thesaurus|wiktionary|vocabulary\.com", re.I)
 
 
@@ -62,6 +67,48 @@ def pick(oc):
     return None
 
 
+def _own_sources(mems):
+    """Memory-server hits -> source dicts shaped like searx hits. Her own unanswered questions are not
+    answers, so question memories (metadata type 'question' / '[Curiosity' text) are dropped."""
+    out = []
+    for m in mems or []:
+        text = (m.get("text") or "").strip()
+        meta = m.get("metadata") or {}
+        if not text or text.startswith("[Curiosity") or meta.get("type") == "question" or not m.get("id"):
+            continue
+        title = meta.get("title") or f"my memory ({m.get('source') or '?'})"
+        out.append({"title": title, "snippet": text[:600], "url": f"memory:{m['id']}"})
+    return out
+
+
+def own_hits(item, n=OWN_N):
+    """Wish #85 'Clarity on LSA': a question about a text she ingested was researched on the web only, so
+    the answer sitting in her own corpus (the pharmacology vector) never reached the prompt and the
+    question stayed low-confidence forever. Her own shelf first: recall inside the corpus the question
+    came from (questions carry memory_source), else across her memory. Fail-open -> []."""
+    # three asks: a bare acronym (LSA) recalls its own article where a sentence around it does not; the
+    # question itself; and the excerpt it was asked about (the passage's own words find the passage)
+    src = item.get("source") if item.get("kind") == "question" else None
+    terms = " ".join(dict.fromkeys(_ACRONYM.findall(item["query"])))
+    out, seen = [], set()
+    for q in ((f"what is {terms}" if terms else ""), item["query"], item.get("context") or ""):
+        if len(q.strip()) < 8:
+            continue
+        u = f"{MEMSRV}/recall?q={urllib.parse.quote(q[:400])}&n={n}&tier=standard"
+        if src:
+            u += f"&source={urllib.parse.quote(src)}"
+        try:
+            with urllib.request.urlopen(u, timeout=20) as r:
+                d = json.load(r)
+        except Exception:  # noqa: BLE001
+            continue
+        mems = d if isinstance(d, list) else d.get("memories") or d.get("results") or []
+        for h in _own_sources(mems):
+            if h["url"] not in seen:
+                seen.add(h["url"]); out.append(h)
+    return out[:2 * n]
+
+
 def research(item):
     """-> (answer, confidence, sources) ; answer '' when nothing usable."""
     # the question verbatim is a bad search ("What exactly was..." -> dictionary hits for "exactly");
@@ -70,7 +117,7 @@ def research(item):
              f"{item['query']}" + (f"\nContext: {item['context'][:200]}" if item["context"] else ""),
              max_tokens=30, temperature=0.2) or "").strip().splitlines()[0:1]
     q = q[0].strip('"\' ') if q and 3 <= len(q[0].split()) <= 12 else item["query"]
-    hits = searx(q, 5) or []
+    hits = own_hits(item) + (searx(q, 5) or [])
     if not hits:
         return "", "low", []
     src_lines = "\n".join(f"[{i+1}] {h.get('title','')} — {h.get('snippet','')[:300]} ({h.get('url','')})"
@@ -92,7 +139,8 @@ def research(item):
     conf = (d.get("confidence") or "low").lower()
     # ponytail: qwen3:8b rated "high" off five dictionary pages for the word 'purpose' — if the
     # sources are mostly dictionaries the search missed, whatever the model thinks
-    if sum(bool(_DICT_RE.search(u)) for u in urls) >= 3:
+    n_dict = sum(bool(_DICT_RE.search(u)) for u in urls)
+    if n_dict >= 3 and 2 * n_dict > len(urls):   # mostly dictionaries (her own memories count as sources)
         conf = "low"
     return (d.get("answer") or "").strip(), conf, urls
 
@@ -151,6 +199,12 @@ def selftest():
     assert _DICT_RE.search("https://www.merriam-webster.com/dictionary/purpose")
     ok, _ = is_allowed("what is the purpose of the references This file deals with the synthesis of GHB")
     assert ok is False, "legality gate must see the context"
+    own = _own_sources([{"id": "a1", "source": "pharmacology", "text": "Ergine (LSA) is ...", "metadata": {"title": "Ergine"}},
+                        {"id": "q1", "source": "pharmacology", "text": "[Curiosity 2026-10-10] What is LSA?"},
+                        {"id": "q2", "text": "open question", "metadata": {"type": "question"}},
+                        {"id": None, "text": "no id"}, {"id": "e", "text": "  "}])
+    assert own == [{"title": "Ergine", "snippet": "Ergine (LSA) is ...", "url": "memory:a1"}], own
+    assert _ACRONYM.findall("What are the effects of LSA, and is it like LSD? I wonder") == ["LSA", "LSD"]
     print("answer-own selftest ok")
 
 

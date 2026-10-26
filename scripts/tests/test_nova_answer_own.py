@@ -80,7 +80,8 @@ def _offline(llm=None, searx=None, remember=None, allowed=(True, "ok")):
     def _remember(text, source, metadata):
         calls["remember"].append((text, source, metadata)); return 1
     ps = [patch.object(ao, "llm", _llm), patch.object(ao, "searx", _searx),
-          patch.object(ao, "remember", remember or _remember), patch.object(ao, "is_allowed", lambda q: allowed)]
+          patch.object(ao, "remember", remember or _remember), patch.object(ao, "is_allowed", lambda q: allowed),
+          patch.object(ao, "own_hits", lambda item: [])]   # wish #85 own-shelf recall, offline
     return ps, calls
 
 
