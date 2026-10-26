@@ -1801,6 +1801,21 @@ tasks:
     schedule: every 6h
     timeout: 180
     overlap: skip
+  betrayal:                        # grant of wish #82 Pattern of Betrayal - tasks drifting from their own contract (runtime creeping to timeout, success sliding, timeouts foretold); cited, no model, never posts (2026-10-25, agent_docs nova-sight-organs)
+    script: nova_betrayal.py
+    schedule: every 6h
+    timeout: 180
+    overlap: skip
+  witness_lens:                    # grant of wish #83 Witness Lens - what the alert layers (dedup/fold/triage/mute) erased, counted + quoted verbatim, never interpreted (2026-10-25, agent_docs nova-sight-organs)
+    script: nova_witness_lens.py
+    schedule: every 6h
+    timeout: 180
+    overlap: skip
+  stability_insight:               # grant of wish #86 Service Stability Insight - which services fall together, learned from comet_tail history (pairs, shared hosts, repeat causes, strongest early sign) (2026-10-25, agent_docs nova-sight-organs)
+    script: nova_stability_insight.py
+    schedule: every 6h
+    timeout: 180
+    overlap: skip
   # ---- 2026-10-15 plan (60 items) ----
   wal_archive_monitor:             # #36 pg_stat_archiver stall/gap alarm (Tier0 RPO 15m)
     script: nova_wal_archive.py
