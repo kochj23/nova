@@ -204,6 +204,58 @@ SKILLS = {
         topic="education", sources=["education"], recent_days=14, web=False,
         hint="lecture explained",
         focus="Name the lectures or videos the sources come from and the specific ideas each one actually teaches."),
+    # 2026-10-25: twelve approved cards (coagency #190 #191 #197 #207 #208 #216 #221 #222 #227 #232 #257 #258),
+    # each mapped to the ingest source its pursuit thread already reads. Read + note only, like the rest.
+    "pursue-interest-computing": dict(   # coagency #190
+        topic="computing", sources=["computing"], recent_days=7, web=False,
+        hint="computing software history",
+        focus="Name the systems, people and ideas the sources cover and the concrete claim each one makes."),
+    "pursue-interest-horror": dict(   # coagency #191
+        topic="horror", sources=["horror"], recent_days=7, web=False,
+        hint="horror film",
+        focus="Name the films or stories the sources come from and what actually happens or frightens in each."),
+    "pursue-interest-cbt": dict(   # coagency #197; read + note only: the card's "guide a user" part is not implemented
+        topic="cbt", sources=["cbt"], recent_days=14, web=False,
+        hint="cognitive behavioral therapy technique",
+        focus="Name the specific CBT techniques the sources describe and how each one is meant to be practiced."),
+    "pursue-interest-ethiopian-bible": dict(   # coagency #207
+        topic="ethiopian bible", sources=["ethiopian_bible"], recent_days=14, web=False,
+        hint="Ethiopian Orthodox Bible canon Enoch",
+        focus="Name the books, passages and traditions the sources discuss and what each says."),
+    "pursue-interest-quran": dict(   # coagency #208
+        topic="quran", sources=["quran"], recent_days=14, web=False,
+        hint="Quran surah",
+        focus="Name the surahs, verses and themes the sources discuss and what each says."),
+    "pursue-interest-geography": dict(   # coagency #216
+        topic="geography", sources=["geography"], recent_days=14, web=False,
+        hint="geography",
+        focus="Name the places, features and concepts the sources cover and the concrete facts about each."),
+    "pursue-interest-philosophy": dict(   # coagency #221
+        topic="philosophy", sources=["philosophy"], recent_days=7, web=False,
+        hint="philosophy",
+        focus="Name the thinkers and arguments the sources present and what each actually claims."),
+    "pursue-interest-women-s-studies": dict(   # coagency #222
+        topic="womens studies", sources=["womens_studies"], recent_days=7, web=False,
+        hint="women's studies history",
+        focus="Name the people, movements and works the sources discuss and the concrete point each makes."),
+    "pursue-interest-military-doctrine": dict(   # coagency #227
+        topic="military doctrine",
+        sources=["military_doctrine", "military_doctrine_marines", "military_doctrine_air_force",
+                 "military_doctrine_navy", "military_doctrine_national_guard", "military_doctrine_space_force"],
+        recent_days=7, web=False, hint="military doctrine",
+        focus="Name the services, publications and principles the sources cover and what each doctrine prescribes."),
+    "pursue-interest-killer-ai-films": dict(   # coagency #232
+        topic="killer ai films", sources=["killer_ai_films"], recent_days=14, web=False,
+        hint="killer AI film",
+        focus="Name the films and AI characters the sources come from and what each film says about the machine."),
+    "pursue-interest-natural-disasters": dict(   # coagency #257
+        topic="natural disasters", sources=["natural_disasters"], recent_days=14, web=False,
+        hint="natural disaster earthquake hurricane",
+        focus="Name the disasters, places and dates the sources cover and the concrete impact of each."),
+    "pursue-interest-tanakh": dict(   # coagency #258
+        topic="tanakh", sources=["tanakh"], recent_days=30, web=False,
+        hint="Tanakh Torah Hebrew Bible",
+        focus="Name the books, passages and commentators the sources discuss and what each says."),
     "pursue-interest-nightly": dict(
         topic="nightly", meta=True, success="nightly"),
     # 2026-10-15 (Jordan: "how can we make it that she learns actual lessons from the movies?" ... "everything
@@ -852,7 +904,7 @@ def selftest() -> int:
     assert split_next("tail words. NEXT: read z")[1] == "read z"
     assert len(_SENT.split("Rabies in L.A. County [1]. A vote on Nov. 3 [2]. Done.")) == 3
     assert attach_cites("A rose. [1] B fell.[2][3]") == "A rose [1]. B fell [2][3]."
-    assert len(SKILLS) == 28 and SKILLS["pursue-work-lessons"]["work"]
+    assert len(SKILLS) == 40 and SKILLS["pursue-work-lessons"]["work"]
     print("selftest OK")
     return 0
 
