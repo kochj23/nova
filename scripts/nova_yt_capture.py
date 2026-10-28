@@ -205,6 +205,10 @@ class whisper_lock:
 
 
 def transcribe(wav, stem):
+    from nova_ingest import transcribe_on_minion   # 2026-10-28: a Mac minion first, the Studio GPU only as fallback
+    t = transcribe_on_minion(wav, timeout=8 * 3600)
+    if t is not None:
+        return _dedupe_loops(t)
     with whisper_lock():
         return _transcribe(wav, stem)
 

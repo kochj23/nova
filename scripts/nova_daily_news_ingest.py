@@ -135,6 +135,10 @@ def record_audio(duration: int) -> Path | None:
 
 def transcribe(wav_path: Path) -> str:
     log.info(f"Transcribing {wav_path.name}...")
+    from nova_ingest import transcribe_on_minion   # 2026-10-28: a Mac minion first, the Studio GPU only as fallback
+    t = transcribe_on_minion(wav_path, timeout=900)
+    if t is not None:
+        return t
 
     cmd = [
         MLX_WHISPER,

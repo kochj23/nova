@@ -187,6 +187,10 @@ def extract_audio(video_path: str) -> Path | None:
 
 
 def transcribe(wav_path: Path) -> str:
+    from nova_ingest import transcribe_on_minion   # 2026-10-28: a Mac minion first, the Studio GPU only as fallback
+    t = transcribe_on_minion(wav_path)
+    if t is not None:
+        return t
     out_name = f"plex_{int(time.time())}"
     cmd = [
         MLX_WHISPER, str(wav_path),
