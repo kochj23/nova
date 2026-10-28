@@ -1339,6 +1339,7 @@ tasks:
   media_reingest:                  # nightly: re-transcribe TV/video with LOCAL MLX Whisper — lost speech first, then most-watched; supersedes, never deletes (2026-10-15)
     script: nova_media_reingest.py
     args: ["--scheduled", "--hours", "7"]
+    enabled: false                 # 2026-10-28 Jordan: "Make the rest of the cluster sweat ... I need some available bandwidth on this machine" — the Studio stops transcribing; media_reingest_minions (Studio in exclude_nodes) does it all
     schedule: cron 0 23 * * *
     timeout: 25500
     overlap: skip
