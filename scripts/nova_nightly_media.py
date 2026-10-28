@@ -478,6 +478,10 @@ def extract_audio(video: Path, out_wav: Path) -> bool:
 
 
 def transcribe(wav: Path, out_dir: Path, stem: str) -> str | None:
+    from nova_ingest import transcribe_on_minion   # 2026-10-28: a Mac minion first, the Studio GPU only as fallback
+    t = transcribe_on_minion(wav, timeout=MAX_AUDIO_SECS * 2)
+    if t is not None:
+        return t if len(t) > 20 else None
     cmd = [
         WHISPER_BIN, str(wav),
         "--model", WHISPER_MODEL,

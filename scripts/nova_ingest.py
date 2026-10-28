@@ -1196,7 +1196,51 @@ def _audio(video, wav):
         log(f"  ffmpeg: {e}", "WARN")
         return False
 
+def transcribe_on_minion(wav, timeout=7200, _minions=None, _run=subprocess.run):
+    """A 16 kHz mono wav's text from a Mac whisper minion (MLX GPU), "" = no speech, None = no minion / it failed
+    (caller runs local MLX). Jordan 2026-10-28: "Make the rest of the cluster sweat ... I need some available
+    bandwidth on this machine" — the Studio stops transcribing. Same roster + exclude_nodes as nova_media_reingest.
+    # ponytail: Macs only — Linux minions are CPU faster-whisper (15-40 min/file), too slow for these queues."""
+    import uuid
+    try:
+        if _minions is None:
+            import nova_media_reingest as mr
+            conn = mr.connect("nova_ops")
+            try:
+                _minions = mr.whisper_minions(conn.cursor())
+            finally:
+                conn.close()
+        macs = [r for r in _minions if r[1] and r[4] == "Darwin"]
+    except Exception as e:
+        log(f"  minion roster: {e}", "WARN")
+        return None
+    random.shuffle(macs)
+    name = f"ingest-{uuid.uuid4().hex[:12]}.wav"
+    for node, host, *_ in macs[:3]:
+        ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host]
+        try:
+            with open(wav, "rb") as f:
+                _run(ssh + [f"cat > .nova-minion/{name}"], stdin=f, check=True, timeout=600, capture_output=True)
+            r = _run(ssh + [f"cd .nova-minion && nice -n 5 whisper-venv/bin/python nova_minion_whisper.py {name} --json"],
+                     check=True, timeout=timeout, capture_output=True)
+            out = r.stdout.decode("utf-8", "ignore").strip()
+            text = str(json.loads(out.splitlines()[-1]).get("text") or "").strip() if out else ""
+            log(f"  transcribed on {node} ({len(text.split())} words)")
+            return text
+        except Exception as e:
+            log(f"  minion {node} failed: {str(e)[:160]}", "WARN")
+        finally:
+            try:
+                _run(ssh + [f"/bin/rm -f -- .nova-minion/{name}"], timeout=60, capture_output=True)
+            except Exception:  # noqa: BLE001
+                pass
+    return None
+
+
 def _transcribe(wav, stem, work):
+    t = transcribe_on_minion(wav)
+    if t is not None:
+        return t if len(t) > 50 else None
     cmd = [WHISPER_BIN, str(wav),
            "--model",         WHISPER_MODEL,
            "--output-format", "txt",
