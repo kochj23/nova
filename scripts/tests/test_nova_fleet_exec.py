@@ -162,7 +162,7 @@ class TestRetry(unittest.TestCase):
         def boom(*a, **k):
             attempts.append(1); raise OSError("pg down")
         with patch.object(psycopg2, "connect", boom):
-            self.assertEqual(fx.resolve("nova-core4"), ("192.168.1.250", "linux"))
+            self.assertEqual(fx.resolve("nova-core3"), ("192.168.1.5", "linux"))
         self.assertEqual(len(attempts), 1)
 
     def test_restart_subprocess_is_one_shot_and_fails_closed_without_raising(self):
@@ -172,7 +172,7 @@ class TestRetry(unittest.TestCase):
         def hang(argv, **k):
             calls.append(argv); raise subprocess.TimeoutExpired(argv, 45)
         with _no_pg(), patch.object(fx, "is_local", lambda ip: False), patch.object(fx.subprocess, "run", hang):
-            ok, why = fx.restart_service("nova-core4", "nova-hue")
+            ok, why = fx.restart_service("nova-core3", "nova-mesh-agent")
         self.assertFalse(ok)
         self.assertIn("timed out", why)
         self.assertEqual(len(calls), 1)
@@ -200,8 +200,14 @@ class TestUnit(unittest.TestCase):
 
     def test_plan_shapes(self):
         with _no_pg():
-            self.assertEqual(fx.plan("nova-core4", "nova-hue", local=True), ["sudo", "-n", "systemctl", "restart", "nova-hue"])
-            self.assertEqual(fx.plan("nova-core4", "nova-hue", local=False)[-1], "sudo -n systemctl restart nova-hue")
+            self.assertEqual(fx.plan("nova-core3", "nova-mesh-agent", local=True), ["sudo", "-n", "systemctl", "restart", "nova-mesh-agent"])
+            self.assertEqual(fx.plan("nova-core3", "nova-mesh-agent", local=False)[-1], "sudo -n systemctl restart nova-mesh-agent")
+            # nova-core4 (M1 since 2026-10-27): root LaunchDaemons, kickstarted over plain ssh+sudo, no restart gate key
+            self.assertEqual(fx.plan("nova-core4", "nova-hue", local=True),
+                             ["sudo", "-n", "launchctl", "kickstart", "-k", "system/net.digitalnoise.nova-hue"])
+            remote = fx.plan("nova-core4", "nova-hue", local=False)
+            self.assertEqual(remote[-1], "sudo -n launchctl kickstart -k system/net.digitalnoise.nova-hue")
+            self.assertNotIn("-i", remote)
             mac = fx.plan("nova-core8", "nova-soil-monitor", local=True)
             self.assertEqual(mac[:3], ["launchctl", "kickstart", "-k"])
             self.assertEqual(mac[3], f"gui/{os.getuid()}/net.digitalnoise.nova-soil-monitor")
@@ -253,10 +259,10 @@ class TestFunctional(unittest.TestCase):
         def run(argv, **k):
             ran.append((argv, k)); return _run(argv)
         with _no_pg(), patch.object(fx, "is_local", lambda ip: False), patch.object(fx.subprocess, "run", run):
-            ok, detail = fx.restart_service("nova-core4", "nova-hue")
+            ok, detail = fx.restart_service("nova-core3", "nova-mesh-agent")
         self.assertEqual((ok, detail), (True, "ok"))
         argv, kw = ran[0]
-        self.assertEqual(argv[-2:], ["kochj@192.168.1.250", "sudo -n systemctl restart nova-hue"])
+        self.assertEqual(argv[-2:], ["kochj@192.168.1.5", "sudo -n systemctl restart nova-mesh-agent"])
         self.assertEqual(kw["timeout"], 45)
 
     def test_failed_restart_reports_stderr_and_is_not_ok(self):

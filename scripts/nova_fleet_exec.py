@@ -40,7 +40,7 @@ _STATIC = {
     "jordans-mac-mini": ("192.168.1.77", "macos"),
     "nova-core": ("192.168.1.2", "linux"), "nova-core1": ("192.168.1.2", "linux"),
     "nova-core2": ("192.168.1.86", "linux"), "nova-core3": ("192.168.1.5", "linux"),
-    "nova-core4": ("192.168.1.250", "linux"), "nova-core5": ("192.168.1.10", "linux"),
+    "nova-core4": ("192.168.1.250", "macos"), "nova-core5": ("192.168.1.10", "linux"),
     "nuk": ("192.168.1.10", "linux"), "nova-core7": ("192.168.1.125", "linux"),
 }
 
@@ -89,12 +89,20 @@ def is_local(ip):
     return ip in _local_ips()
 
 
+# Macs whose Nova services are root LaunchDaemons in system/ (Local Network privacy forces it,
+# see runbook-core4-standby) and that have no restart gate: kickstart over plain ssh + sudo.
+_SYSTEM_DAEMON_MACS = {"192.168.1.250"}  # nova-core4 (M1, since 2026-10-27)
+
+
 def plan(node, svc, local=None):
     """Pure: decide the argv for (node, svc). local=None probes the host; tests pass a bool."""
     ip, fam = resolve(node)
     here = is_local(ip) if local is None else local
     if fam == "macos":
         label = f"net.digitalnoise.{svc}"
+        if ip in _SYSTEM_DAEMON_MACS:
+            kick = ["sudo", "-n", "launchctl", "kickstart", "-k", f"system/{label}"]
+            return kick if here else ["ssh", *SSH_OPTS, f"kochj@{ip}", " ".join(kick)]
         if here:
             return ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{label}"]
         return ["ssh", "-i", RESTART_KEY, *SSH_OPTS, f"kochj@{ip}", f"restart {svc}"]
@@ -124,9 +132,12 @@ def demo():
     p = plan("mac-studio", "nova-battery-monitor", local=False)
     assert p[0] == "ssh" and "-i" in p and p[-1] == "restart nova-battery-monitor" and "kochj@192.168.1.6" in p, p
     p = plan("nova-core4", "nova-hue", local=False)
-    assert p[0] == "ssh" and p[-1] == "sudo -n systemctl restart nova-hue" and "kochj@192.168.1.250" in p, p
+    assert p[0] == "ssh" and p[-1] == "sudo -n launchctl kickstart -k system/net.digitalnoise.nova-hue" \
+        and "kochj@192.168.1.250" in p and "-i" not in p, p
     p = plan("192.168.1.250", "nova-hue", local=True)
-    assert p[:3] == ["sudo", "-n", "systemctl"], p
+    assert p == ["sudo", "-n", "launchctl", "kickstart", "-k", "system/net.digitalnoise.nova-hue"], p
+    p = plan("nova-core3", "nova-mesh-agent", local=False)
+    assert p[-1] == "sudo -n systemctl restart nova-mesh-agent", p
     assert resolve("Office-M4-2")[1] == "macos" and resolve("nuk")[1] == "linux"
     ok, why = restart_service("mac-studio", "bad;name")
     assert not ok and "malformed" in why
