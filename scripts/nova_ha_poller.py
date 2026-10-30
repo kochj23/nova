@@ -380,6 +380,10 @@ async def write_device_tracker(states):
 
         state = s["state"]  # "home" or "not_home"
         attrs = s.get("attributes", {})
+        # Only the phone's GPS tracker decides. UniFi router trackers whose names contain "jordan" (PoE
+        # switches, jordans_mini) went 'unavailable', and each poll flipped Jordan home/away (2026-10-30).
+        if attrs.get("source_type") != "gps" or state in ("unavailable", "unknown"):
+            continue
         friendly = attrs.get("friendly_name", "")
 
         # Map device tracker to person

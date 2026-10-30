@@ -81,7 +81,7 @@ STATES = [
     {"entity_id": "media_player.garpod", "state": "playing", "attributes": {"app_name": "Music"}},
     {"entity_id": "sensor.hue_outdoor_temperature", "state": "71.5", "attributes": {"device_class": "temperature"}},
     {"entity_id": "binary_sensor.hue_outdoor_motion", "state": "on", "attributes": {"device_class": "motion"}},
-    {"entity_id": "device_tracker.jordan_iphone", "state": "home", "attributes": {"battery_level": 80}},
+    {"entity_id": "device_tracker.jordan_iphone", "state": "home", "attributes": {"battery_level": 80, "source_type": "gps"}},
 ]
 
 
@@ -205,6 +205,19 @@ class TestFunctional(unittest.TestCase):
             asyncio.run(ha.write_device_tracker(tracker))     # heartbeat due: row only
         tables = [re.search(r"INSERT INTO ([\w.]+)", s).group(1) for s, _ in pool.calls]
         self.assertEqual(tables, ["telemetry.presence", "shared_observations", "telemetry.presence"])
+
+    def test_router_trackers_named_jordan_do_not_flip_presence(self):
+        # 2026-10-30: unavailable UniFi trackers (jordan_poe_16_port...) alternated with the iPhone every poll.
+        pool = _Pool(); _reset(pool)
+        tracker = [s for s in STATES if s["entity_id"].startswith("device_tracker.")] + [
+            {"entity_id": "device_tracker.jordan_poe_16_port", "state": "unavailable", "attributes": {}},
+            {"entity_id": "device_tracker.jordans_mini", "state": "not_home", "attributes": {"source_type": "router"}}]
+        with _q():
+            asyncio.run(ha.write_device_tracker(tracker))
+            asyncio.run(ha.write_device_tracker(tracker))
+        rows = [a for s, a in pool.calls if "telemetry.presence" in s]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][1], 0.99)
 
     def test_log_writes_once_when_stdout_is_the_log_file(self):
         # launchd points stdout at LOG_FILE; log() used to print AND append -> every line twice.

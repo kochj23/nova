@@ -62,7 +62,7 @@ def _q():
 
 
 def _tracker(eid, state):
-    return {"entity_id": eid, "state": state, "attributes": {"battery_level": 50, "gps_accuracy": 5}}
+    return {"entity_id": eid, "state": state, "attributes": {"battery_level": 50, "gps_accuracy": 5, "source_type": "gps"}}
 
 
 def _tables(pool):
