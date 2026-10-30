@@ -452,12 +452,14 @@ class TestFullPipelineNews:
         # Verify ingestion happened
         assert mock_urlopen.called
 
+    @patch("nova_daily_news_ingest.time.sleep")
     @patch("nova_daily_news_ingest._bus_notify")
     @patch("nova_daily_news_ingest.record_audio", return_value=None)
-    def test_recording_failure_aborts_gracefully(self, mock_record, mock_bus, news_module,
+    def test_recording_failure_aborts_gracefully(self, mock_record, mock_bus, _sleep, news_module,
                                                  tmp_path, mock_nova_config_for_news):
         news_module.WORK_DIR = tmp_path
-        news_module.main()
+        with pytest.raises(SystemExit):   # failure exits 1 so the scheduler sees it
+            news_module.main()
         # Alerts go through the central nova_notify bus (not nova_config.post_both);
         # a recording failure must be raised at warning level.
         failure_calls = [c for c in mock_bus.call_args_list
@@ -472,7 +474,8 @@ class TestFullPipelineNews:
         wav_path = tmp_path / "test.wav"
         wav_path.write_bytes(b"\x00" * 200000)
         mock_record.return_value = wav_path
-        news_module.main()
+        with pytest.raises(SystemExit):
+            news_module.main()
         # WAV should be cleaned up even on failure
         assert not wav_path.exists()
 
@@ -723,7 +726,8 @@ class TestFunctional(_NewsBase):
         self.assertIn("- fire", self.bus.call_args.kwargs["body"])
 
     def test_record_failure_notifies_warning(self):
-        with patch.object(_dn, "record_audio", return_value=None), patch.object(_dn, "transcribe") as tr:
+        with patch.object(_dn, "record_audio", return_value=None), patch.object(_dn, "transcribe") as tr, \
+             patch.object(_dn.time, "sleep"), self.assertRaises(SystemExit):
             _dn.main()
         tr.assert_not_called()
         self.assertEqual(self.bus.call_args.kwargs["level"], "warning")
@@ -739,3 +743,27 @@ class TestFrame(unittest.TestCase):
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+class TestTunerRetry:
+    """2026-10-30: a busy/wedged HDHomeRun on the first attempt used to lose the whole broadcast."""
+
+    @patch("nova_daily_news_ingest.notify")
+    @patch("nova_daily_news_ingest.time.sleep")
+    @patch("nova_daily_news_ingest.transcribe", return_value="")
+    @patch("nova_daily_news_ingest.record_audio")
+    def test_retries_busy_tuner_then_records(self, mock_record, _t, mock_sleep, _n, news_module, tmp_path):
+        wav = tmp_path / "x.wav"
+        wav.write_bytes(b"\0" * 10)
+        mock_record.side_effect = [None, None, wav]
+        with pytest.raises(SystemExit):   # empty transcript -> exit 1, but only after a recording was made
+            news_module.main()
+        assert mock_record.call_count == 3 and mock_sleep.call_count == 2
+
+    @patch("nova_daily_news_ingest.notify")
+    @patch("nova_daily_news_ingest.time.sleep")
+    @patch("nova_daily_news_ingest.record_audio", return_value=None)
+    def test_gives_up_with_nonzero_exit(self, mock_record, _s, _n, news_module):
+        with pytest.raises(SystemExit) as e:
+            news_module.main()
+        assert e.value.code == 1 and mock_record.call_count == 6

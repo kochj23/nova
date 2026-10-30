@@ -253,17 +253,25 @@ def main():
     )
 
     # Record
-    wav = record_audio(RECORD_DURATION)
+    # HDHomeRun answers 5XX when all 4 tuners are busy (Plex DVR at the top of the hour) or times out when it is
+    # wedged — whole days of news were lost to one failed attempt (2026-10-25, 10-28). Retry for ~5 min.
+    wav = None
+    for attempt in range(6):
+        wav = record_audio(RECORD_DURATION)
+        if wav:
+            break
+        log.warning(f"record attempt {attempt + 1}/6 failed; retrying in 60s")
+        time.sleep(60)
     if not wav:
         notify(f":x: Daily News Recording Failed — could not record from {CHANNEL_NAME}")
-        return
+        sys.exit(1)   # a failed capture must read as a failure to the scheduler, not a success
 
     # Transcribe
     text = transcribe(wav)
     if not text:
         notify(f":x: Daily News Transcription Failed — no text produced")
         wav.unlink(missing_ok=True)
-        return
+        sys.exit(1)
 
     # Chunk and ingest
     chunks = chunk_text(text)

@@ -201,7 +201,10 @@ def transcribe_and_remember(audio, name, title, vid, existing, dry_run):
         with whisper_lock():
             text = ni._transcribe_dispatch(wav, wav.stem, ni.WORK_DIR, local_only=True)
     finally:
-        wav.unlink(missing_ok=True)
+        try:
+            wav.unlink(missing_ok=True)
+        except OSError as e:   # SMB EBUSY on the NAS work dir killed the whole daily run (2026-10-27, 10-30)
+            log(f"  could not remove {wav.name}: {e}")
     if not text:
         return None   # no speech (music video, silent cut) — not a failure, never retried
     text = ni.clean_text(text)
