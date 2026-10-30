@@ -23,7 +23,11 @@ class _MlxModel:
 
     def transcribe(self, path, language='en', vad_filter=True):
         r = self._t(path, path_or_hf_repo=self.repo, language=language, condition_on_previous_text=False)
-        return [_Seg(s['text']) for s in r.get('segments', [])], r
+        # no VAD here: on radio static large-v3-turbo invents captions ("Transcribed by ESO..."), so keep
+        # only segments the model itself thinks are speech and is reasonably sure of
+        segs = [s for s in r.get('segments', []) if not vad_filter or
+                (s.get('no_speech_prob', 0) < 0.5 and s.get('avg_logprob', 0) > -0.8)]
+        return [_Seg(s['text']) for s in segs], r
 
 
 try:
