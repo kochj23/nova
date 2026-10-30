@@ -171,7 +171,9 @@ def api_health(journal=None, ps=None, active=None):
     # no -u/-k filters: journalctl ANDs different match fields, and the segfault line is a kernel message
     journal = sh("journalctl", "--since", "-10 min", "--no-pager", "-o", "cat",
                  "-g", "sdrplay|submiturb|ServiceNotResponding") if journal is None else journal
-    bad = [l for l in journal.splitlines() if API_BAD.search(l)]
+    # skip our own "[sdr-actuator] sdrplay api: SICK API error: ..." lines: re-reading them kept the API
+    # "sick" forever, each run quoting the last one (core3, 10-28..10-30)
+    bad = [l for l in journal.splitlines() if API_BAD.search(l) and "[sdr-actuator]" not in l]
     if bad:
         return False, f"API error: {bad[-1].strip()[:120]}"
     urb = len(API_URB.findall(journal))
@@ -281,6 +283,9 @@ def main(dry):
         print("[sdr-actuator] SDRplay capture stuck >5 min -> restarting sdrplay.service + Duo units")
         if not dry:
             state["last_heal"] = now
+            duo_units = [u for u in units if units[u]["pipeline"] in SDRPLAY]
+            for unit in duo_units:                    # release the Duo first: killing the API under an open
+                sh("systemctl", "stop", unit)         # stream left it "no DT-mode RSPduo found" (10-30)
             sh("systemctl", "kill", "-s", "KILL", "sdrplay.service"); time.sleep(2)   # a wedged service ignores SIGTERM
             sh("systemctl", "restart", "sdrplay.service"); time.sleep(5)
             if os.path.exists("/home/kochj/rsp_usbreset.sh"):

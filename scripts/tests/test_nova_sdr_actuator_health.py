@@ -81,6 +81,8 @@ class TestApi(unittest.TestCase):
 
     def test_wedge_signatures(self):
         self.assertFalse(a.api_health(journal="sdrplay_api_Open: ServiceNotResponding", ps="Ssl", active="active")[0])
+        own = "[sdr-actuator] sdrplay api: SICK API error: [ERROR] ApiVersion Error: sdrplay_api_ServiceNotResponding"
+        self.assertTrue(a.api_health(journal=own, ps="Ssl", active="active")[0])   # our own verdict is not evidence
         seg = "sdrplay_apiServ[1]: segfault at 7dcb ip 5a2a sp 7dcb error 4 in sdrplay_apiService[18a6a,5a2a+4a000]"
         self.assertFalse(a.api_health(journal=seg, ps="Ssl", active="active")[0])
 
