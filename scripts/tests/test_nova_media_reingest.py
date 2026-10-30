@@ -561,3 +561,15 @@ class TestInterruptedAttempt(unittest.TestCase):
         self.assertNotIn("<> %s AND (metadata->>'source_file'", sql)
         self.assertIn("metadata->>'source_file' = %s AND coalesce(metadata->>'pipeline', '') <> %s", sql)
         self.assertEqual(params[:3], (EP, mr.PIPELINE, "Engine Masters"))
+
+
+class TestStreamPcmStderrFlood(unittest.TestCase):
+    def test_noisy_ffmpeg_stderr_does_not_stall_the_stream(self):
+        # 2026-10-30: corrupt-AC3 OTA recordings log an error per packet; with stderr on an unread pipe the
+        # stream froze ~70 KB in and every node sat on its first file for the whole batch window.
+        flood = "head -c 2000000 /dev/zero | tr '\\0' e >&2; head -c 320000 /dev/zero"
+        real = lambda cmd, **kw: subprocess.Popen(["/bin/sh", "-c", flood], **kw)  # noqa: E731
+        with tempfile.TemporaryDirectory() as d:
+            dest = os.path.join(d, "x.pcm")
+            mr.stream_pcm(EP, None, dest, 20, _popen=real)
+            self.assertEqual(os.path.getsize(dest), 320000)

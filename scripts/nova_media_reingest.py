@@ -743,9 +743,14 @@ class NodeUnreachable(RuntimeError):
 
 def stream_pcm(path: str, host: str | None, dest: str, timeout: float, _popen=subprocess.Popen) -> None:
     """media host ffmpeg -> (this host) -> the minion's ~/.nova-minion/<dest>, or a local file when host is None."""
+    # stderr goes to a temp file, not a pipe: OTA .ts recordings with corrupt AC3 make ffmpeg log an error per
+    # packet even at -loglevel error, and an unread 64 KB stderr pipe stalls ffmpeg (and ssh's stdout with it)
+    # ~70 KB into the stream — every node then sat on its first file until the batch window closed (2026-10-30).
+    err_f = tempfile.TemporaryFile()
     src = _popen(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", MEDIA_HOST, extract_cmd(path)],
-                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                 stdout=subprocess.PIPE, stderr=err_f)
     out = open(dest, "wb") if host is None else None
+    dst = None
     try:
         dst = _popen(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host,
                       "cat > .nova-minion/" + shlex.quote(dest)], stdin=src.stdout) if host else None
@@ -756,14 +761,20 @@ def stream_pcm(path: str, host: str | None, dest: str, timeout: float, _popen=su
         rc_src = src.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         src.kill()
+        if dst:
+            dst.kill()
+        err_f.close()
         raise
     finally:
         if out:
             out.close()
     if rc_dst == 255:   # ssh to the minion itself failed: the node's fault, not the file's
+        err_f.close()
         raise NodeUnreachable(f"minion {host} unreachable (ssh 255)")
+    err_f.seek(0)
+    err = err_f.read()
+    err_f.close()
     if rc_src or rc_dst:
-        err = (src.stderr.read() if src.stderr else b"") or b""
         raise RuntimeError(f"audio extraction on {MEDIA_HOST} failed (ffmpeg {rc_src}, copy {rc_dst}): "
                            f"{err.decode(errors='ignore')[-200:]}")
 
