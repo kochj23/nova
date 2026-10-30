@@ -69,9 +69,19 @@ def agent_running(unit, uid):
     return "state = running" in out
 
 
+RELEASE_S = 5   # after the capture exits, let the API let go of the Duo before reopening it
+
+
 def boot(unit, uid, path=None, out=False):
-    if out:
+    if out and "state = " in sh("launchctl", "print", f"gui/{uid}/{label_for(unit)}"):
         sh("launchctl", "bootout", f"gui/{uid}/{label_for(unit)}")
+        # bootstrapping straight after bootout reopened the Duo before the API released it:
+        # "no DT-mode RSPduo found" (first reassignment on nova-core4, 2026-10-30)
+        for _ in range(20):
+            if not agent_running(unit, uid):
+                break
+            time.sleep(0.5)
+        time.sleep(RELEASE_S)
     if path:
         sh("launchctl", "bootstrap", f"gui/{uid}", path)
 

@@ -51,7 +51,8 @@ class TestPlist(unittest.TestCase):
 class TestHeal(unittest.TestCase):
     def test_capture_out_before_api_and_never_kickstart(self):
         calls = []
-        with patch.object(m, "sh", side_effect=lambda *c: calls.append(c) or ""), \
+        loaded = lambda *c: calls.append(c) or ("state = running" if c[:2] == ("launchctl", "print") else "")
+        with patch.object(m, "sh", side_effect=loaded), \
              patch.object(m.time, "sleep"), patch.object(m.os.path, "exists", return_value=True):
             m.heal(["nova-fm-duo3"], 501)
         flat = [" ".join(c) for c in calls]
@@ -63,6 +64,26 @@ class TestHeal(unittest.TestCase):
         self.assertLess(api_out, api_in)
         self.assertLess(api_in, cap_in)
         self.assertFalse(any("kickstart" in c or "pkill" in c for c in flat))
+
+
+class TestBoot(unittest.TestCase):
+    def test_reload_waits_for_release_before_bootstrap(self):
+        calls, slept = [], []
+        def fake_sh(*c):
+            calls.append(" ".join(c))
+            return "state = running" if c[:2] == ("launchctl", "print") and len(calls) == 1 else ""
+        with patch.object(m, "sh", side_effect=fake_sh), patch.object(m.time, "sleep", side_effect=slept.append):
+            m.boot("nova-fm-duo3", 501, "/p.plist", out=True)
+        self.assertIn(m.RELEASE_S, slept)
+        out_i = calls.index("launchctl bootout gui/501/net.digitalnoise.nova-fm-duo3")
+        self.assertEqual(calls[-1], "launchctl bootstrap gui/501 /p.plist")
+        self.assertLess(out_i, len(calls) - 1)
+
+    def test_no_bootout_when_not_loaded(self):
+        calls = []
+        with patch.object(m, "sh", side_effect=lambda *c: calls.append(" ".join(c)) or ""), patch.object(m.time, "sleep"):
+            m.boot("nova-fm-duo3", 501, "/p.plist", out=True)
+        self.assertFalse(any("bootout" in c for c in calls))
 
 
 if __name__ == "__main__":
