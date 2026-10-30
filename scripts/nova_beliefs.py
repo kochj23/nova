@@ -27,7 +27,7 @@ Now a lesson is a CANDIDATE first, and a belief only when it earns it:
                  deactivates them (active=false, never deleted).
 
 Tables: belief_candidates, belief_vectors (nova_ops). Cap: work_lessons_daily.beliefs (shared with the reader).
-CLI: --promote [--dry-run] [--budget N] | --audit [--apply] | --stats | --selftest
+CLI: --promote [--dry-run] [--budget N] | --offer-news [--dry-run] | --audit [--apply] | --stats | --selftest
 """
 
 from __future__ import annotations
@@ -50,7 +50,8 @@ SAME_COS = 0.90                # nomic cos at/above which two sentences are the 
 RELATE_COS = 0.78              # at/above: the model is asked how the candidate relates to that belief
 MIN_SCORE = 0.72               # below this a candidate never spends budget
 SHORTLIST_X = 3                # model calls per run <= SHORTLIST_X * allowance
-PENDING_DAYS = 4               # an unpromoted candidate expires after this
+PENDING_DAYS = 10              # an unpromoted candidate expires after this (4 until 2026-10-30: candidates just
+                               # over MIN_SCORE aged out behind each day's best, which fill the 50/day cap)
 MAX_CONF = 0.95
 LLM_URLS = ("http://127.0.0.1:11436", "http://127.0.0.1:11434")
 LLM_MODEL = "qwen3:30b-a3b"
@@ -727,6 +728,104 @@ def rewrite_existing(oc, apply: bool = False, limit: int | None = None, use_llm:
     return out
 
 
+# ---------------------------------------------------------------- news corroboration (2026-10-30)
+# News is LINKLESS in nova_work_lessons (one-day stories forced links), so no news lesson is ever offered here.
+# Jordan 2026-10-30: a lesson several newsrooms reach on their own should still become a belief. Lessons are
+# about one event ("When Raffensperger refuses ..."), so outlets are matched on the principle clause after
+# "so" ("officials must prioritize evidence over political pressure"); only professional newsrooms count
+# toward the minimum — the pro-Ukraine YouTube channels echo one another and are not independent.
+NEWS_ORGS = (("60 minutes", "CBS"), ("cbs", "CBS"), ("nbc", "NBC"), ("bbc", "BBC"), ("pbs", "PBS"),
+             ("cnn", "CNN"), ("abc", "ABC"), ("ktla", "KTLA"))
+NEWS_SERIES_RX = r"(news|cbs la|nbcla|ktla|nbc4|60 minutes|^cnn$)"
+NEWS_COS = 0.75                # principle clauses: same claim from two newsrooms measured 0.74-0.85 (nomic)
+NEWS_WINDOW_DAYS = 60
+_PRINCIPLE_RX = re.compile(r"(?:[,—–-]\s*|\s)so(?: the rule is that)?\s+(.+)$", re.I)
+
+
+def news_org(series: str) -> str | None:
+    s = (series or "").lower()
+    return next((o for k, o in NEWS_ORGS if k in s), None)
+
+
+def principle(lesson: str) -> str | None:
+    """The general clause after 'so' in 'When X, Y — so Z [3].', or None. Pure."""
+    m = _PRINCIPLE_RX.search(lesson or "")
+    if not m:
+        return None
+    p = re.sub(r"(\s*\[\d+\])+\s*\.?\s*$", "", m.group(1)).strip().rstrip(".")
+    return p if len(p.split()) >= 4 else None
+
+
+def corroborated(items: list[tuple[str, list]], min_orgs: int, cos_min: float = NEWS_COS) -> list[tuple[int, list[int], set]]:
+    """items = [(org, vec)]. Star clusters, most-corroborated first, each lesson used once:
+    [(seed index, member indexes, orgs)] with >= min_orgs distinct orgs. Pure."""
+    n = len(items)
+    seeds = []
+    for i in range(n):
+        mem = [j for j in range(n) if j == i or cosine(items[i][1], items[j][1]) >= cos_min]
+        orgs = {items[j][0] for j in mem}
+        if len(orgs) >= min_orgs:
+            seeds.append((len(orgs), len(mem), i, mem, orgs))
+    seeds.sort(key=lambda s: (-s[0], -s[1], s[2]))
+    used, out = set(), []
+    for _, _, i, mem, orgs in seeds:
+        if i in used:
+            continue
+        mem = [j for j in mem if j not in used]
+        orgs = {items[j][0] for j in mem}
+        if len(orgs) >= min_orgs:
+            out.append((i, mem, orgs))
+            used.update(mem)
+    return out
+
+
+def news_min_orgs(oc) -> int:
+    oc.execute("SELECT value FROM service_config WHERE service='beliefs' AND key='news_min_newsrooms'")
+    r = oc.fetchone()
+    try:
+        return max(2, int(str(r[0]).strip('"'))) if r else 3
+    except ValueError:
+        return 3
+
+
+def offer_news(oc, dry: bool = False) -> dict:
+    """Offer one candidate per principle that >= news_min_newsrooms newsrooms reached independently."""
+    ensure_schema(oc)
+    min_orgs = news_min_orgs(oc)
+    oc.execute("SELECT w.series, w.work_key, w.title, w.memory_id, x->>'lesson', x->>'quote' FROM work_lessons w, "
+               "jsonb_array_elements(w.lessons_json::jsonb) x WHERE w.status='done' AND w.lessons_kept > 0 "
+               "AND w.series ~* %s AND w.series !~* 'according to' "
+               "AND w.processed_at > now() - make_interval(days => %s)", (NEWS_SERIES_RX, NEWS_WINDOW_DAYS))
+    rows = [(news_org(s), wk, t, mid, p, q) for s, wk, t, mid, les, q in oc.fetchall()
+            if news_org(s) and (p := principle(les))]
+    stats = {"min_newsrooms": min_orgs, "principles": len(rows), "clusters": 0, "offered": [], "dry": dry}
+    vecs = []
+    for i in range(0, len(rows), 64):
+        v = embed([r[4] for r in rows[i:i + 64]])
+        if not v:
+            log("offer_news: embedder down — standing down")
+            return stats
+        vecs += v
+    clusters = corroborated([(r[0], v) for r, v in zip(rows, vecs)], min_orgs)
+    stats["clusters"] = len(clusters)
+    for seed, mem, orgs in clusters:
+        org, wk, title, mid, stance, quote = rows[seed]
+        ev = sorted({f"memory:{rows[j][3]}" for j in mem if rows[j][3]}) + \
+            [f"quote:{rows[j][5]}"[:240] for j in mem if rows[j][5]][:3] + [f"work:{rows[j][1]}"[:240] for j in mem]
+        title = f"news corroboration: {', '.join(sorted(orgs))}"
+        stats["offered"].append({"stance": stance, "orgs": sorted(orgs), "lessons": len(mem)})
+        if dry:
+            continue
+        ref = "news:" + hashlib.sha1(stance.lower().encode()).hexdigest()[:16]
+        cid, how = add_candidate(oc, "news", ref, title, stance[0].upper() + stance[1:] + ".", ev,
+                                 credibility="established", kind="news")
+        if how == "pending" and cid:
+            oc.execute("UPDATE belief_candidates SET n_sources = %s, refs = %s WHERE id = %s",
+                       (len(orgs), [rows[j][1] for j in mem][:50], cid))
+        stats["offered"][-1]["result"] = how
+    return stats
+
+
 def connect():
     import psycopg2
     import nova_dsn
@@ -766,12 +865,21 @@ def selftest():
     assert not verdict_ok("A woodworking tutorial's precision mirrors Nova's operational rigor.")
     assert verdict_ok("Norm makes hand-cut joinery look calm; the router segments drag.")
     assert parse_distill('{"belief": null}')["belief"] is None and parse_distill("junk") is None
+    assert principle("When Raffensperger refuses, it triggers threats—so officials must prioritize evidence over "
+                     "political pressure [9].") == "officials must prioritize evidence over political pressure"
+    assert principle("When candidates challenge opponents, it pressures campaign strategy [2].") is None
+    assert news_org("CBS LA at 8pm (2025)") == news_org("60 Minutes (1968)") == "CBS"
+    assert news_org("Ukraine News NowUA") is None and news_org("NBCLA") == "NBC"
+    x, y, z = [1.0, 0.0], [0.95, 0.31], [0.0, 1.0]           # x~y (cos .95), z unrelated
+    assert corroborated([("CBS", x), ("NBC", y), ("BBC", x), ("PBS", z)], 3)[0][2] == {"CBS", "NBC", "BBC"}
+    assert corroborated([("CBS", x), ("CBS", y), ("NBC", x)], 3) == []     # one org twice is not two sources
     print("selftest OK")
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Nova's belief candidates: rank, distill, promote, audit")
     ap.add_argument("--promote", action="store_true")
+    ap.add_argument("--offer-news", action="store_true", help="offer newsroom-corroborated news lessons (dry with --dry-run)")
     ap.add_argument("--audit", action="store_true")
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
@@ -801,6 +909,11 @@ def main(argv=None) -> int:
             log(f"  [{ex['score']:.2f}] {ex.get('outcome')}: {ex['before'][:110]} => {ex['after'] or '-'} "
                 f"({ex['why'][:60] if ex.get('why') else ''})")
         log(f"promote{' (dry)' if a.dry_run else ''}: {json.dumps(s)} in {time.monotonic() - t0:.0f}s")
+    if a.offer_news:
+        s = offer_news(oc, dry=a.dry_run)
+        for o in s.pop("offered"):
+            log(f"  {o['orgs']} x{o['lessons']}: {o['stance'][:120]} -> {o.get('result', 'dry')}")
+        log(f"offer_news: {json.dumps(s)}")
     if a.audit:
         bad = audit(oc, apply=a.apply)
         by = {}

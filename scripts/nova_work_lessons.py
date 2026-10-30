@@ -492,9 +492,14 @@ CRED_ASK = ("Judge the SOURCE before you trust it: 'established' = mainstream re
             "fringe.\n")
 
 
-def credibility(kind: str, title: str, series: str | None = None, mj: dict | None = None) -> tuple[str, str]:
+NEWS_SOURCES = {"news", "local_news", "politics"}
+
+
+def credibility(kind: str, title: str, series: str | None = None, mj: dict | None = None,
+                source: str | None = None) -> tuple[str, str]:
     """(level, why). Films are fiction; a FRINGE_RX title/series marker is fringe without the model; else the
-    mapping pass's own judgment; 'unknown' when it gave none (treated like established)."""
+    mapping pass's own judgment; 'unknown' when it gave none (treated like established). A news source is
+    never fiction: the mapping model called ~40% of CNN/NBCLA/KTLA/NowUA sets 'fiction' (2026-10-30)."""
     if kind == "film":
         return "fiction", "a film"
     m = FRINGE_RX.search(f"{title or ''} {series or ''}")
@@ -503,6 +508,8 @@ def credibility(kind: str, title: str, series: str | None = None, mj: dict | Non
     c = (mj or {}).get("credibility")
     c = c if isinstance(c, dict) else {"level": c} if isinstance(c, str) else {}
     lvl = str(c.get("level") or "").strip().lower()
+    if lvl == "fiction" and (source or "") in NEWS_SOURCES:
+        return "established", "news broadcast (model said fiction)"
     if lvl in CRED_LEVELS:
         return lvl, ps._CITE.sub("", str(c.get("why") or "")).strip()[:200]
     return "unknown", "not judged"
@@ -1832,7 +1839,7 @@ def read_work(oc, mc, work: dict, dry_run: bool = False, transcript: str | None 
     import nova_beliefs
     if not nova_beliefs.verdict_ok(verdict):      # 2026-10-17: '-1.0' / 'not applicable to Nova' is no opinion
         verdict = ""
-    cred, cwhy = credibility(kind, title, work.get("series"), mj)
+    cred, cwhy = credibility(kind, title, work.get("series"), mj, source=work.get("source"))
     res.update(connections=conns, verdict=verdict, status="done", credibility=cred, credibility_why=cwhy)
     text = cred_header(cred, cwhy) + render_memory(title, kind, year, rd, conns, verdict, srcs)
     res["text"] = text
@@ -2023,7 +2030,7 @@ def read_set(oc, mc, rows: list[dict], tier: str, dry_run: bool = False, run_tag
             conns = validate_connections(mj, len(rd["lessons"]), {k for k, _ in smap}, overused=overused_refs(oc))
             if not links_allowed(owner[0].get("source"), label):
                 conns = no_links(conns)
-            cred, cwhy = credibility(owner[0]["kind"], label, None, mj)
+            cred, cwhy = credibility(owner[0]["kind"], label, None, mj, source=owner[0].get("source"))
             res.update(lessons=rd["lessons"], connections=conns, lessons_raw=rd["lessons_raw"], reading=rd,
                        quality=rd.get("q"), credibility=cred)
             text = cred_header(cred, cwhy) + render_memory(f"set — {label}", f"{len(srcs)} related works", None, rd, conns, None, srcs)
@@ -2647,6 +2654,10 @@ def selftest() -> int:
     assert credibility("video", "The Emerald Tablets Contain a Frequency Map")[0] == "fringe"
     assert credibility("video", "10 Terrifying Things Submarine Crews Saw And Were Ordered Never To Talk About")[0] == "fringe"
     assert credibility("film", "Atlantis: The Lost Empire")[0] == "fiction"
+    assert credibility("tv_episode", "NBCLA - S01E0233", "NBCLA", {"credibility": "fiction"}, source="local_news")[0] \
+        == "established"
+    assert credibility("tv_episode", "Cheers - S01E01", "Cheers", {"credibility": "fiction"}, source="television")[0] \
+        == "fiction"
     assert credibility("video", "Formlabs Studio 1 Review", None, {"credibility": {"level": "Opinion", "why": "a review"}}) == ("opinion", "a review")
     assert credibility("article", "Space Shuttle Atlantis returns")[0] == "unknown"
     assert "CLAIMS" in cred_header("fringe", "x") and cred_header("established", "x") == ""

@@ -1386,6 +1386,12 @@ tasks:
     schedule: cron 50 */2 * * *
     timeout: 1500
     overlap: skip
+  belief_offer_news:               # 2026-10-30 Jordan: news lessons that >= service_config beliefs/news_min_newsrooms professional newsrooms reached independently (principle clause, nomic cos >= 0.75) are offered as belief candidates; belief_promote still decides. nova_beliefs.py --offer-news
+    script: nova_beliefs.py
+    args: ["--offer-news"]
+    schedule: cron 35 6 * * *
+    timeout: 900
+    overlap: skip
   work_lessons_consolidate:        # weekly: merge near-duplicate work beliefs (superseded, never deleted)
     script: nova_work_lessons.py
     args: ["--consolidate"]
