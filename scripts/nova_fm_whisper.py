@@ -5,11 +5,32 @@ nova_fm_whisper_new.py) and core7 (nova-fm-whisper). Needs faster-whisper with P
 ~/scanner-venv (av 19 dropped open(metadata_errors=) -> every file errored, 2026-10-14).
 """
 import os, time, glob, json, urllib.request
-from faster_whisper import WhisperModel
 
 MEM = 'http://192.168.1.6:18790/remember'
 D = os.path.expanduser('~/nrsp_calls')
-m = WhisperModel('base.en', device='cpu', compute_type='int8')
+
+
+class _Seg:
+    def __init__(self, text):
+        self.text = text
+
+
+class _MlxModel:
+    """macOS radio hosts (nova-core4, 2026-10-30): PyAV < 19 has no wheel for their Python, so use mlx-whisper."""
+    def __init__(self, repo):
+        import mlx_whisper
+        self._t, self.repo = mlx_whisper.transcribe, repo
+
+    def transcribe(self, path, language='en', vad_filter=True):
+        r = self._t(path, path_or_hf_repo=self.repo, language=language, condition_on_previous_text=False)
+        return [_Seg(s['text']) for s in r.get('segments', [])], r
+
+
+try:
+    from faster_whisper import WhisperModel
+    m = WhisperModel('base.en', device='cpu', compute_type='int8')
+except ImportError:
+    m = _MlxModel(os.environ.get('NOVA_FM_WHISPER_MLX', 'mlx-community/whisper-large-v3-turbo'))
 
 def parse_name(path):
     base = os.path.basename(path)[:-4]
