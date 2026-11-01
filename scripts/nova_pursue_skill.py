@@ -68,7 +68,7 @@ LLM_MODEL = os.environ.get("NOVA_PURSUE_MODEL", "qwen3:8b")
 # and CPU-only boxes (nova-core7/.125: 8-21 s for ONE token) always behind every GPU node. The old
 # list sent every pursuit to .125 first. NOVA_PURSUE_LLM (comma list of url|model) still overrides all.
 LLM_ENDPOINTS_ENV = [e for e in os.environ.get("NOVA_PURSUE_LLM", "").split(",") if e]
-CPU_ONLY_HOSTS = {h for h in os.environ.get("NOVA_PURSUE_CPU_ONLY", "192.168.1.125").split(",") if h}
+CPU_ONLY_HOSTS = {h for h in os.environ.get("NOVA_PURSUE_CPU_ONLY", "192.168.1.150").split(",") if h}
 ROUTER_FALLBACK = "http://192.168.1.2:37475/v1/chat/completions|fast"
 # Static fallback when the ranking is unreadable: GPU nodes first, CPU-only last, router last of all.
 LLM_ENDPOINTS = LLM_ENDPOINTS_ENV or [
@@ -78,7 +78,7 @@ LLM_ENDPOINTS = LLM_ENDPOINTS_ENV or [
     "http://192.168.1.252:11434/v1/chat/completions|qwen3:8b",
     "http://192.168.1.5:11434/v1/chat/completions|qwen3:8b",
     "http://192.168.1.86:11434/v1/chat/completions|qwen3:8b",
-    "http://192.168.1.125:11434/v1/chat/completions|qwen3:8b",
+    "http://192.168.1.150:11434/v1/chat/completions|qwen3:8b",
     ROUTER_FALLBACK,
 ]
 RANK_TTL_S = 120

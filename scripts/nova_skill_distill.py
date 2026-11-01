@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import nova_dsn as _nova_dsn  # noqa: E402
 OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 LLM_MODEL = os.environ.get("NOVA_SKILL_MODEL", "qwen3:8b")
-OLLAMA_NODES = ["http://192.168.1.125:11434", "http://192.168.1.5:11434", "http://192.168.1.86:11434",
+OLLAMA_NODES = ["http://192.168.1.150:11434", "http://192.168.1.5:11434", "http://192.168.1.86:11434",
                 "http://192.168.1.77:11434", "http://192.168.1.6:11434"]
 WINDOW_DAYS = 60
 MIN_REPEATS = {"coagency": 3, "handoff": 3, "pursuit": 3, "ledger": 5}

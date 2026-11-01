@@ -93,7 +93,7 @@ FLEET_NODES = {
     "192.168.1.250",                  # nova-core4
     "192.168.1.92", "192.168.1.190",  # mac-mini (prior leases)
     "192.168.1.77", "192.168.1.251",  # mac-mini / nova-core10 (wired / wifi, 2026-10-03)
-    "192.168.1.125",                  # nova-core7
+    "192.168.1.150",                  # nova-core7
     "192.168.1.252",                  # nova-core6
 }
 

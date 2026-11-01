@@ -41,7 +41,7 @@ _STATIC = {
     "nova-core": ("192.168.1.2", "linux"), "nova-core1": ("192.168.1.2", "linux"),
     "nova-core2": ("192.168.1.86", "linux"), "nova-core3": ("192.168.1.5", "linux"),
     "nova-core4": ("192.168.1.250", "macos"), "nova-core5": ("192.168.1.10", "linux"),
-    "nuk": ("192.168.1.10", "linux"), "nova-core7": ("192.168.1.125", "linux"),
+    "nuk": ("192.168.1.10", "linux"), "nova-core7": ("192.168.1.150", "linux"),
 }
 
 

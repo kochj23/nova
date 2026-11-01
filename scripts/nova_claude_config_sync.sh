@@ -5,7 +5,7 @@
 # Credentials are NOT handled here — nova_claude_cred_sync.py owns that. Run on .6.
 # ponytail: plain rsync + sed; no templating until a node needs a genuinely different config.
 set -u
-NODES=${NODES:-"192.168.1.2 192.168.1.86 192.168.1.5 192.168.1.250 192.168.1.10 192.168.1.125 192.168.1.77 192.168.1.7 192.168.1.252"}
+NODES=${NODES:-"192.168.1.2 192.168.1.86 192.168.1.5 192.168.1.250 192.168.1.10 192.168.1.150 192.168.1.77 192.168.1.7 192.168.1.252"}
 SRC="$HOME/.claude"
 SSH="ssh -o ConnectTimeout=6 -o BatchMode=yes"
 ok=0; fail=0

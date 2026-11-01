@@ -254,7 +254,7 @@ class TestFleetCapacity(unittest.TestCase):
             src = _src(name)
             m = re.search(r"^OLLAMA_NODES\s*=\s*\[(.*?)\]", src, re.S | re.M); self.assertIsNotNone(m, name)
             urls = re.findall(r"http://[\d.]+:\d+", m.group(1))
-            self.assertEqual(urls[:2], ["http://192.168.1.125:11434", "http://192.168.1.5:11434"], name)
+            self.assertEqual(urls[:2], ["http://192.168.1.150:11434", "http://192.168.1.5:11434"], name)
             self.assertNotIn("http://192.168.1.251:11434", urls, name)
 
     def test_image_generation_is_local_only(self):

@@ -347,7 +347,7 @@ def _recipe_nova_monitoring(user, ip, os_family, dry_run):
 
         # Check snmpd config allows community
         rc, out, _ = ssh_exec(user, ip,
-            "grep -q 'rocommunity public' /etc/snmp/snmpd.conf && echo ok || echo missing")
+            "sudo -n grep -q '^rocommunity public 192.168.1.0/24' /etc/snmp/snmpd.conf && echo ok || echo missing")  # sudo: file is 0600 root; unprivileged grep appended a dup every night
         if "ok" in out:
             checks.append("[ok] snmpd community configured")
         else:
@@ -360,14 +360,14 @@ def _recipe_nova_monitoring(user, ip, os_family, dry_run):
 
         # Check snmpd listening on all interfaces
         rc, out, _ = ssh_exec(user, ip,
-            "grep -q '^agentAddress udp:161' /etc/snmp/snmpd.conf && echo ok || echo missing")
+            "sudo -n grep -qi '^agentaddress *udp:161' /etc/snmp/snmpd.conf && echo ok || echo missing")
         if "ok" in out:
             checks.append("[ok] snmpd listening on all interfaces")
         else:
             checks.append("[drift] snmpd only on localhost")
             if not dry_run:
                 ssh_exec(user, ip,
-                    "sudo sed -i 's/^agentAddress.*/agentAddress udp:161/' /etc/snmp/snmpd.conf && "
+                    "sudo sed -i 's/^agentaddress.*/agentaddress udp:161,udp6:[::1]:161/I' /etc/snmp/snmpd.conf && "
                     "sudo systemctl restart snmpd")
                 checks[-1] = "[changed] snmpd listening on all interfaces"
 
@@ -576,6 +576,7 @@ DOTFILES_SOURCE = Path.home()
 DOTFILES_SYNC = [
     ".zshrc",
     ".p10k.zsh",
+    ".nova-term-colors.zsh",
     ".vimrc",
     ".gitconfig",
     ".fzf.zsh",

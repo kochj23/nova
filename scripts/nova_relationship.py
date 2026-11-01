@@ -77,7 +77,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 OPS_DSN = os.environ.get("NOVA_OPS_DSN", _nova_dsn.pg_dsn("nova_ops"))
 MEM_DSN = os.environ.get("NOVA_MEM_DSN", _nova_dsn.pg_dsn("nova_memories"))
 MEMSRV = os.environ.get("NOVA_MEMSRV", "http://memory-server.digitalnoise.net:18790")
-OLLAMA_NODES = ["http://192.168.1.125:11434", "http://192.168.1.5:11434",
+OLLAMA_NODES = ["http://192.168.1.150:11434", "http://192.168.1.5:11434",
                 "http://192.168.1.86:11434", "http://192.168.1.77:11434",
                 "http://192.168.1.7:11434", "http://192.168.1.6:11434"]
 LLM_MODEL = "qwen3:8b"

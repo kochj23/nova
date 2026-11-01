@@ -60,6 +60,10 @@ BEDROOM = ("nova-core10", "nova-core6", "nova-core7", "nova-core4")
 # nova-core10's wired name and its .251 wifi address both resolve and we want the wired one.
 POWERMODE_HOSTS = {"nova-core10": "192.168.1.77"}
 
+# Linux bedroom nodes with /usr/local/sbin/nova-quiet (EPP power, boost off, GPU DPM low).
+# nova-core7 since its 2026-11-01 Ubuntu rebuild; nova-quiet.service re-applies the right state at boot.
+LINUX_QUIET_HOSTS = {"nova-core7": "192.168.1.150"}
+
 
 def plan(existing: list[str], marker: list[str], turning_on: bool) -> tuple[list[str], list[str]]:
     """(new exclude_nodes, new marker). Pure, so --selftest can check it without a DB.
@@ -114,6 +118,18 @@ def set_powermode(on: bool, dry_run: bool = False) -> list[str]:
                 out.append(f"{node}: FAILED rc={r.returncode} {(r.stderr or '').strip()[:120]}")
         except Exception as e:
             out.append(f"{node}: FAILED {type(e).__name__}: {e}")
+    for node, ip in LINUX_QUIET_HOSTS.items():
+        cmd = ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", ip,
+               "sudo", "-n", "/usr/local/sbin/nova-quiet", "on" if on else "off"]
+        if dry_run:
+            out.append(f"{node}: would run {' '.join(cmd)}")
+            continue
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            out.append(f"{node}: {(r.stdout or '').strip()}" if r.returncode == 0
+                       else f"{node}: FAILED rc={r.returncode} {(r.stderr or '').strip()[:120]}")
+        except Exception as e:
+            out.append(f"{node}: FAILED {type(e).__name__}: {e}")
     return out
 
 
@@ -127,6 +143,15 @@ def read_powermode() -> list[str]:
                 capture_output=True, text=True, timeout=30)
             v = (r.stdout or "").strip() or "?"
             out.append(f"{node}: powermode={v} ({'LOW POWER' if v == '1' else 'normal'})")
+        except Exception as e:
+            out.append(f"{node}: unreadable ({type(e).__name__})")
+    for node, ip in LINUX_QUIET_HOSTS.items():
+        try:
+            r = subprocess.run(
+                ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", ip,
+                 "sudo", "-n", "/usr/local/sbin/nova-quiet", "status"],
+                capture_output=True, text=True, timeout=30)
+            out.append(f"{node}: {(r.stdout or '').strip() or '?'}")
         except Exception as e:
             out.append(f"{node}: unreadable ({type(e).__name__})")
     return out

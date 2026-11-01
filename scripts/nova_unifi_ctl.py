@@ -17,7 +17,7 @@ import nova_unifi_poller as u  # noqa: E402
 
 CMD_URL = f"{u.CONTROLLER_BASE}/proxy/network/api/s/{u.SITE}/cmd/stamgr"
 INFRA_NAME_RX = re.compile(r"nova-core|mac-studio|office-m4|jordans-mini|jordans-mac|office-m2|tv-movies|rack \d|unas|unvr|unifi-nvr|synology|udm|slzb|hue bridge|lutron|dream machine|u6 |usw|pro-48|poe", re.I)
-INFRA_IPS = {"192.168.1.1","192.168.1.2","192.168.1.5","192.168.1.6","192.168.1.7","192.168.1.9","192.168.1.10","192.168.1.11","192.168.1.69","192.168.1.77","192.168.1.86","192.168.1.125","192.168.1.250","192.168.1.252"}
+INFRA_IPS = {"192.168.1.1","192.168.1.2","192.168.1.5","192.168.1.6","192.168.1.7","192.168.1.9","192.168.1.10","192.168.1.11","192.168.1.69","192.168.1.77","192.168.1.86","192.168.1.150","192.168.1.250","192.168.1.252"}
 
 
 def _post(payload: dict) -> dict:

@@ -64,7 +64,7 @@ HOSTS = [
     "kochj@192.168.1.10",   # nova-core5   — PG, scheduler standby (installed, disabled)
     "kochj@192.168.1.86",   # nova-core2   — cold scheduler standby
     "kochj@192.168.1.250",  # nova-core4   — resilience node
-    "kochj@192.168.1.197",  # nova-core7   — Wi-Fi uplink, dead NIC
+    "kochj@192.168.1.150",  # nova-core7   — USB-C 2.5G uplink (Ubuntu rebuild 2026-11-01)
 ]
 REMOTE_PATH = "~/.claude/.credentials.json"
 MIN_REMAINING_MS = 30 * 60 * 1000   # don't push a token with <30m left — it would just re-break

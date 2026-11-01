@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import nova_dsn as _nova_dsn  # noqa: E402
 OPS_DSN = _nova_dsn.pg_dsn("nova_memories")
-OLLAMA_NODES = ["http://192.168.1.125:11434", "http://192.168.1.5:11434",   # batch pool: idle 24-thread Ryzens first (2026-10-01)
+OLLAMA_NODES = ["http://192.168.1.150:11434", "http://192.168.1.5:11434",   # batch pool: idle 24-thread Ryzens first (2026-10-01)
                 "http://192.168.1.86:11434", "http://192.168.1.77:11434",
                 "http://192.168.1.7:11434", "http://192.168.1.6:11434"]      # .251 was the Mac mini's stale DHCP lease; it is .77
 LLM_MODEL = "qwen3:8b"

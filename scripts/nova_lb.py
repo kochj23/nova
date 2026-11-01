@@ -50,7 +50,7 @@ NODES = [
     # embeddings-only, and .190 is a dead soundbar IP — all removed from the ollama pool.
     {"name": "nova-core2", "ip": "192.168.1.86", "port": 37470, "gpu": False,
      "protocols": {"ollama": 11434}},
-    {"name": "nova-core7", "ip": "192.168.1.125", "port": 37470, "gpu": True,
+    {"name": "nova-core7", "ip": "192.168.1.150", "port": 37470, "gpu": True,
      "protocols": {"ollama": 11434}},
     {"name": "nova-core10", "ip": "192.168.1.77", "port": 37470, "gpu": True,
      "protocols": {"ollama": 11434, "mlx": 5050}},

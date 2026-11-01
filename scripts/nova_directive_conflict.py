@@ -60,7 +60,7 @@ import psycopg2.extras  # noqa: E402
 from nova_notify import notify  # noqa: E402
 
 DSN = os.environ.get("NOVA_OPS_DSN", _nova_dsn.pg_dsn("nova_ops"))
-OLLAMA_NODES = ["http://192.168.1.5:11434", "http://192.168.1.125:11434", "http://192.168.1.86:11434"]
+OLLAMA_NODES = ["http://192.168.1.5:11434", "http://192.168.1.150:11434", "http://192.168.1.86:11434"]
 MODEL = os.environ.get("NOVA_DIRECTIVE_MODEL", "qwen3:8b")
 IMPERATIVE = re.compile(r"\b(never|always|do not|don't|must|must not|only|refuse|hold|held|no [a-z]+ (content|alerts?)|require[sd]?|forbid|prohibit|allowed|not allowed)\b", re.I)
 

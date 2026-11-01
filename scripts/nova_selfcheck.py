@@ -174,7 +174,7 @@ def check_replication():
     STANDBYS = (
         ("192.168.1.10", "nova-core5/.10 native postgresql-17", SSH + ["kochj@192.168.1.10", "sudo -n systemctl restart postgresql-17"], 60),
         ("192.168.1.7", ".7 tv_movies LaunchDaemon", SSH + ["kochj@192.168.1.7", "sudo -n launchctl kickstart -k system/com.kochj.postgresql17-replica"], 60),
-        ("192.168.1.125", "core7/.125 pg17-replica container", SSH + ["kochj@192.168.1.125", "docker restart pg17-replica"], 90),
+        ("192.168.1.150", "core7/.125 pg17-replica container", SSH + ["kochj@192.168.1.150", "docker restart pg17-replica"], 90),
     )
     pending = set()
     try:
@@ -198,7 +198,7 @@ def check_replication():
     detail = f"was {count} replicas (lag {lag}s), now {len(present)} [{addrs2 or 'none'}]. MISSING: {', '.join(missing) or 'none'}."
     if missing_pending:
         detail += f" REBUILD PENDING (not auto-restarted): {', '.join(missing_pending)}."
-    if any(ip == "192.168.1.125" for ip, n, _, _ in STANDBYS if n in missing):
+    if any(ip == "192.168.1.150" for ip, n, _, _ in STANDBYS if n in missing):
         detail += " core7 history: OOM-killed 2026-09-19 when shared_buffers exceeded the docker memory cap — check `docker events`/`docker stats`."
     if any(ip == "192.168.1.7" for ip, n, _, _ in STANDBYS if n in missing):
         detail += " NOTE .7 dies if macOS re-revokes Local Network — needs a GUI login via vnc://192.168.1.7 to re-approve."
