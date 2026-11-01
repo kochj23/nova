@@ -35,9 +35,10 @@ inside the sanctioned updater would have missed this exact incident.
 The real long-term fix is to stop depending on the floating `python3` at all, but that means
 editing ~103 LaunchAgents plus scheduler.yaml; until someone does that, this guard holds the line.
 
-Usage: nova_python_guard.py [--repair] [--quiet]
+Usage: nova_python_guard.py [--repair] [--quiet] [--local]
          default  : check only, exit 1 if wrong (safe to run anywhere)
          --repair : relink the wanted formula, re-verify, and notify
+         On the control plane (.6) it also sweeps FLEET_MACS over ssh; --local skips that.
 Check:   nova_python_guard.py --selftest    (pure logic, touches nothing)
 """
 from __future__ import annotations
@@ -104,7 +105,47 @@ def repair() -> list[str]:
             steps.append(f"brew {' '.join(cmd)}: rc={r.returncode} {(r.stdout or r.stderr).strip().splitlines()[-1][:90] if (r.stdout or r.stderr).strip() else ''}")
         except Exception as e:
             steps.append(f"brew {' '.join(cmd)}: FAILED {type(e).__name__}: {e}")
+    # 2026-11-01: newer python@3.14 kegs (3.14.8+, after upstream made 3.15 the default python3)
+    # no longer ship an unversioned bin/python3, so the relink above can leave NO python3 at all
+    # (seen on nova-core4/6). Fall back to an explicit symlink onto the versioned binary.
+    if not (version_of() or "").startswith(WANT_PREFIX + "."):
+        try:
+            if os.path.lexists(PY3):
+                os.unlink(PY3)
+            os.symlink(f"../opt/{WANT_FORMULA}/bin/python{WANT_PREFIX}", PY3)
+            steps.append(f"symlink {PY3} -> ../opt/{WANT_FORMULA}/bin/python{WANT_PREFIX}")
+        except Exception as e:
+            steps.append(f"symlink fallback FAILED {type(e).__name__}: {e}")
     return steps
+
+
+# Other Macs swept from the control plane (the hourly python_guard task runs on .6 only).
+# 2026-11-01 all four were found on python3 -> 3.15 with no psycopg2; nothing had noticed.
+FLEET_MACS = {"nova-core4": "192.168.1.250", "nova-core6": "192.168.1.252",
+              "nova-core9": "192.168.1.7", "nova-core10": "192.168.1.77"}
+CONTROL_PLANE = ("Office-M4-2", "office-m4-2")
+STABLE_PY = f"/opt/homebrew/opt/{WANT_FORMULA}/bin/python{WANT_PREFIX}"   # not the floating python3
+
+
+def sweep_fleet(flags: set[str]) -> int:
+    """Run this guard on every FLEET_MACS host over ssh; returns how many are still broken."""
+    broken = 0
+    passthru = [f for f in ("--repair", "--quiet") if f in flags]
+    for node, ip in FLEET_MACS.items():
+        cmd = ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", ip, STABLE_PY,
+               "/Volumes/nas/nova-fs/scripts/nova_python_guard.py", "--local", *passthru]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            out = " ".join((r.stdout + r.stderr).split())
+            if r.returncode != 0:
+                broken += 1
+                print(f"[{node}] {out[:300]}", file=sys.stderr)
+            elif "--quiet" not in flags:
+                print(f"[{node}] {out[:200]}")
+        except Exception as e:
+            broken += 1
+            print(f"[{node}] unreachable: {type(e).__name__}: {e}", file=sys.stderr)
+    return broken
 
 
 def main(argv: list[str]) -> int:
@@ -124,12 +165,16 @@ def main(argv: list[str]) -> int:
         print("selftest OK")
         return 0
 
+    fleet_broken = 0
+    if "--local" not in flags and os.uname().nodename.split(".")[0] in CONTROL_PLANE:
+        fleet_broken = sweep_fleet(flags)
+
     quiet = "--quiet" in flags
     healthy, reason = verdict(version_of(), missing_modules())
     if healthy:
         if not quiet:
             print(f"OK: {reason}")
-        return 0
+        return 1 if fleet_broken else 0
 
     print(f"BROKEN: {reason}", file=sys.stderr)
     if "--repair" not in flags:
