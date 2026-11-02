@@ -48,6 +48,7 @@ import nova_dsn  # noqa: E402
 OPS_DSN = nova_dsn.pg_dsn("nova_ops")
 SITE = "https://nova.digitalnoise.net"
 SECTION = "operations"
+CONTENT_DIR = "burbank-ops"   # nova_journal files the "operations" section under content/burbank-ops (its URL too)
 TAGS = ["lessons-learned", "beliefs", "top-10", "daily"]
 EMOJI = "🧭"
 TOP = 10
@@ -344,7 +345,7 @@ def run(hours: float = 24, top_n: int = TOP, dry_run: bool = False, scheduled: b
     oc = conn.cursor()
     if scheduled and not force:
         import nova_journal as nj
-        if (nj.HUGO_ROOT / f"content/{SECTION}/{slug}.md").exists():
+        if (nj.HUGO_ROOT / f"content/{CONTENT_DIR}/{slug}.md").exists():
             print(f"[top_lessons] {slug} already published"); return 0
     cands, counts = load(oc, start, end)
     folded = fold(cands)
@@ -369,7 +370,7 @@ def run(hours: float = 24, top_n: int = TOP, dry_run: bool = False, scheduled: b
     result = nj.git_push(SECTION, title)
     if result != nj.PUSH_PUSHED:
         raise SystemExit(f"[top_lessons] git: {result}")
-    print(f"[top_lessons] published {SITE}/{SECTION}/{slug}/")
+    print(f"[top_lessons] published {SITE}/{CONTENT_DIR}/{slug}/")
     return 0
 
 
