@@ -1423,6 +1423,13 @@ tasks:
     timeout: 900
     overlap: skip
 
+  top_lessons:                     # daily 06:00 — "Top 10 lessons — <date>" in /operations: best new lessons of 24h, cause, belief verdict (Jordan 2026-11-01)
+    script: nova_top_lessons.py
+    args: ["--scheduled"]
+    schedule: cron 0 6 * * *
+    timeout: 1200
+    overlap: skip
+
   # === Journal: corrections column + topic studies (Jordan 2026-10-19) ===
   corrections_weekly:              # Sat 11:00 — Nova's Corrections (opinions): later articles / belief revisions that contradict earlier ones; skips when none
     script: nova_corrections.py
