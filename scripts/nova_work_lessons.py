@@ -432,7 +432,9 @@ LESSON_BAR = (
     "lesson says what THIS work shows that a generic summary would not: it NAMES the specific character, scene, "
     "decision, claim or number from the sources, what followed from it, and the rule that reveals — e.g. the "
     "shape 'When <named person> <did specific thing>, <specific consequence> — so <rule>'. For lessons prefer to cite the TEXT "
-    "passages where the work shows it; use the plot summary for story facts.\n")
+    "passages where the work shows it; use the plot summary for story facts. YOU (Nova) are the READER, never a "
+    "person in the work: a host, presenter, narrator or speaker the sources do not name is 'the host' / 'the "
+    "presenter' / 'the narrator' — NEVER 'Nova'.\n")
 GROUNDING_RULES = (
     "Every sentence in premise, tension, moves and lessons ends with the number(s) of the source(s) that "
     "support it, like [3] or [2][5]. Use no name, place, date or number that is not in a source you cite. Do "
@@ -643,6 +645,7 @@ def ground_reading(obj: dict, srcs: list[dict], full: list[dict] | None = None) 
     out["q"] = {"raw": len(raw), "uncited": 0, "generic": 0, "bank": 0, "dup": 0, "quote_bad": 0, "unnamed": 0}
     known = " ".join((s_["text"] or "").lower() for s_ in srcs)
     for x in raw:
+        x = {**x, "lesson": not_nova(str(x["lesson"]), known)}
         g = ground_lesson(x, srcs, full, known)
         if g.get("drop"):
             out["q"][g["drop"]] += 1
@@ -658,6 +661,18 @@ def ground_reading(obj: dict, srcs: list[dict], full: list[dict] | None = None) 
 
 
 QUOTE_FUZZ = 0.9
+_NOVA_RX = re.compile(r"\bNova(?:'s|\u2019s)?\b")
+
+
+def not_nova(lesson: str, known: str) -> str:
+    """Nova reads the work; she is never in it. 2026-11-02: an unnamed YouTube host's acts (and insults) were
+    written as "When Nova calls buyers 'used sardine cans', he ..." — 119 such lessons in 20 days, misgendering her
+    and pinning other people's words on her. When the sources never say "nova" (a Chevy Nova, PBS NOVA and a
+    supernova keep theirs), "Nova" in a lesson becomes "the host". Pure."""
+    if "nova" in known or not _NOVA_RX.search(lesson):
+        return lesson
+    out = _NOVA_RX.sub(lambda m: "the host's" if m.group(0).endswith("s") else "the host", lesson)
+    return out[0].upper() + out[1:] if out.startswith("the host") else out
 
 
 def _qnorm(s: str) -> list[str]:

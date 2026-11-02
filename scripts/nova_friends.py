@@ -55,6 +55,7 @@ Usage: nova_friends.py --subject cars|tech|food|music|military|screen|science|my
                        [--days 1] [--dry-run]
 """
 import argparse
+import json
 import re
 import sys
 import zlib
@@ -560,7 +561,9 @@ LORE_STOP = {"with", "this", "that", "from", "they", "were", "what", "have", "th
 # A street address never belongs in a public crime write-up (victims' addresses above all).
 ADDRESS_RE = re.compile(r"\b\d{1,6}\s+(?:[NSEW]\.?\s+)?(?:[A-Z][\w'.-]*\s+){1,4}(?:Street|St|Avenue|Ave|Road|Rd|"
                         r"Lane|Ln|Drive|Dr|Boulevard|Blvd|Court|Ct|Way|Place|Pl|Terrace|Circle|Parkway|Pkwy|Highway|Hwy)\b\.?")
-RECIPE_SITES = {"meatchurch.com": "Meat Church BBQ"}   # recipe-memory source_site -> credit name
+RECIPE_SITES = {"meatchurch.com": "Meat Church BBQ", "loveandlemons.com": "Love and Lemons",   # + nova_recipe_ingest 2026-11-02
+                "seriouseats.com": "Serious Eats", "simplyrecipes.com": "Simply Recipes", "eatingwell.com": "EatingWell"}
+RECENT_DAYS = 14             # a recipe page used on any plate in the last RECENT_DAYS days is not offered again   # recipe-memory source_site -> credit name
 RECIPES_MAX, RECIPE_CHARS = 4, 4000
 RECIPE_STOP = {"with", "this", "that", "from", "your", "recipe", "style", "best", "easy", "make", "homemade"}
 
@@ -923,7 +926,47 @@ def private_hit(text, terms):
     return None
 
 
-def fetch_recipes(cur, videos, n=RECIPES_MAX, prefer=(), avoid=()):
+def recent_recipe_urls(days=RECENT_DAYS):
+    """URLs any plate used in the last `days` days (service_config food_and_friends/recent_recipes). October's
+    single slot rotated four seafood dishes for thirteen days; this is the cure. [] when unavailable."""
+    try:
+        conn = _connect(OPS_DSN)
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT value FROM service_config WHERE service='food_and_friends' AND key='recent_recipes'")
+            row = cur.fetchone()
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        return []
+    from datetime import date, timedelta
+    cut = (date.today() - timedelta(days=days)).isoformat()
+    return [r["url"] for r in (row[0] if row else []) if r.get("date", "") >= cut]
+
+
+def note_recipe_urls(picks):
+    """Append today's [{plate, url}] to the recent list (kept 60 days). Never raises."""
+    try:
+        from datetime import date, timedelta
+        conn = _connect(OPS_DSN)
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT value FROM service_config WHERE service='food_and_friends' AND key='recent_recipes'")
+            row = cur.fetchone()
+            keep = (date.today() - timedelta(days=60)).isoformat()
+            cur_list = [r for r in (row[0] if row else []) if r.get("date", "") >= keep]
+            cur_list += [{"date": nj.today_str(), **p} for p in picks]
+            cur.execute("INSERT INTO service_config (service, key, value) VALUES ('food_and_friends','recent_recipes',%s) "
+                        "ON CONFLICT (service, key) DO UPDATE SET value=excluded.value, updated_at=now()",
+                        (json.dumps(cur_list),))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:  # noqa: BLE001
+        log(f"recent recipes not recorded ({e})")
+
+
+def fetch_recipes(cur, videos, n=RECIPES_MAX, prefer=(), avoid=(), exclude=()):
     """Nova's recipe memories (source 'recipes', type 'recipe': full recipe pages with URLs) for the
     Recipe Recommendation — the ones whose titles best match the day's videos, else a date-seeded
     pick so the block still has grounding on a thin day. -> [{channel,title,url,date,text}]."""
@@ -932,7 +975,7 @@ def fetch_recipes(cur, videos, n=RECIPES_MAX, prefer=(), avoid=()):
                    WHERE source = 'recipes' AND metadata->>'type' = 'recipe' AND metadata->>'url' LIKE 'https://%%'
                      AND coalesce(metadata->>'privacy', 'public') NOT IN ('private', 'local-only')
                    GROUP BY 1""")
-    pages = [(u, t or "", site or "") for u, t, site in cur.fetchall() if u]
+    pages = [(u, t or "", site or "") for u, t, site in cur.fetchall() if u and u not in set(exclude)]
     if not pages:
         return []
     day = set(re.findall(r"[a-z]{4,}", " ".join(f"{v['title']} {v['text']}" for v in videos).lower())) - RECIPE_STOP
@@ -955,6 +998,8 @@ def fetch_recipes(cur, videos, n=RECIPES_MAX, prefer=(), avoid=()):
         if BANNED.search(text or ""):
             continue
         md["channel"] = RECIPE_SITES.get(md.get("source_site") or "", md.get("source_site") or "recipe")
+        if not md.get("title"):
+            md["title"] = md.get("url", "")
         rows.append((text, created, md))
     return group_videos(rows, RECIPE_CHARS, n)
 
@@ -1250,6 +1295,8 @@ def top_block(subj, videos, arts, recipes=(), food_rules=None, extra=(), theme=N
         if not food_rules:
             log("Recipe Recommendation: no house rules — block omitted (fail closed)")
             return ""
+        if food_rules.get("plates") and isinstance(recipes, dict):
+            return plates_block(videos, arts, recipes, food_rules)
         task += "\n\nHOUSE RULES:\n" + food_rules["rules"]
     material = digest([*videos, *arts])
     if recipes:
@@ -1292,6 +1339,78 @@ def top_block(subj, videos, arts, recipes=(), food_rules=None, extra=(), theme=N
     return block
 
 
+PLATE_TASK = ("Recommend ONE recipe for '{label}', taken from the day's food videos or the RECIPE PAGES in the "
+              "material and chosen by the PLATE RULES below: the dish name in bold on its own line, the tag line, a "
+              "line or two on why it is worth cooking, then a short **Ingredients** bullet list and a short **Method** "
+              "(numbered). Amounts, times and temperatures come ONLY from the source — never invent them; where the "
+              "plate rules force a change, mark it plainly as a swap. Credit and link the channel/video or recipe page "
+              "it comes from. Do not repeat a dish another plate already took: {taken}.")
+
+
+def plates_block(videos, arts, recipes_by_plate, food_rules):
+    """Food and Friends' three plates (Jordan 2026-11-02): one grounded recipe per plate under one
+    '## Recipe Recommendations' heading. Each plate fails closed on its own (no grounding, a private term,
+    a rule the checker trips) — the others still publish. Rules live in service_config, never here."""
+    out, picks, taken = [], [], []
+    for plate in food_rules["plates"]:
+        recs = recipes_by_plate.get(plate["key"]) or []
+        task = PLATE_TASK.format(label=plate["label"], taken=", ".join(taken) or "none yet")
+        task += "\n\nPLATE RULES:\n" + plate["rules"] + "\n\n" + food_rules.get("plates_common", "")
+        material = digest([*videos, *arts])
+        if recs:
+            material += "\n\n--- RECIPE PAGES (Nova's recipe memories) ---\n\n" + digest(list(recs))
+        rules = ("This is a PUBLIC page: never mention Jordan's employer or his work, never mention 'OpenClaw', no "
+                 "IP addresses, no hostnames, no file paths, no names of people in Jordan's household, nothing about "
+                 "anyone's health, nothing about when anyone is home or asleep, no sexual content. Never invent prices, "
+                 "ingredients, amounts or quotes that are not in the material.")
+        block = featured_block(plate["label"], task, material, [*videos, *arts, *recs], rules, llm=nj.call_openrouter,
+                               max_words=650)
+        if block:
+            hit = private_hit(block, food_rules.get("private_terms"))
+            if hit:
+                log(f"{plate['label']}: private-term check tripped — plate omitted (fail closed)"); block = ""
+        if block and plate.get("avoid_check"):
+            ing = re.search(r"\*\*Ingredients\*\*(.*?)(?:\*\*Method\*\*|$)", block, re.S | re.I)
+            bad = re.search(plate["avoid_check"], ing.group(1) if ing else block, re.I)   # the ingredient list: a
+            # swap note ("no turmeric here") in the prose must not sink the plate, a forbidden ingredient must
+            if bad:
+                log(f"{plate['label']}: forbidden ingredient {bad.group(0)!r} — plate omitted (fail closed)"); block = ""
+        if not block:
+            continue
+        out.append(block.replace(f"## {plate['label']}", f"### {plate['label']}", 1))
+        m = re.search(r"\*\*([^*\n]{3,80})\*\*", block)
+        taken.append(m.group(1) if m else plate["label"])
+        picks += [{"plate": plate["key"], "url": r["url"]} for r in recs if r["url"] in block]
+        log(f"{plate['label']}: {words(block)} words")
+    if not out:
+        return ""
+    if picks:
+        note_recipe_urls(picks)
+    return "## Recipe Recommendations\n\n" + "\n".join(out)
+
+
+def apply_auto_channels(cfg, subject):
+    """+ channels nova_channel_router routed to this subject (service_config friends/auto_channels) — new
+    subscriptions reach their section within hours, not when someone edits a list. Never raises."""
+    try:
+        import psycopg2                    # its own connection (not _connect), so tests' scripted cursors are untouched
+        conn = psycopg2.connect(OPS_DSN, connect_timeout=5)
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT value FROM service_config WHERE service='friends' AND key='auto_channels'")
+            row = cur.fetchone()
+        finally:
+            conn.close()
+        extra = tuple(r["name"] for r in ((row[0] or {}).get("routes", {}) if row else {}).values()
+                      if r.get("section") == subject and r.get("name") not in cfg["channels"])
+        if extra:
+            log(f"auto-routed channels: +{len(extra)} ({', '.join(extra[:6])})")
+            cfg["channels"] = tuple(cfg["channels"]) + extra
+    except Exception as e:  # noqa: BLE001
+        log(f"auto-routed channels unavailable ({e})")
+    return cfg
+
+
 def source_list(items):
     """Linked items via the Watches helper, plus unlinked (downloaded-episode) ones listed plainly."""
     linked = [v for v in items if v["url"]]
@@ -1310,7 +1429,7 @@ def main():
                     help="belief: auto = theme on is_theme_day() dates, roundup otherwise")
     ap.add_argument("--theme", help="belief: this belief_themes.theme instead of a random pick (implies --mode theme)")
     a = ap.parse_args()
-    cfg = SUBJECTS[a.subject]
+    cfg = apply_auto_channels(dict(SUBJECTS[a.subject]), a.subject)
     name, section, noun = cfg["name"], cfg["section"], cfg["noun"]
 
     mc = _connect(MEM_DSN).cursor()
@@ -1403,8 +1522,14 @@ def main():
     if a.subject == "food":
         food_rules = load_food_rules()
         try:
-            recipes = fetch_recipes(mc, videos, prefer=(food_rules or {}).get("prefer", ()),
-                                    avoid=(food_rules or {}).get("avoid", ()))
+            if (food_rules or {}).get("plates"):     # three plates (Jordan 2026-11-02), no page reused within RECENT_DAYS
+                recent, recipes = recent_recipe_urls(), {}
+                for pl in food_rules["plates"]:
+                    recipes[pl["key"]] = fetch_recipes(mc, videos, prefer=pl.get("prefer", ()), avoid=pl.get("avoid", ()),
+                                                       exclude=recent + [r["url"] for v in recipes.values() for r in v])
+            else:
+                recipes = fetch_recipes(mc, videos, prefer=(food_rules or {}).get("prefer", ()),
+                                        avoid=(food_rules or {}).get("avoid", ()))
         except Exception as e:  # noqa: BLE001 — recipe memories are optional grounding
             log(f"recipe memories unavailable ({e})")
     extra = []
@@ -1435,9 +1560,10 @@ def main():
         body += "### Videos\n\n" + source_list(videos) + "\n\n"
     if arts:
         body += "### Articles\n\n" + source_list(arts) + "\n"
-    linked = [r for r in recipes if r["url"] in block]
+    flat = [r for v in recipes.values() for r in v] if isinstance(recipes, dict) else recipes
+    linked = list({r["url"]: r for r in flat if r["url"] in block}.values())
     if linked:
-        body += "\n### Recipe\n\n" + source_list(linked) + "\n"
+        body += "\n### Recipe" + ("s" if len(linked) > 1 else "") + "\n\n" + source_list(linked) + "\n"
     linked = [r for r in extra if r["url"] and r["url"] in block]
     if a.subject == "belief" and block:   # the verified passages are listed even when their pages are not linked
         ok, cite = verse_ok(block, extra)

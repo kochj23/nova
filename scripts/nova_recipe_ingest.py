@@ -117,7 +117,12 @@ def parse_recipe(page: str) -> dict | None:
         except json.JSONDecodeError:
             continue
         items = d if isinstance(d, list) else d.get("@graph", [d])
-        for it in items:
+        flat = []
+        for it in items:                     # Yoast nests lists inside @graph lists
+            flat += it if isinstance(it, list) else [it]
+        for it in flat:
+            if not isinstance(it, dict):
+                continue
             t = it.get("@type")
             if t == "Recipe" or (isinstance(t, list) and "Recipe" in t):
                 ing = [re.sub(r"\s+", " ", html.unescape(x)).strip() for x in it.get("recipeIngredient") or []]

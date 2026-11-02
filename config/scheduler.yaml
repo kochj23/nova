@@ -988,6 +988,12 @@ tasks:
     timeout: 3600
     overlap: skip
 
+  channel_router:                  # every 4h (Jordan 2026-11-02: "I am subbing and unsubbing to channels all the damn time"): refresh the YouTube subscription list (Safari session -> .6) and route NEW subscriptions to their *and Friends* section (service_config friends/auto_channels); unsubscribed ones drop out
+    script: nova_channel_router.py
+    schedule: every 4h
+    timeout: 1800
+    overlap: skip
+
   yt_liked_download:               # SPOF plan 6c — moved back from scheduler-core (.2): writes /Volumes/external, a macOS path; it never ran there
     script: nova_yt_liked_download.py
     schedule: cron 0 1 * * 6

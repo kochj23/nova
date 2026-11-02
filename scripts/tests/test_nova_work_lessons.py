@@ -511,3 +511,15 @@ class TestFrame(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_not_nova_rewrites_unnamed_host():
+    import nova_work_lessons as w
+    assert w.not_nova("When Nova calls them cans, he sneers [3].", "a transcript") == "When the host calls them cans, he sneers [3]."
+    assert w.not_nova("Nova's rule holds [1].", "x") == "The host's rule holds [1]."
+
+
+def test_not_nova_keeps_real_novas():
+    import nova_work_lessons as w
+    s = "When the '66 Nova got a Nelson motor, it won [2]."
+    assert w.not_nova(s, "my 66 nova build") == s
