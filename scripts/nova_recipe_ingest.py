@@ -12,6 +12,8 @@ no comments). Stored like the Meat Church ingest: source 'recipes', metadata typ
 chunk — so nova_friends.fetch_recipes picks them up unchanged. Already-stored URLs (PG) are skipped.
 
 Usage: nova_recipe_ingest.py [--per-site N] [--site host] [--dry-run]
+       nova_recipe_ingest.py --url <recipe page or gallery/list page> [--name "Site Name"] [--dry-run]
+         (a gallery is followed one level: every same-site link that carries a schema.org Recipe is stored)
 """
 from __future__ import annotations
 
@@ -171,7 +173,55 @@ def stored_urls() -> set[str]:
         c.close()
 
 
+def store(u: str, r: dict, site_name: str, host: str) -> bool:
+    parts = chunks(f"{site_name} Recipe: {r['text']}")
+    return all(remember(p, {"url": u, "title": r["name"], "source_site": host.removeprefix("www."), "type": "recipe",
+                            "chunk": i, "total_chunks": len(parts)}) for i, p in enumerate(parts, 1))
+
+
+def ingest_url(url: str, site_name: str | None, dry: bool) -> int:
+    """One recipe page, or a gallery/list page whose same-site recipe links are followed one level."""
+    from urllib.parse import urljoin, urlsplit, urlunsplit
+    clean = urlunsplit(urlsplit(url)._replace(query="", fragment=""))      # drop utm/gclid tracking
+    host = urlsplit(clean).netloc
+    name = site_name or SITES.get(host, {}).get("name") or host.removeprefix("www.").split(".")[0].title()
+    page = get(clean)
+    have = set() if dry else stored_urls()
+    r = parse_recipe(page)
+    if r:
+        targets = [(clean, r)]
+    else:
+        links = re.findall(r'(?:href="|\\?")((?:https?:)?(?:\\?/)[^"\s]*recipe[^"\s]*?)(?:\\?")', page)
+        links = [urljoin(clean, l.replace("\\/", "/").replace("\\", "")) for l in links]
+        links = [urlunsplit(urlsplit(l)._replace(query="", fragment="")) for l in links if urlsplit(urljoin(clean, l)).netloc == host]
+        links = [l for l in dict.fromkeys(links) if l.rstrip("/") != clean.rstrip("/") and not re.search(NOT_RECIPE, l.rstrip("/").rsplit("/", 1)[-1])]
+        log(f"{clean}: list page, {len(links)} same-site recipe links")
+        targets = []
+        for l in links:
+            if l in have:
+                continue
+            try:
+                rr = parse_recipe(get(l))
+            except Exception as e:  # noqa: BLE001
+                log(f"  {l}: {type(e).__name__}"); continue
+            if rr:
+                targets.append((l, rr))
+            time.sleep(0.7)
+    n = 0
+    for u, rr in targets:
+        if u in have:
+            continue
+        if dry or store(u, rr, name, host):
+            n += 1
+            log(f"  {'would store' if dry else 'stored'}: {rr['name']}")
+    log(f"done: {n} recipes from {host}")
+    return 0
+
+
 def main(argv) -> int:
+    if "--url" in argv:
+        nm = argv[argv.index("--name") + 1] if "--name" in argv else None
+        return ingest_url(argv[argv.index("--url") + 1], nm, "--dry-run" in argv)
     per = int(argv[argv.index("--per-site") + 1]) if "--per-site" in argv else 60
     only = argv[argv.index("--site") + 1] if "--site" in argv else None
     dry = "--dry-run" in argv
@@ -197,10 +247,7 @@ def main(argv) -> int:
                 continue
             if dry:
                 log(f"  would store: {r['name']}"); n += 1; continue
-            parts = chunks(f"{cfg['name']} Recipe: {r['text']}")
-            ok = all(remember(p, {"url": u, "title": r["name"], "source_site": host.removeprefix("www."), "type": "recipe",
-                                  "chunk": i, "total_chunks": len(parts)}) for i, p in enumerate(parts, 1))
-            if ok:
+            if store(u, r, cfg["name"], host):
                 n += 1; total += 1
             time.sleep(0.7)                  # polite
         log(f"{host}: stored {n}")

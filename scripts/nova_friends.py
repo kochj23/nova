@@ -562,7 +562,8 @@ LORE_STOP = {"with", "this", "that", "from", "they", "were", "what", "have", "th
 ADDRESS_RE = re.compile(r"\b\d{1,6}\s+(?:[NSEW]\.?\s+)?(?:[A-Z][\w'.-]*\s+){1,4}(?:Street|St|Avenue|Ave|Road|Rd|"
                         r"Lane|Ln|Drive|Dr|Boulevard|Blvd|Court|Ct|Way|Place|Pl|Terrace|Circle|Parkway|Pkwy|Highway|Hwy)\b\.?")
 RECIPE_SITES = {"meatchurch.com": "Meat Church BBQ", "loveandlemons.com": "Love and Lemons",   # + nova_recipe_ingest 2026-11-02
-                "seriouseats.com": "Serious Eats", "simplyrecipes.com": "Simply Recipes", "eatingwell.com": "EatingWell"}
+                "seriouseats.com": "Serious Eats", "simplyrecipes.com": "Simply Recipes", "eatingwell.com": "EatingWell",
+                "thepioneerwoman.com": "The Pioneer Woman"}
 RECENT_DAYS = 14             # a recipe page used on any plate in the last RECENT_DAYS days is not offered again   # recipe-memory source_site -> credit name
 RECIPES_MAX, RECIPE_CHARS = 4, 4000
 RECIPE_STOP = {"with", "this", "that", "from", "your", "recipe", "style", "best", "easy", "make", "homemade"}
