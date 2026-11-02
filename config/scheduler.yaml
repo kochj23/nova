@@ -994,6 +994,12 @@ tasks:
     timeout: 1800
     overlap: skip
 
+  liked_playlist:                  # Mondays 09:00 (Jordan 2026-11-02): every liked YouTube MUSIC video not yet done -> tagged MP3 (YouTube Music + MusicBrainz tags) in the Music app playlist "5 stars - Youtube", rated 5 stars. Safari session + Music.app -> .6 only
+    script: nova_liked_playlist.py
+    schedule: cron 0 9 * * 1
+    timeout: 43200
+    overlap: skip
+
   yt_liked_download:               # SPOF plan 6c — moved back from scheduler-core (.2): writes /Volumes/external, a macOS path; it never ran there
     script: nova_yt_liked_download.py
     schedule: cron 0 1 * * 6
