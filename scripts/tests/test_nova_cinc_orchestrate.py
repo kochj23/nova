@@ -71,8 +71,10 @@ class TestSecurity(_Base):
         self.assertEqual([c for c in ssh.cmds if MUTATING.search(c)], [])
         run.assert_not_called()
         self.assertTrue(ok)
-        self.assertEqual(changes, 12)          # every drifted probe is counted (bug fix 2026-10-05)
-        self.assertIn("nova_linux: 3 changes", out)
+        # every drifted probe is counted (bug fix 2026-10-05); 2026-11-01 baseline added sshd drop-in +
+        # effective, known_hosts (nova_base) and timezone, DNS search, NAS creds/fstab/2 symlinks (nova_linux)
+        self.assertEqual(changes, 20)
+        self.assertIn("nova_linux: 9 changes", out)
 
     def test_ssh_is_batch_mode_argv(self):
         with patch.object(co.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout="ok", stderr="")) as run:
@@ -116,7 +118,9 @@ class TestRetry(_Base):
 
 class TestUnit(_Base):
     def test_recipe_dispatch(self):
-        self.assertIn("[skipped] macOS managed locally", co._apply_recipe_shell("u", "h", "macos", "nova_macos", True)[1])
+        self.assertIn("not macOS", co._apply_recipe_shell("u", "h", "linux", "nova_macos", True)[1])
+        self.assertIn("covered by", co._apply_recipe_shell("u", "h", "macos", "nova_macos", True,
+                                                           run_list=["nova_monitoring", "nova_wazuh"])[1])
         self.assertIn("no shell handler", co._apply_recipe_shell("u", "h", "linux", "bogus", True)[1])
         self.assertIn("not linux", co._recipe_nova_linux("u", "h", "macos", True)[1])
         self.assertIn("macOS only", co._recipe_nova_dotfiles("u", "h", "linux", True)[1])
@@ -124,7 +128,7 @@ class TestUnit(_Base):
     def test_all_ok_probes_report_no_changes(self):
         with patch.object(co, "ssh_exec", side_effect=_Ssh(answer="ok")):
             rc, out, _ = co._recipe_nova_linux("u", "h", "linux", False)
-        self.assertEqual(out.count("[ok]"), 3)
+        self.assertEqual(out.count("[ok]"), 4)       # fail2ban, ufw, unattended-upgrades, DNS search
 
     def test_notify_strips_emoji_prefix(self):
         co.notify(":gear: *Title*\nbody")

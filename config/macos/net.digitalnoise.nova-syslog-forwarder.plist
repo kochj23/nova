@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>net.digitalnoise.nova-syslog-forwarder</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>/usr/local/bin/nova_syslog_forwarder.sh</string>
+	</array>
+	<key>KeepAlive</key>
+	<true/>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/var/log/nova_syslog_forwarder.log</string>
+	<key>StandardErrorPath</key>
+	<string>/var/log/nova_syslog_forwarder.log</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>NOVA_SYSLOG_HOST</key>
+		<string>192.168.1.6</string>
+		<key>NOVA_SYSLOG_PORT</key>
+		<string>1514</string>
+	</dict>
+</dict>
+</plist>
