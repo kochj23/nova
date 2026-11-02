@@ -369,6 +369,32 @@ def main():
     podcast_index(cur)
     cur.execute("SELECT status, count(*) FROM nova_speaks_renders GROUP BY 1 ORDER BY 1")
     log("state: " + ", ".join(f"{s}={k}" for s, k in cur.fetchall()) + f" · hosts: {', '.join(h for h, v in hosts.items() if v['enabled'])}")
+    stall_alert(cur)
+
+
+def stall_alert(cur):
+    """Shout when the queue has work but every host has auto-disabled (fails>=3).
+
+    2026-11-02: core2 hit 3 fails during its 11-01 reboot while the Studio/mini/core7 were already
+    off, and the sweep logged an empty host list every 10 min for ~16 h with nothing on YouTube.
+    Re-enable after fixing: UPDATE nova_speaks_hosts SET enabled=true, fails=0 WHERE host=...
+    """
+    cur.execute("SELECT count(*) FROM nova_speaks_hosts WHERE enabled")
+    live = cur.fetchone()[0]
+    cur.execute("SELECT count(*) FROM nova_speaks_renders WHERE status IN ('queued','rendering')")
+    pending = cur.fetchone()[0]
+    if live or not pending:
+        return
+    log(f"STALLED: {pending} queued, no enabled render host")
+    try:
+        import nova_notify
+        nova_notify.notify("Nova Speaks stalled — every render host disabled",
+                           body=f"{pending} articles waiting for video. Fix the host, then: UPDATE nova_speaks_hosts "
+                                "SET enabled=true, fails=0 WHERE host='<host>'. See agent_docs nova-speaks.",
+                           level="critical", category="content", source="nova_speaks_sweep.py",
+                           dedup_key="nova-speaks-no-hosts")
+    except Exception as e:
+        log(f"stall notify failed: {e}")
 
 if __name__ == "__main__":
     if "--index" in sys.argv:

@@ -227,5 +227,27 @@ class TestFrame(unittest.TestCase):
         self.assertIn('if __name__ == "__main__":', SRC)
 
 
+class TestStallAlert(_Base):
+    """2026-11-02: every host auto-disabled for ~16 h with 56 articles queued and nothing said."""
+    def _run(self, live, pending):
+        cur = Cur([("WHERE enabled", (live,)), ("status IN", (pending,))])
+        nn = MagicMock()
+        with patch.dict(sys.modules, {"nova_notify": nn}):
+            ss.stall_alert(cur)
+        return nn.notify
+
+    def test_alerts_when_queue_waits_and_no_host_enabled(self):
+        n = self._run(0, 56)
+        n.assert_called_once()
+        self.assertEqual(n.call_args.kwargs["level"], "critical")
+        self.assertEqual(n.call_args.kwargs["dedup_key"], "nova-speaks-no-hosts")
+
+    def test_quiet_when_a_host_is_enabled(self):
+        self._run(1, 56).assert_not_called()
+
+    def test_quiet_when_queue_empty(self):
+        self._run(0, 0).assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
