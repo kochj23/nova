@@ -390,6 +390,30 @@ class TestFunctional(_Base):
         self.assertEqual(self.marker["nas"], OLD)
         self.assertIn("scan failed", s["error"])
 
+    def _scan_rc(self, rc, stderr):
+        """Wrap _Fake so the UNAS find scan writes its records but exits rc with this stderr."""
+        self.marker["nas"] = OLD
+        base = _Fake(incr=[("f", "new.txt", 7, OLD + 10)])
+        def fake(cmd, **kw):
+            r = base(cmd, **kw)
+            if "-newermt" in " ".join(map(str, cmd)):
+                return subprocess.CompletedProcess(cmd, rc, stdout=None, stderr=stderr)
+            return r
+        with patch.object(nr.subprocess, "run", side_effect=fake):
+            return nr.run_incremental(*nr.job_of("nas"), apply=False)
+
+    def test_incremental_scan_vanished_files_is_clean(self):
+        # 2026-11-01: find exits 1 when a file vanishes mid-scan (WAL rotation); that is not a failure
+        ok, s = self._scan_rc(1, b"** WARNING: connection is not using a post-quantum key exchange algorithm.\n"
+                                 b"find: './backups/pg_wal_archive/x.zst': No such file or directory\n")
+        self.assertTrue(ok, s)
+        self.assertEqual(s["files"], 1)
+
+    def test_incremental_scan_real_error_fails_with_reason(self):
+        ok, s = self._scan_rc(1, b"find: './private': Permission denied\n")
+        self.assertFalse(ok)
+        self.assertIn("Permission denied", s["error"])
+
     def test_soft_delete_report_only_moves_nothing(self):
         fake = _Fake()
         rc, posts = self.run_main(["--soft-deletes", "nas"], fake)

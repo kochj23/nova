@@ -425,6 +425,16 @@ def missing_dirs(sdst, dirs):
     return [x.decode("utf-8", "surrogateescape") for x in r.stdout.split(b"\0") if x]
 
 
+_SSH_NOISE = re.compile(r"post-quantum|store now, decrypt later|openssh\.com/pq|^\*\*\s*$", re.I)
+_VANISHED = re.compile(r"No such file or directory")
+
+
+def scan_errors(stderr) -> list:
+    """find's stderr minus OpenSSH's post-quantum banner."""
+    text = stderr.decode("utf-8", "replace") if isinstance(stderr, (bytes, bytearray)) else (stderr or "")
+    return [l.strip() for l in text.splitlines() if l.strip() and not _SSH_NOISE.search(l)]
+
+
 def run_incremental(name, usrc, sdst, cifs, apply, settle_s=SETTLE_S, lock_wait=300):
     """One incremental pass. Returns (ok, summary dict). The marker advances only on success."""
     t0 = time.time()
@@ -439,10 +449,18 @@ def run_incremental(name, usrc, sdst, cifs, apply, settle_s=SETTLE_S, lock_wait=
               f"\\( -type f -o -type d \\) \\( -newermt @{since} -o -newerct @{since} \\) "
               f"-printf '%y\\t%T@\\t%C@\\t%s\\t%P\\0'")
     with open(out, "wb") as f:
-        p = ssh(UNAS, remote, 2400, stdout=f, stderr=subprocess.DEVNULL)
+        p = ssh(UNAS, remote, 2400, stdout=f, stderr=subprocess.PIPE)
     unas_now = _clock_of(out) if os.path.getsize(out) else None
-    if p.returncode != 0 or unas_now is None:
-        return False, {"error": f"UNAS scan failed rc={p.returncode}", "marker": marker}
+    errs = scan_errors(p.stderr)
+    # 2026-11-01: ~1 in 3 passes "failed" with rc=1 and no reason (stderr went to DEVNULL). find exits 1
+    # when a file VANISHES between readdir and stat — routine on a live share (WAL archive rotation,
+    # downloads finishing). A vanished file needs no copy, so that case is a clean scan; anything else
+    # (permission denied, I/O error) still fails, now WITH its first error line.
+    if p.returncode == 1 and unas_now is not None and errs and all(_VANISHED.search(e) for e in errs):
+        pass
+    elif p.returncode != 0 or unas_now is None:
+        return False, {"error": f"UNAS scan failed rc={p.returncode}" + (f": {errs[0][:200]}" if errs else ""),
+                       "marker": marker}
     cutoff = unas_now - settle_s
     files, dirs, deferred, first = [], [], 0, True
     for rec in iter_records(out):
