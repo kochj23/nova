@@ -4,11 +4,19 @@
 Jordan 2026-11-02: "forever more, play a tone on the homepods and let me know when someone walks up
 to the door."
 
-WHY A DAEMON: nova_protect_monitor runs every 2 min — a courier is gone by then. This polls the
-Protect events API every 5 s for the front cameras only.
+SOURCE: Frigate on nova-core1 (http://192.168.1.2:8971, no auth — Jordan: "You don't need to login to
+the cameras with this"). No Protect login, no Keychain for the cameras. Polls /api/events every 3 s.
 
-  trigger   person / package smart detection, or a doorbell ring, on FRONT cameras
-  debounce  one alert per COOLDOWN_S (a ring always alerts) — one visit, one chime
+  trigger   Frigate "person" on the doorstep camera(s) whose box is >= min_box_h (0.4) of the frame
+            tall, i.e. on the walkway/porch. People on the far sidewalk are ~0.23-0.26 tall (measured
+            2026-11-02) and do NOT chime. An in-progress event is re-checked every poll, so someone
+            who starts small at the gate fires as they come up the walk.
+            FRIGATE NAMES ARE NOT THE CAMERA NAMES (frames checked 2026-11-02): front_door = "Exterior -
+            Front Right" (porch + walkway), front_door_patio = "Exterior - Front Door Left" (was a black
+            frame), front_yard = "Exterior - Dylan" and front_yard_alt = "Exterior - Front Middle" (both
+            street views -> passers-by, not used), exterior_front_right = **Interior - Garage** (never use).
+  debounce  a visit = close detections with gaps < cooldown_s (600). Only the first of a visit chimes;
+            someone lingering on the porch keeps the visit open (replay of 11-01: 9 chimes -> 1).
   sound     Jordan: "Nothing loud, nothing jarring. Just something easy tone and a voice announcing
             someone at the door." -> a soft sine two-note tone, a pause, then Nova (Gracie Wise, the
             nova_voice_room XTTS voice, Whisper-checked clips) saying e.g. "Little Mister, someone is at
@@ -18,12 +26,14 @@ Protect events API every 5 s for the front cameras only.
             afterwards (a pre-stream volume read over RAOP is a placeholder, so no restore). It DOES interrupt
             whatever that HomePod was playing (AirPlay takes the speaker) — same as a doorbell.
   quiet     22:00-07:00 no chime (Slack DM still goes out); service_config door_chime/quiet
-  DM        Jordan's Slack DM (pushes to his phone) with the event thumbnail
+  DM        Jordan's Slack DM (pushes to his phone) with Frigate's event snapshot
   audit     nova_ops.door_chime_log (one row per alert: cameras, kinds, chimed speakers, outcome)
 
 Config (service_config, service='door_chime'): enabled (bool, kill switch), speakers
-([{name, host}]), volume (int 0-100), quiet ({"start":22,"end":7}), cooldown_s.
-Runs on the Studio (homebrew python3.14 has pyatv) as LaunchDaemon net.digitalnoise.daemon.nova-door-chime.
+([{name, host}]), volume (int 0-100), quiet ({"start":22,"end":7}), cooldown_s, cameras
+({frigate_name: label}), min_box_h.
+Runs on the Studio (homebrew python3.14 has pyatv) as LaunchAgent net.digitalnoise.nova-door-chime
+(gui session: the Slack bot token is in the login Keychain).
 
 Usage: nova_door_chime.py --daemon | --prerender [--force] | --test-chime [--kind person|package|ring] [--speaker NAME] | --selftest
 """
@@ -42,8 +52,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 SERVICE = "door_chime"
-FRONT = ("Exterior - Front Door Left", "Exterior - Front Middle", "Exterior - Front Right", "Exterior - Front Left")
-WANT = {"person", "package"}
+FRIGATE = "http://192.168.1.2:8971"
 HOME = Path("/Volumes/Data/AI/door-chime")
 CHIME = HOME / "tone.wav"
 SNAP_DIR = HOME / "snaps"
@@ -52,11 +61,13 @@ ANNOUNCE = {
     "package": "Little Mister, a package was just left at the front door.",
     "ring":    "Little Mister, someone rang the doorbell.",
 }
-POLL_S = 5
+POLL_S = 3
 DEFAULTS = {
     "enabled": True,
     "volume": 50,                      # Jordan 2026-11-02 "louder than that, for sure" (25 was too quiet); the HomePod keeps this level
-    "cooldown_s": 120,
+    "cooldown_s": 600,                 # quiet gap: alert only if nobody was at the door for 10 min
+    "min_box_h": 0.4,
+    "cameras": {"front_door": "Exterior - Front Right", "front_door_patio": "Exterior - Front Door Left"},
     "quiet": {"start": 22, "end": 7},
     # every HomePod that streams with no pairing (pyatv scan 2026-11-02). Apple TVs need pairing.
     "speakers": [{"name": "OfficePod", "host": "192.168.1.91"}, {"name": "BackDoorPod", "host": "192.168.1.26"},
@@ -74,18 +85,12 @@ def log(m):
 
 
 # ── pure logic (selftest) ──────────────────────────────────────────────────────────────
-def classify(ev: dict, front_ids: set) -> str | None:
-    """'ring' | 'package' | 'person' | None for one Protect event."""
-    if ev.get("camera") not in front_ids:
+def classify(ev: dict, cams: dict, min_h: float) -> str | None:
+    """'person' when a Frigate event is a person close to the door on a doorstep camera, else None."""
+    if ev.get("camera") not in cams or ev.get("label") != "person":
         return None
-    if ev.get("type") == "ring":
-        return "ring"
-    kinds = set(ev.get("smartDetectTypes") or [])
-    if "package" in kinds:
-        return "package"
-    if "person" in kinds:
-        return "person"
-    return None
+    box = (ev.get("data") or {}).get("box") or [0, 0, 0, 0]
+    return "person" if len(box) == 4 and box[3] >= min_h else None
 
 
 def in_quiet(hour: int, quiet: dict) -> bool:
@@ -94,7 +99,7 @@ def in_quiet(hour: int, quiet: dict) -> bool:
 
 
 def should_alert(kind: str, now: float, last_alert: float, cooldown: int) -> bool:
-    return kind == "ring" or now - last_alert >= cooldown
+    return now - last_alert >= cooldown
 
 
 def make_chime(path: Path, rate=44100):
@@ -234,64 +239,70 @@ def chime(cfg, kind="person") -> tuple[list, list]:
 
 
 # ── notify ─────────────────────────────────────────────────────────────────────────────
-def dm(client, ev, kind, cam_name):
+def _get(path, timeout=10):
+    import urllib.request
+    with urllib.request.urlopen(f"{FRIGATE}{path}", timeout=timeout) as r:
+        return r.read()
+
+
+def dm(ev, kind, cam_label):
     import nova_config
-    from nova_protect_monitor import _get_event_thumbnail, slack_upload_image, slack_post
-    what = {"ring": "🔔 Doorbell rang", "package": "📦 Package at the door",
-            "person": "🚶 Someone's walking up to the door"}[kind]
-    when = time.strftime("%-I:%M %p", time.localtime(ev["start"] / 1000))
-    text = f"{what} — {cam_name} at {when}."
+    from nova_protect_monitor import slack_upload_image, slack_post
+    what = "🚶 Someone's walking up to the door"
+    when = time.strftime("%-I:%M %p", time.localtime(ev["start_time"]))
+    text = f"{what} — {cam_label} at {when}."
     SNAP_DIR.mkdir(parents=True, exist_ok=True)
     img = SNAP_DIR / f"{ev['id']}.jpg"
-    time.sleep(1.5)   # let Protect write the event thumbnail
-    ok = _get_event_thumbnail(client, ev["id"], img) or client.get_snapshot(ev["camera"], img)
+    ok = False
+    for path in (f"/api/events/{ev['id']}/snapshot.jpg?bbox=1", f"/api/{ev['camera']}/latest.jpg"):
+        try:
+            img.write_bytes(_get(path)); ok = img.stat().st_size > 1000
+        except Exception as e:
+            log(f"snapshot {path}: {e}")
+        if ok:
+            break
     if not (ok and slack_upload_image(str(img), nova_config.JORDAN_DM, title=what, comment=text)):
         slack_post(text, channel=nova_config.JORDAN_DM)
     return text
 
 
 def daemon():
-    from nova_protect_monitor import ProtectClient
     import threading
-    client = ProtectClient()
-    while not client.login():
-        log("Protect login failed; retry in 60 s"); time.sleep(60)
-    cams = {c["id"]: c["name"] for c in client.get_bootstrap()["cameras"] if c["name"] in FRONT}
-    log(f"watching {sorted(cams.values())}")
+    import urllib.parse
     prerender()   # no-op once the clips exist
-    seen, last_alert, since = {}, 0.0, int(time.time() * 1000) - 10_000
     cfg, cfg_at = load_cfg(), time.time()
+    log(f"watching Frigate {sorted(cfg['cameras'])} (person, box h >= {cfg['min_box_h']})")
+    done, last_alert = {}, 0.0
     while True:
         try:
             if time.time() - cfg_at > 60:
                 cfg, cfg_at = load_cfg(), time.time()
-            for ev in client.get_events(since_ms=since, limit=50) or []:
-                eid = ev.get("id")
-                kind = classify(ev, set(cams))
-                if not kind or eid in seen:
+            q = urllib.parse.urlencode({"cameras": ",".join(cfg["cameras"]), "labels": "person",
+                                        "after": int(time.time()) - 180, "limit": 50})
+            for ev in json.loads(_get(f"/api/events?{q}")):
+                eid = ev["id"]
+                if eid in done or not classify(ev, cfg["cameras"], float(cfg["min_box_h"])):
+                    continue           # not close yet: re-checked next poll while the event runs
+                done[eid] = time.time()
+                fresh = should_alert("person", time.time(), last_alert, int(cfg["cooldown_s"]))
+                last_alert = time.time()          # every close sighting extends the current visit
+                if not cfg.get("enabled", True) or not fresh:
                     continue
-                seen[eid] = time.time()
-                if not cfg.get("enabled", True):
-                    continue
-                if not should_alert(kind, time.time(), last_alert, int(cfg["cooldown_s"])):
-                    continue
-                last_alert = time.time()
+                label = cfg["cameras"][ev["camera"]]
                 quiet = in_quiet(datetime.now().hour, cfg["quiet"])
                 result = {}
-                if not quiet:   # chime in parallel with the photo DM — the tone is the point
-                    t = threading.Thread(target=lambda: result.update(zip(("ok", "bad"), chime(cfg, kind))))
+                if not quiet:   # chime in parallel with the photo DM — the sound is the point
+                    t = threading.Thread(target=lambda: result.update(zip(("ok", "bad"), chime(cfg, "person"))))
                     t.start()
-                text = dm(client, ev, kind, cams[ev["camera"]])
+                text = dm(ev, "person", label)
                 if not quiet:
                     t.join(40)
                 ok, bad = result.get("ok", []), result.get("bad", [])
                 outcome = "quiet_hours" if quiet else ("chimed" if ok else "chime_failed")
-                record(event_id=eid, camera=cams[ev["camera"]], kinds=sorted(ev.get("smartDetectTypes") or []),
-                       ring=kind == "ring", chimed=ok, outcome=outcome, detail="; ".join(bad) or None)
-                log(f"{outcome}: {text} chimed={ok} failed={bad}")
-            since = int(time.time() * 1000) - 60_000          # overlap; `seen` dedups
-            cutoff = time.time() - 600
-            seen = {k: v for k, v in seen.items() if v > cutoff}
+                record(event_id=eid, camera=label, kinds=["person"], ring=False, chimed=ok, outcome=outcome,
+                       detail="; ".join(bad) or None)
+                log(f"{outcome}: {text} box={ev['data'].get('box')} chimed={ok} failed={bad}")
+            done = {k: v for k, v in done.items() if v > time.time() - 900}
         except Exception as e:
             log(f"poll error: {type(e).__name__}: {e}")
             time.sleep(10)
@@ -300,17 +311,17 @@ def daemon():
 
 def main(argv):
     if "--selftest" in argv:
-        front = {"A"}
-        assert classify({"camera": "A", "type": "ring"}, front) == "ring"
-        assert classify({"camera": "A", "type": "smartDetectZone", "smartDetectTypes": ["person"]}, front) == "person"
-        assert classify({"camera": "A", "smartDetectTypes": ["person", "package"]}, front) == "package"
-        assert classify({"camera": "A", "smartDetectTypes": ["vehicle"]}, front) is None
-        assert classify({"camera": "B", "type": "ring"}, front) is None          # not a front camera
+        cams = {"front_door": "Exterior - Front Right"}
+        ev = lambda h, cam="front_door", label="person": {"camera": cam, "label": label, "data": {"box": [0.5, 0.3, 0.1, h]}}
+        assert classify(ev(0.6), cams, 0.4) == "person"                     # on the walkway / porch
+        assert classify(ev(0.25), cams, 0.4) is None                        # passer-by on the far sidewalk
+        assert classify(ev(0.6, cam="exterior_front_right"), cams, 0.4) is None   # (= Interior - Garage)
+        assert classify(ev(0.9, label="dog"), cams, 0.4) is None
+        assert classify({"camera": "front_door", "label": "person", "data": {}}, cams, 0.4) is None
         q = {"start": 22, "end": 7}
         assert in_quiet(23, q) and in_quiet(3, q) and not in_quiet(7, q) and not in_quiet(21, q)
         assert in_quiet(13, {"start": 13, "end": 14}) and not in_quiet(14, {"start": 13, "end": 14})
         assert should_alert("person", 1000, 0, 120) and not should_alert("person", 1000, 950, 120)
-        assert should_alert("ring", 1000, 999, 120)                              # a ring always alerts
         print("selftest OK")
         return 0
     if "--test-chime" in argv:

@@ -14,17 +14,22 @@ spec.loader.exec_module(dc)
 
 
 class TestClassify(unittest.TestCase):
-    F = {"cam"}
+    CAMS = {"front_door": "Exterior - Front Right"}
 
-    def test_ring_person_package(self):
-        self.assertEqual(dc.classify({"camera": "cam", "type": "ring"}, self.F), "ring")
-        self.assertEqual(dc.classify({"camera": "cam", "smartDetectTypes": ["person"]}, self.F), "person")
-        self.assertEqual(dc.classify({"camera": "cam", "smartDetectTypes": ["person", "package"]}, self.F), "package")
+    def ev(self, h, cam="front_door", label="person"):
+        return {"camera": cam, "label": label, "data": {"box": [0.5, 0.3, 0.1, h]}}
 
-    def test_ignores_vehicles_motion_and_other_cameras(self):
-        self.assertIsNone(dc.classify({"camera": "cam", "smartDetectTypes": ["vehicle"]}, self.F))
-        self.assertIsNone(dc.classify({"camera": "cam", "type": "motion", "smartDetectTypes": []}, self.F))
-        self.assertIsNone(dc.classify({"camera": "backyard", "type": "ring"}, self.F))
+    def test_person_close_to_the_door_alerts(self):
+        self.assertEqual(dc.classify(self.ev(0.55), self.CAMS, 0.4), "person")
+
+    def test_far_sidewalk_passer_by_does_not(self):
+        # measured 2026-11-02: sidewalk walkers are 0.23-0.26 of the frame tall
+        self.assertIsNone(dc.classify(self.ev(0.26), self.CAMS, 0.4))
+
+    def test_other_cameras_and_labels_ignored(self):
+        self.assertIsNone(dc.classify(self.ev(0.9, cam="exterior_front_right"), self.CAMS, 0.4))  # = Interior - Garage
+        self.assertIsNone(dc.classify(self.ev(0.9, label="dog"), self.CAMS, 0.4))
+        self.assertIsNone(dc.classify({"camera": "front_door", "label": "person", "data": {}}, self.CAMS, 0.4))
 
 
 class TestGates(unittest.TestCase):
@@ -33,10 +38,9 @@ class TestGates(unittest.TestCase):
         self.assertTrue(all(dc.in_quiet(h, q) for h in (22, 23, 0, 3, 6)))
         self.assertFalse(any(dc.in_quiet(h, q) for h in (7, 12, 21)))
 
-    def test_cooldown_but_ring_always(self):
+    def test_cooldown(self):
         self.assertFalse(dc.should_alert("person", 1000, 950, 120))
         self.assertTrue(dc.should_alert("person", 1000, 800, 120))
-        self.assertTrue(dc.should_alert("ring", 1000, 999, 120))
 
 
 class TestSound(unittest.TestCase):
@@ -61,7 +65,9 @@ class TestSecurity(unittest.TestCase):
     def test_no_secrets_and_exterior_only(self):
         src = SCRIPT.read_text()
         self.assertNotRegex(src, r"(?i)(password|token)\s*=\s*['\"][^'\"]{8,}")
-        self.assertTrue(all(c.startswith("Exterior") for c in dc.FRONT))
+        # Frigate's exterior_front_right is really the Interior - Garage camera: never watched
+        self.assertNotIn("exterior_front_right", dc.DEFAULTS["cameras"])
+        self.assertTrue(all(v.startswith("Exterior") for v in dc.DEFAULTS["cameras"].values()))
 
 
 if __name__ == "__main__":
