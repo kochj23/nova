@@ -967,6 +967,20 @@ tasks:
     schedule: every 5m
     timeout: 120
     overlap: skip
+  yt_likes_poll:                   # every 15 min: new ids on Jordan's YouTube Liked list -> nova_ops.yt_likes.first_seen (= like time; YouTube exposes none). Safari session -> .6 only. Feeds liked_music.
+    script: nova_liked_music.py
+    args: ["--poll"]
+    schedule: every 15m
+    timeout: 240
+    overlap: skip
+
+  liked_music:                     # daily 07:30 (Jordan 2026-11-02): "Liked and Listened" in Music and Friends — music he LIKED in the last 24 rolling hours (by like time), analysed, best bits cued in the article and PLAYED in the Nova Speaks video; no new liked music = no article
+    script: nova_liked_music.py
+    args: ["--scheduled"]
+    schedule: cron 30 7 * * *
+    timeout: 3600
+    overlap: skip
+
   yt_liked_download:               # SPOF plan 6c — moved back from scheduler-core (.2): writes /Volumes/external, a macOS path; it never ran there
     script: nova_yt_liked_download.py
     schedule: cron 0 1 * * 6

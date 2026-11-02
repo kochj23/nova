@@ -20,6 +20,12 @@ a QUALITY {json} line goes to the log (the sweep stores it in nova_speaks_render
 Env: NOVA_SPEAKS_VOICE (ref wav), NOVA_SPEAKS_OUT (review dir), NOVA_SPEAKS_REWRITE=0 (skip the LLM pass).
 ponytail: XTTS runs ~0.67x real time on the Studio GPU; a 5,000-word article is ~50 min of synthesis.
 Captions are a chapter lower-third, not word-level; add mlx-whisper .srt generation when wanted.
+SONG CLIPS (2026-11-02, Jordan's daily liked-music article): a paragraph that is exactly a Hugo
+  {{< youtube id="<11>" start="S" end="E" title="..." >}}
+becomes a clip: the video plays that stretch of the source video (picture + sound) at that point. The clip file is
+pre-cut by nova_liked_music.py to <OUT_DIR>/../clips/<id>-<S>-<E>.mp4 (NAS, so every render host has it); a
+missing file is skipped (narration only). Articles without such embeds render exactly as before. In clip mode the
+narration audio is padded 0.3 s per paragraph to match the picture, so a clip's sound and picture stay in sync.
 """
 import argparse, os, re, subprocess, sys, json, glob, random, math, time, hashlib
 from pathlib import Path
@@ -29,6 +35,8 @@ OUT_DIR = Path(os.environ.get("NOVA_SPEAKS_OUT", "/Volumes/nas/nova-fs/videos/re
 VOICE = os.environ.get("NOVA_SPEAKS_VOICE", "Gracie Wise")   # XTTS speaker name, or a path to a reference .wav
 TTS_HOME = "/Volumes/Data/AI/tts"
 W, H = 1920, 1080
+CLIP_RX = re.compile(r'^\{\{<\s*youtube\s+id="([\w-]{11})"\s+start="(\d+)"\s+end="(\d+)"(?:\s+title="([^"]*)")?\s*>\}\}$')
+CLIP = "\x00CLIP"          # marker paragraph / pseudo-chapter heading: "\x00CLIP <id> <start> <end> <title>"
 FONT = next((f for f in ["/System/Library/Fonts/Supplemental/Avenir Next.ttc", "/System/Library/Fonts/HelveticaNeue.ttc", "/System/Library/Fonts/Supplemental/Arial.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf", "/usr/share/fonts/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"] if os.path.exists(f)), None)
 
 
@@ -42,7 +50,7 @@ def scrub_chapters(chapters):
     they were rendered from articles before the journal scrubbed them. No fallback: a host that cannot import the
     scrubber fails the render rather than speaking unscrubbed text."""
     import nova_journal as nj
-    clean = lambda t: nj.scrub_home_paths(nj.scrub_pii(t))  # noqa: E731
+    clean = lambda t: t if t.startswith(CLIP) else nj.scrub_home_paths(nj.scrub_pii(t))  # noqa: E731
     return [(clean(h), [clean(p) for p in ps]) for h, ps in chapters]
 
 
@@ -57,6 +65,9 @@ def article_to_script(md: str, sections: list[str] | None):
     for block in re.split(r"\n\s*\n", body):
         b = block.strip()
         if not b: continue
+        m = CLIP_RX.match(b)
+        if m:                                   # a cued song clip: played in the video, never read aloud
+            cur_p.append(f"{CLIP} {m.group(1)} {m.group(2)} {m.group(3)} {m.group(4) or ''}".rstrip()); continue
         if b.startswith("#"):
             if cur_p: chapters.append((cur_h, cur_p))
             cur_h, cur_p = re.sub(r"^#+\s*", "", b).strip(" *"), []
@@ -80,6 +91,60 @@ def article_to_script(md: str, sections: list[str] | None):
         want = [s.lower() for s in sections]
         chapters = [(h, ps) for h, ps in chapters if any(h.lower().startswith(w) for w in want)]
     return chapters
+
+
+def clip_runs(chapters):
+    """[(h, [p, CLIP, p])] -> [(h, [p]), (CLIP..., []), (h, [p])], order kept. Pure."""
+    out = []
+    for h, ps in chapters:
+        run = []
+        for p in ps:
+            if p.startswith(CLIP):
+                if run: out.append((h, run)); run = []
+                out.append((p, []))
+            else:
+                run.append(p)
+        if run: out.append((h, run))
+    return out
+
+
+def narrate_with_clips(chapters, nn):
+    """The narration stage merges and drops paragraphs, so clips are pulled out first and each text run is
+    narrated on its own; clip pseudo-chapters pass through untouched, in place."""
+    out, stats, cache, book = [], {}, nn.RewriteCache(), nn.load_phrasebook()
+    for h, ps in clip_runs(chapters):
+        if h.startswith(CLIP):
+            out.append((h, [])); continue
+        r, st = nn.narrate([(h, ps)], book=book, cache=cache)
+        for k, v in st.items(): stats[k] = stats.get(k, 0) + v
+        out += r
+    return out, stats
+
+
+def parse_clip(marker):
+    """'\x00CLIP id 51 66 Talk Talk - It's My Life' -> (id, 51, 66, title). Pure."""
+    _, vid, a, b, *t = marker.split(" ")
+    return vid, int(a), int(b), " ".join(t)
+
+
+def clip_file(vid, a, b):
+    return OUT_DIR.parent / "clips" / f"{vid}-{a}-{b}.mp4"
+
+
+def song_clip(src, dur, label, work, i):
+    """(video mp4 at the house format, 48 kHz stereo wav), both exactly `dur` long."""
+    lt = str(work / f"ltc{i}.png"); lower_third(label, lt)
+    v, a = str(work / f"song{i:03d}.mp4"), str(work / f"song{i:03d}.wav")
+    vf = (f"[0:v]scale={W}:{H}:force_original_aspect_ratio=decrease,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2:color=0x0b0f1a,"
+          f"fps=25,format=yuv420p[v];[v][1:v]overlay=0:0:format=auto,format=yuv420p[o]")
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", src, "-i", lt, "-filter_complex", vf,
+                    "-map", "[o]", "-an", "-t", f"{dur:.3f}", "-r", "25", "-c:v", "libx264", "-preset", "veryfast",
+                    "-crf", "20", "-pix_fmt", "yuv420p", v], check=True)
+    fo = max(0.1, dur - 0.8)
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", src, "-vn", "-t", f"{dur:.3f}",
+                    "-af", f"afade=t=in:d=0.3,afade=t=out:st={fo:.3f}:d=0.8,loudnorm=I=-18:TP=-2,apad,atrim=0:{dur:.3f}",
+                    "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", a], check=True)
+    return v, a
 
 
 # ── voice ────────────────────────────────────────────────────────────────────────────────
@@ -276,7 +341,11 @@ def main():
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import nova_speaks_narration as nn
     t_n = time.time()
-    chapters, rstats = nn.narrate(chapters, cache=nn.RewriteCache())
+    has_clips = any(p.startswith(CLIP) for _, ps in chapters for p in ps)
+    if has_clips:
+        chapters, rstats = narrate_with_clips(chapters, nn)
+    else:
+        chapters, rstats = nn.narrate(chapters, cache=nn.RewriteCache())
     log(f"narration: {rstats} ({time.time()-t_n:.0f}s)")
     chapters = scrub_chapters(chapters)
     words = sum(len(p.split()) for _, ps in chapters for p in ps)
@@ -284,7 +353,9 @@ def main():
     work = Path(f"{HOME}/.openclaw/workspace/speaks/{slug}{('-'+a.suffix) if a.suffix else ''}"); work.mkdir(parents=True, exist_ok=True)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     script_txt = OUT_DIR / f"NovaSpeaks-{slug}{('-'+a.suffix) if a.suffix else ''}.txt"     # exactly what the voice was given
-    script_txt.write_text(f"{title}\n{url}\n\n" + "\n\n".join(f"## {h}\n\n" + "\n\n".join(ps) for h, ps in chapters) + "\n")
+    script_txt.write_text(f"{title}\n{url}\n\n" + "\n\n".join(
+        (f"## [song clip {' '.join(h.split(' ')[1:4])}]" if h.startswith(CLIP) else f"## {h}\n\n" + "\n\n".join(ps))
+        for h, ps in chapters) + "\n")
     log(f"script: {script_txt}")
     if a.script_only:
         print(str(script_txt)); return
@@ -323,7 +394,16 @@ def main():
     log(f"back-check: {checker.backend}")
     segs = []  # (chapter, wav, dur)
     t0 = time.time()
+    songs = []      # (index in segs, clip mp4, dur, label) — clip mode only
     for ci, (h, ps) in enumerate(chapters):
+        if h.startswith(CLIP):
+            vid, ca, cb, ctitle = parse_clip(h)
+            f = clip_file(vid, ca, cb)
+            if f.exists():
+                songs.append((len(segs), str(f), _dur(str(f)), f"Now playing: {ctitle[:60]}  {ca//60}:{ca%60:02d}"))
+            else:
+                log(f"clip missing, narration only: {f}")
+            continue
         for pi, p in enumerate(ps):
             # the text hash is in the name: a re-render with a new script never reuses a stale wav
             wav = str(work / f"c{ci:02d}p{pi:03d}-{hashlib.sha1((p + json.dumps(nn.XTTS_KW)).encode()).hexdigest()[:10]}.wav")
@@ -331,6 +411,10 @@ def main():
                 speak(tts, p, wav, checker, qstats)
             segs.append((h, wav, _dur(wav)))
         log(f"voiced chapter {ci+1}/{len(chapters)} '{h[:40]}' ({time.time()-t0:.0f}s elapsed)")
+    if has_clips:
+        out = assemble_with_clips(work, segs, songs, stills, title, url, subject, slug, a.suffix)
+        total = sum(d for _, _, d in segs) + sum(s[2] for s in songs)
+        return finish(out, total, qstats, rstats, segs, stills, subject, url, slug, a.suffix)
     narration = str(work / "narration.wav")
     open(work / "narr.txt", "w").write("".join(f"file '{w}'\n" for _, w, _ in segs))
     subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(work / "narr.txt"), "-af", "loudnorm=I=-16:TP=-1.5", narration], check=True)
@@ -363,6 +447,11 @@ def main():
     subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(work / "clips.txt"), "-c", "copy", silent], check=True)
     out = OUT_DIR / f"NovaSpeaks-{slug}{('-'+a.suffix) if a.suffix else ''}.mp4"
     subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", silent, "-itsoffset", "4", "-i", narration, "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-shortest", str(out)], check=True)
+    return finish(out, total, qstats, rstats, segs, stills, subject, url, slug, a.suffix)
+
+
+def finish(out, total, qstats, rstats, segs, stills, subject, url, slug, suffix):
+    import nova_speaks_narration as nn
     q = nn.finish_stats(qstats); q["rewrite"] = rstats
     print("QUALITY " + json.dumps(q), flush=True)
     log(f"back-check: {q['parts']} parts, {q['retries']} retries, worst WER {q['worst_wer']}, mean WER {q['mean_wer']}, flagged {q['flagged']}")
@@ -370,10 +459,52 @@ def main():
     try:
         sys.path.insert(0, str(HOME / ".openclaw/scripts"))
         from nova_notify import notify
-        notify(f"🎬 Nova Speaks ready for review: {subject}", f"{out}\n{total/60:.1f} min · {len(segs)} paragraphs · {len(stills)} stills\nArticle: {url}", level="info", category="video", source="nova_speaks", dedup_key=f"nova-speaks:{slug}:{a.suffix}")
+        notify(f"🎬 Nova Speaks ready for review: {subject}", f"{out}\n{total/60:.1f} min · {len(segs)} paragraphs · {len(stills)} stills\nArticle: {url}", level="info", category="video", source="nova_speaks", dedup_key=f"nova-speaks:{slug}:{suffix}")
     except Exception as e:
         log(f"notify skipped: {e}")
     print(str(out))
+
+
+
+def assemble_with_clips(work, segs, songs, stills, title, url, subject, slug, suffix):
+    """Clip mode: narration paragraphs (padded 0.3 s so picture and sound line up) interleaved with song clips."""
+    card("NOVA SPEAKS", subject, str(work / "title.png"))
+    card("nova.digitalnoise.net", f"{title}\n\n{url}\n\nNarration is an AI voice. Written by Nova.", str(work / "end.png"))
+    vids, auds = [], []
+    t_card = str(work / "clip_title.mp4"); clip(str(work / "title.png"), 4.0, t_card, zoom_in=False); vids.append(t_card)
+    shots = plan_shots(len(segs), len(stills))
+    at = {i: s for i, *s in songs}                 # segs index -> (mp4, dur, label): the clip plays BEFORE that paragraph
+    last_h, lt = None, None
+    tail = [s for i, *s in songs if i >= len(segs)]
+    for i, (h, wav, dur) in enumerate(segs):
+        if i in at:
+            v, aw = song_clip(at[i][0], at[i][1], at[i][2], work, i); vids.append(v); auds.append(aw)
+        if h != last_h:
+            lt = str(work / f"lt{i}.png"); lower_third(h, lt); last_h = h
+        si, motion = shots[i]
+        c = str(work / f"clip{i:04d}.mp4"); clip(stills[si], dur + 0.3, c, overlay=lt, motion=motion); vids.append(c)
+        pw = str(work / f"pad{i:04d}.wav")
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", wav, "-af", f"apad,atrim=0:{dur + 0.3:.3f}",
+                        "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le", pw], check=True)
+        auds.append(pw)
+    for j, (mp4, d, label) in enumerate(tail):
+        v, aw = song_clip(mp4, d, label, work, 900 + j); vids.append(v); auds.append(aw)
+    e_card = str(work / "clip_end.mp4"); clip(str(work / "end.png"), 6.0, e_card, zoom_in=False); vids.append(e_card)
+    open(work / "clips.txt", "w").write("".join(f"file '{c}'\n" for c in vids))
+    open(work / "auds.txt", "w").write("".join(f"file '{c}'\n" for c in auds))
+    silent, sound = str(work / "video_silent.mp4"), str(work / "soundtrack.wav")
+    # RE-ENCODE the join: a song clip's H.264 parameters differ from the stills', and a stream-copy concat left
+    # every piece before the first clip undecodable (2026-11-02 test: title + first paragraph vanished).
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(work / "clips.txt"),
+                    "-vf", "setsar=1", "-r", "25", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", silent], check=True)
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(work / "auds.txt"), "-af", "loudnorm=I=-16:TP=-1.5", "-ar", "48000", sound], check=True)
+    out = OUT_DIR / f"NovaSpeaks-{slug}{('-'+suffix) if suffix else ''}.mp4"
+    # audio padded with silence to the picture's length, so the end card is not cut off
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", silent, "-itsoffset", "4", "-i", sound,
+                    "-filter_complex", "[1:a]apad[a]", "-map", "0:v", "-map", "[a]",
+                    "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", str(out)], check=True)
+    log(f"clip mode: {len(songs)} song clips, {len(segs)} paragraphs")
+    return out
 
 
 if __name__ == "__main__":
