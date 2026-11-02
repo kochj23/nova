@@ -47,6 +47,7 @@ REFRESH_MIN_AGE = 900                    # don't let N nodes all refresh at once
 # read-back-first fallback. Flip the two list entries to restore Synology-primary.
 TARGETS = [
     {"name": "unas", "host": "192.168.1.69", "unc": "//192.168.1.69/nas/nova-fs",
+     "alt_unc": ["//192.168.1.19/nas/nova-fs"],          # same UNAS, second interface (fstab uses it)
      "creds": "/etc/cifs-unas.creds", "primary": True},
     {"name": "synology", "host": "192.168.1.11", "unc": "//192.168.1.11/nova",
      "creds": "/etc/cifs-nas.creds", "primary": False},
@@ -97,15 +98,28 @@ def mount_healthy():
 
 
 def current_source():
-    """Which UNC currently backs /nova, per the kernel."""
+    """Which UNC currently backs /nova, per the kernel.
+
+    2026-11-01: with an fstab x-systemd.automount line, /proc/mounts lists `systemd-1 /nova autofs` FIRST and
+    the real cifs mount(s) stacked on top of it after. Returning the first entry made every automount node
+    believe it was off-primary, "fail back" on every timer tick, and (with refresh_scripts_from_git) rsync
+    --delete the GitHub tree over the LIVE share every 15 min, deleting any not-yet-pushed script. The
+    topmost (last) non-autofs entry is the one that actually serves reads.
+    """
+    src = None
     try:
         for line in Path("/proc/mounts").read_text().splitlines():
             parts = line.split()
-            if len(parts) > 1 and parts[1] == MOUNT:
-                return parts[0]
+            if len(parts) > 2 and parts[1] == MOUNT and parts[2] != "autofs":
+                src = parts[0]
     except OSError:
         pass
-    return None
+    return src
+
+
+def is_primary_source(source, primary) -> bool:
+    """The primary may be mounted by any of its addresses (UNAS answers on .69 and .19)."""
+    return bool(source) and any(u in source for u in [primary["unc"], *primary.get("alt_unc", [])])
 
 
 def clear_mount():
@@ -186,7 +200,7 @@ def main():
     primary = TARGETS[0]
     source = current_source()
     healthy = mount_healthy()
-    on_primary = bool(source and primary["unc"] in source)
+    on_primary = is_primary_source(source, primary)
 
     # ── Healthy on the primary: nothing to do. The common case.
     if healthy and on_primary:
@@ -198,7 +212,8 @@ def main():
             log(f"primary {primary['name']} is back — failing back from {source}")
             clear_mount()
             if do_mount(primary):
-                refresh_scripts_from_git()
+                # NO git refresh here: the primary IS the live store (scripts are live on save there and are
+                # often ahead of GitHub); syncing git over it with --delete destroys unpushed work.
                 log("failed back to primary")
                 notify(f"{MOUNT} failed BACK to {primary['name']} — primary is healthy again", "info")
                 return 0
@@ -219,7 +234,8 @@ def main():
             continue
         if do_mount(t):
             log(f"mounted {MOUNT} from {t['name']}")
-            refresh_scripts_from_git()
+            if not t["primary"]:                 # only a fallback copy can be stale; never overwrite the primary
+                refresh_scripts_from_git()
             if not t["primary"]:
                 notify(f"{MOUNT} FAILED OVER to {t['name']} — {primary['name']} is down. "
                        f"Scripts refreshed from GitHub. Will fail back automatically.", "critical")

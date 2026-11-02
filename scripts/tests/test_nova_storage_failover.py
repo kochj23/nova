@@ -198,6 +198,52 @@ class TestFunctional(_World):
         self.m["run"].assert_not_called()
 
 
+class TestAutomountRegression(_World):
+    """2026-11-01: autofs listed first in /proc/mounts made every automount node 'fail back' each tick and
+    rsync --delete GitHub over the live primary share, deleting unpushed scripts."""
+
+    MOUNTS = ("systemd-1 {m} autofs rw,relatime 0 0\n"
+              "//192.168.1.19/nas/nova-fs {m} cifs rw,vers=3.0 0 0\n")
+
+    def test_current_source_skips_autofs_and_takes_topmost(self):
+        real = _load()                                   # unpatched copy: _World mocks current_source
+        fake = self.MOUNTS.format(m=real.MOUNT) + f"//192.168.1.69/nas/nova-fs {real.MOUNT} cifs rw 0 0\n"
+        with mock.patch.object(real.Path, "read_text", return_value=fake):
+            self.assertEqual(real.current_source(), "//192.168.1.69/nas/nova-fs")
+        with mock.patch.object(real.Path, "read_text", return_value=f"systemd-1 {real.MOUNT} autofs rw 0 0\n"):
+            self.assertIsNone(real.current_source())
+
+    def test_second_unas_address_counts_as_primary(self):
+        self.assertTrue(sf.is_primary_source("//192.168.1.19/nas/nova-fs", UNAS))
+        self.assertFalse(sf.is_primary_source(SYN["unc"], UNAS))
+
+    def test_healthy_on_alias_is_noop(self):
+        self.healthy()
+        self.m["src"].return_value = "//192.168.1.19/nas/nova-fs"
+        with mock.patch.object(sf, "refresh_scripts_from_git") as rf:
+            self.assertEqual(sf.main(), 0)
+        rf.assert_not_called()
+        self.m["run"].assert_not_called()
+
+    def test_fail_back_never_syncs_git_over_primary(self):
+        self.healthy()
+        self.m["src"].return_value = SYN["unc"]
+        with mock.patch.object(sf, "refresh_scripts_from_git") as rf:
+            self.assertEqual(sf.main(), 0)
+        rf.assert_not_called()
+
+    def test_recovery_onto_primary_does_not_refresh(self):
+        self.m["reach"].side_effect = lambda h: h == UNAS["host"]
+        def run(cmd, timeout=30):
+            if "mount" in cmd and "-t" in cmd:
+                self.healthy()
+            return _ok()
+        self.m["run"].side_effect = run
+        with mock.patch.object(sf, "refresh_scripts_from_git") as rf:
+            self.assertEqual(sf.main(), 0)
+        rf.assert_not_called()
+
+
 class TestFrame(unittest.TestCase):
     def test_import_never_runs_main(self):
         self.assertIn('if __name__ == "__main__":', SRC)
