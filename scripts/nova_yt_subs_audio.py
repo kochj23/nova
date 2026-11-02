@@ -67,10 +67,15 @@ def _yt(args, timeout=180, cookies=True):
 
 def subscriptions():
     """[(channel_id, handle, name)] of every subscribed channel."""
-    r = _yt(["--flat-playlist", "--print", "%(id)s\t%(uploader_id)s\t%(uploader)s",
-             "https://www.youtube.com/feed/channels"], timeout=300)
+    args = ["--flat-playlist", "--print", "%(id)s\t%(uploader_id)s\t%(uploader)s", "https://www.youtube.com/feed/channels"]
+    r = _yt(args, timeout=300)
     subs = [tuple(l.split("\t", 2)) for l in r.stdout.splitlines() if l.count("\t") == 2]
     subs = [s for s in subs if s[0].startswith("UC")]
+    if not subs:   # 2026-11-02: the jar was logged out and the list sat frozen at Oct 7 (9 new food channels unseen)
+        r = _yt(["--cookies-from-browser", "safari", *args], timeout=300, cookies=False)
+        subs = [tuple(l.split("\t", 2)) for l in r.stdout.splitlines() if l.count("\t") == 2]
+        subs = [s for s in subs if s[0].startswith("UC")]
+        log(f"cookie jar gave no subscriptions — Safari session gave {len(subs)}")
     import json
     c = psycopg2.connect(DSN); c.autocommit = True; cur = c.cursor()
     if subs:   # remember the last good list: a logged-out cookie jar must not stop the baseline

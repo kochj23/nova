@@ -36,6 +36,10 @@ VOICE = os.environ.get("NOVA_SPEAKS_VOICE", "Gracie Wise")   # XTTS speaker name
 TTS_HOME = "/Volumes/Data/AI/tts"
 W, H = 1920, 1080
 CLIP_RX = re.compile(r'^\{\{<\s*youtube\s+id="([\w-]{11})"\s+start="(\d+)"\s+end="(\d+)"(?:\s+title="([^"]*)")?\s*>\}\}$')
+# MEMES (2026-11-02, Memes and Friends): {{< meme id="meme-<platform>-<code>" start="0" end="<s>" title="<credit>" >}}
+# is the same thing for a meme — nova_memes.py leaves the clip at videos/clips/<id>-0-<s>.mp4 (a still meme is a
+# held frame over silence); the site's meme shortcode shows the platform's own embed.
+MEME_RX = re.compile(r'^\{\{<\s*meme\s+id="(meme-[\w-]+)"\s+start="(\d+)"\s+end="(\d+)"(?:\s+title="([^"]*)")?\s*>\}\}$')
 CLIP = "\x00CLIP"          # marker paragraph / pseudo-chapter heading: "\x00CLIP <id> <start> <end> <title>"
 FONT = next((f for f in ["/System/Library/Fonts/Supplemental/Avenir Next.ttc", "/System/Library/Fonts/HelveticaNeue.ttc", "/System/Library/Fonts/Supplemental/Arial.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf", "/usr/share/fonts/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"] if os.path.exists(f)), None)
 
@@ -65,7 +69,7 @@ def article_to_script(md: str, sections: list[str] | None):
     for block in re.split(r"\n\s*\n", body):
         b = block.strip()
         if not b: continue
-        m = CLIP_RX.match(b)
+        m = CLIP_RX.match(b) or MEME_RX.match(b)
         if m:                                   # a cued song clip: played in the video, never read aloud
             cur_p.append(f"{CLIP} {m.group(1)} {m.group(2)} {m.group(3)} {m.group(4) or ''}".rstrip()); continue
         if b.startswith("#"):
@@ -400,7 +404,9 @@ def main():
             vid, ca, cb, ctitle = parse_clip(h)
             f = clip_file(vid, ca, cb)
             if f.exists():
-                songs.append((len(segs), str(f), _dur(str(f)), f"Now playing: {ctitle[:60]}  {ca//60}:{ca%60:02d}"))
+                label = (f"Meme: {ctitle[:70]}" if vid.startswith("meme-")
+                         else f"Now playing: {ctitle[:60]}  {ca//60}:{ca%60:02d}")
+                songs.append((len(segs), str(f), _dur(str(f)), label))
             else:
                 log(f"clip missing, narration only: {f}")
             continue

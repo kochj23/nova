@@ -981,6 +981,13 @@ tasks:
     timeout: 3600
     overlap: skip
 
+  memes_and_friends:               # daily 08:00 (Jordan 2026-11-02): "Memes and Friends" — PUBLIC memes (IG/FB/TikTok/Shorts) that arrived over iMessage in the last 24h, analysed + PLAYED in the Nova Speaks video. Rules: never names/personal details; public-only (anonymous fetch + reach + vision check). chat.db -> .6 only. No memes = no article
+    script: nova_memes.py
+    args: ["--scheduled"]
+    schedule: cron 0 8 * * *
+    timeout: 3600
+    overlap: skip
+
   yt_liked_download:               # SPOF plan 6c — moved back from scheduler-core (.2): writes /Volumes/external, a macOS path; it never ran there
     script: nova_yt_liked_download.py
     schedule: cron 0 1 * * 6

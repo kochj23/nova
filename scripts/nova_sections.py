@@ -16,6 +16,7 @@ LIVE_SECTIONS = ("burbank-ops", "nova", "watches", "cars", "tech", "food",
 
 # The eight *and Friends* sections added 2026-10-19 (nova_friends.py --subject <slug>).
 LIVE_SECTIONS += ("music", "military", "screen", "science", "mystery", "crime", "workshop", "travel")
+LIVE_SECTIONS += ("memes",)                # Memes and Friends, 2026-11-02 (nova_memes.py: public memes from iMessage, no names)
 LIVE_SECTIONS += ("history", "belief")    # History and Friends / Belief and Friends, 2026-10-19 (second pass;
                                           # Faith and Friends renamed Belief before its first issue — Jordan is an atheist
                                           # who studies religion, so the section is a historian's, not a devotional)

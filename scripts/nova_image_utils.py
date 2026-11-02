@@ -67,7 +67,7 @@ SECTION_MODEL_MAP = {
     "tech": "quality",
     "cars": "quality",
     "food": "quality",
-    "music": "quality", "military": "quality", "screen": "cinematic", "science": "quality",
+    "music": "quality", "memes": "quality", "military": "quality", "screen": "cinematic", "science": "quality",
     "mystery": "cinematic", "crime": "cinematic", "workshop": "quality", "travel": "quality",
     "history": "quality", "belief": "quality",
     # retired names still passed by older callers (nova_sections.SECTION_REDIRECTS)

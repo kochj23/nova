@@ -147,6 +147,10 @@ FOOD_CHANNELS = (   # Jordan 2026-10-19. Undecided, so NOT here: Bacon 28, fonki
     "Abuela's Table", "A Cooks Tour with Anthony Bourdain", "Andrew Zimmern", "Eater", "First We Feast",
     "The Immigrant Table", "Jimmy Tries World", "Tasting History with Max Miller", "Whiskey Tribe", "Still It",
     "James May's Planet Gin", "City Steading Brews", "Beers & Bars",
+    # Jordan 2026-11-02 "I just subscribed to about a dozen cooking channels" (unseen until the frozen
+    # subscription list was fixed the same day)
+    "Recipes of the world", "5-Minute Recipes", "Tasty", "Tasty Recipes", "Food Network", "Forgotten Old American",
+    "Jamie Oliver TV", "Country Life Vlog", "Allrecipes", "Guga Foods",
 )
 FOOD_EXCLUDED = ("Bacon 28", "fonki cheff", "The Stock Pot")
 

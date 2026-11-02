@@ -524,7 +524,7 @@ class TestFoodRouting(unittest.TestCase):
         everything = food | {m.norm(c) for c in m.CARS_CHANNELS + m.TECH_CHANNELS}
         for c in m.FOOD_EXCLUDED:
             self.assertNotIn(m.norm(c), everything, c)
-        self.assertEqual(len(m.FOOD_CHANNELS), 32)
+        self.assertEqual(len(m.FOOD_CHANNELS), 42)   # +10 cooking subscriptions 2026-11-02
 
     def test_food_lists_disjoint_from_cars_and_tech(self):
         food = {m.norm(c) for c in m.FOOD_CHANNELS}
