@@ -8,7 +8,7 @@ SOURCE: Frigate on nova-core1 (http://192.168.1.2:8971, no auth — Jordan: "You
 the cameras with this"). No Protect login, no Keychain for the cameras. Polls /api/events every 3 s.
 
   trigger   Frigate "person" on the doorstep camera(s) whose box is >= min_box_h (0.4) of the frame
-            tall, i.e. on the walkway/porch. People on the far sidewalk are ~0.23-0.26 tall (measured
+            tall (walkway/porch) OR overlaps the MAILBOX zone on front_door (Jordan: "focus on the mailbox"). People on the far sidewalk are ~0.23-0.26 tall (measured
             2026-11-02) and do NOT chime. An in-progress event is re-checked every poll, so someone
             who starts small at the gate fires as they come up the walk.
             FRIGATE NAMES ARE NOT THE CAMERA NAMES (frames checked 2026-11-02): front_door = "Exterior -
@@ -67,6 +67,9 @@ DEFAULTS = {
     "volume": 50,                      # Jordan 2026-11-02 "louder than that, for sure" (25 was too quiet); the HomePod keeps this level
     "cooldown_s": 600,                 # quiet gap: alert only if nobody was at the door for 10 min
     "min_box_h": 0.4,
+    # Jordan 2026-11-02 "focus on the mailbox": the mailbox on the porch post in front_door's view,
+    # [x1, y1, x2, y2] as frame fractions. Far-sidewalk walkers' boxes start at y ~0.42, below it.
+    "zones": {"front_door": [[0.60, 0.15, 0.82, 0.40]]},
     "cameras": {"front_door": "Exterior - Front Right", "front_door_patio": "Exterior - Front Door Left"},
     "quiet": {"start": 22, "end": 7},
     # every HomePod that streams with no pairing (pyatv scan 2026-11-02). Apple TVs need pairing.
@@ -85,12 +88,22 @@ def log(m):
 
 
 # ── pure logic (selftest) ──────────────────────────────────────────────────────────────
-def classify(ev: dict, cams: dict, min_h: float) -> str | None:
-    """'person' when a Frigate event is a person close to the door on a doorstep camera, else None."""
+def overlaps(box, zone) -> bool:
+    """Frigate box [x, y, w, h] vs zone [x1, y1, x2, y2], all frame fractions."""
+    x, y, w, h = box
+    return x < zone[2] and x + w > zone[0] and y < zone[3] and y + h > zone[1]
+
+
+def classify(ev: dict, cams: dict, min_h: float, zones: dict | None = None) -> str | None:
+    """'person' when a Frigate person on a doorstep camera is close (box h >= min_h) or at the
+    mailbox (box overlaps a zone for that camera), else None."""
     if ev.get("camera") not in cams or ev.get("label") != "person":
         return None
-    box = (ev.get("data") or {}).get("box") or [0, 0, 0, 0]
-    return "person" if len(box) == 4 and box[3] >= min_h else None
+    box = (ev.get("data") or {}).get("box") or []
+    if len(box) != 4:
+        return None
+    at_mailbox = any(overlaps(box, z) for z in (zones or {}).get(ev["camera"], []))
+    return "person" if box[3] >= min_h or at_mailbox else None
 
 
 def in_quiet(hour: int, quiet: dict) -> bool:
@@ -281,7 +294,7 @@ def daemon():
                                         "after": int(time.time()) - 180, "limit": 50})
             for ev in json.loads(_get(f"/api/events?{q}")):
                 eid = ev["id"]
-                if eid in done or not classify(ev, cfg["cameras"], float(cfg["min_box_h"])):
+                if eid in done or not classify(ev, cfg["cameras"], float(cfg["min_box_h"]), cfg.get("zones")):
                     continue           # not close yet: re-checked next poll while the event runs
                 done[eid] = time.time()
                 fresh = should_alert("person", time.time(), last_alert, int(cfg["cooldown_s"]))
@@ -318,6 +331,9 @@ def main(argv):
         assert classify(ev(0.6, cam="exterior_front_right"), cams, 0.4) is None   # (= Interior - Garage)
         assert classify(ev(0.9, label="dog"), cams, 0.4) is None
         assert classify({"camera": "front_door", "label": "person", "data": {}}, cams, 0.4) is None
+        z = {"front_door": [[0.60, 0.15, 0.82, 0.40]]}
+        assert classify(ev(0.3) | {"data": {"box": [0.7, 0.2, 0.08, 0.3]}}, cams, 0.4, z) == "person"   # at the mailbox
+        assert classify({"camera": "front_door", "label": "person", "data": {"box": [0.59, 0.42, 0.06, 0.26]}}, cams, 0.4, z) is None  # far sidewalk
         q = {"start": 22, "end": 7}
         assert in_quiet(23, q) and in_quiet(3, q) and not in_quiet(7, q) and not in_quiet(21, q)
         assert in_quiet(13, {"start": 13, "end": 14}) and not in_quiet(14, {"start": 13, "end": 14})

@@ -32,6 +32,21 @@ class TestClassify(unittest.TestCase):
         self.assertIsNone(dc.classify({"camera": "front_door", "label": "person", "data": {}}, self.CAMS, 0.4))
 
 
+class TestMailbox(unittest.TestCase):
+    Z = dc.DEFAULTS["zones"]
+    CAMS = dc.DEFAULTS["cameras"]
+
+    def ev(self, box):
+        return {"camera": "front_door", "label": "person", "data": {"box": box}}
+
+    def test_carrier_at_mailbox_alerts_even_if_small(self):
+        self.assertEqual(dc.classify(self.ev([0.68, 0.2, 0.08, 0.3]), self.CAMS, 0.4, self.Z), "person")
+
+    def test_far_sidewalk_behind_mailbox_does_not(self):
+        # real 2026-11-02 09:28 sidewalk walker
+        self.assertIsNone(dc.classify(self.ev([0.59, 0.42, 0.06, 0.26]), self.CAMS, 0.4, self.Z))
+
+
 class TestGates(unittest.TestCase):
     def test_quiet_window_wraps_midnight(self):
         q = {"start": 22, "end": 7}
