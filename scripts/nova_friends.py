@@ -564,6 +564,7 @@ ADDRESS_RE = re.compile(r"\b\d{1,6}\s+(?:[NSEW]\.?\s+)?(?:[A-Z][\w'.-]*\s+){1,4}
 RECIPE_SITES = {"meatchurch.com": "Meat Church BBQ", "loveandlemons.com": "Love and Lemons",   # + nova_recipe_ingest 2026-11-02
                 "seriouseats.com": "Serious Eats", "simplyrecipes.com": "Simply Recipes", "eatingwell.com": "EatingWell",
                 "thepioneerwoman.com": "The Pioneer Woman"}
+DRY_RUN = False              # set by main() from --dry-run
 RECENT_DAYS = 14             # a recipe page used on any plate in the last RECENT_DAYS days is not offered again   # recipe-memory source_site -> credit name
 RECIPES_MAX, RECIPE_CHARS = 4, 4000
 RECIPE_STOP = {"with", "this", "that", "from", "your", "recipe", "style", "best", "easy", "make", "homemade"}
@@ -1385,7 +1386,7 @@ def plates_block(videos, arts, recipes_by_plate, food_rules):
         log(f"{plate['label']}: {words(block)} words")
     if not out:
         return ""
-    if picks:
+    if picks and not DRY_RUN:                 # a dry run must not use up the 14-day pick (2026-11-02: it did)
         note_recipe_urls(picks)
     return "## Recipe Recommendations\n\n" + "\n".join(out)
 
@@ -1430,6 +1431,8 @@ def main():
                     help="belief: auto = theme on is_theme_day() dates, roundup otherwise")
     ap.add_argument("--theme", help="belief: this belief_themes.theme instead of a random pick (implies --mode theme)")
     a = ap.parse_args()
+    global DRY_RUN
+    DRY_RUN = a.dry_run
     cfg = apply_auto_channels(dict(SUBJECTS[a.subject]), a.subject)
     name, section, noun = cfg["name"], cfg["section"], cfg["noun"]
 
