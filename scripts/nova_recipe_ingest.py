@@ -144,6 +144,36 @@ def parse_recipe(page: str) -> dict | None:
     return None
 
 
+def parse_recipe_html(page: str) -> dict | None:
+    """Fallback for recipe pages whose schema.org block is empty (thecookingguy.com): the page's own Ingredients
+    and Directions/Instructions/Method sections, as text. None unless both are there with >= 3 ingredient lines. Pure."""
+    t = re.sub(r"(?is)<(script|style|noscript|svg|nav|footer|header)\b.*?</\1>", " ", page)
+    t = re.sub(r"(?i)<\s*(br|/p|/li|/h[1-6]|/div|li|h[1-6])\b[^>]*>", "\n", t)
+    t = html.unescape(re.sub(r"<[^>]+>", " ", t))
+    lines = [re.sub(r"\s+", " ", x).strip() for x in t.split("\n")]
+    lines = [x for x in lines if x]
+    find = lambda rx, start=0: next((i for i in range(start, len(lines)) if re.fullmatch(rx, lines[i], re.I)), None)  # noqa: E731
+    i = find(r"ingredients:?")
+    j = find(r"(directions|instructions|method|steps|preparation):?", (i or 0) + 1) if i is not None else None
+    if i is None or j is None or j - i < 4:
+        return None
+    end = find(r"(notes?|nutrition.*|share.*|related.*|you may also like.*|more recipes.*|comments?)", j + 1) or min(len(lines), j + 40)
+    ing, steps = lines[i + 1:j][:40], lines[j + 1:end][:30]
+    if len(ing) < 3 or not steps:
+        return None
+    name = ""
+    for rx in (r'"@type"\s*:\s*"Recipe".{0,400}?"name"\s*:\s*"([^"]+)"', r"<h1[^>]*>(.*?)</h1>",
+               r'<meta[^>]+property="og:title"[^>]+content="([^"]+)"', r"<title>([^<]+)"):
+        m = re.search(rx, page, re.S | re.I)
+        cand = html.unescape(re.sub(r"<[^>]+>", " ", m.group(1))).split("|")[0].strip() if m else ""
+        if cand and cand.lower() not in ("recipe", "recipes"):
+            name = re.sub(r"\s+", " ", cand); break
+    name = name or "Recipe"
+    text = f"{name}\n\nIngredients:\n" + "\n".join(f"- {x}" for x in ing) + "\n\nMethod:\n" + \
+        "\n".join(f"{k}. {x}" for k, x in enumerate(steps, 1))
+    return {"name": name, "text": text}
+
+
 def chunks(text: str) -> list[str]:
     out, cur = [], ""
     for para in text.split("\n"):
@@ -176,7 +206,7 @@ def stored_urls() -> set[str]:
 def store(u: str, r: dict, site_name: str, host: str) -> bool:
     parts = chunks(f"{site_name} Recipe: {r['text']}")
     return all(remember(p, {"url": u, "title": r["name"], "source_site": host.removeprefix("www."), "type": "recipe",
-                            "chunk": i, "total_chunks": len(parts)}) for i, p in enumerate(parts, 1))
+                            "credit": site_name, "chunk": i, "total_chunks": len(parts)}) for i, p in enumerate(parts, 1))
 
 
 def ingest_url(url: str, site_name: str | None, dry: bool) -> int:

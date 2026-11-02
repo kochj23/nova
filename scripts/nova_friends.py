@@ -998,7 +998,7 @@ def fetch_recipes(cur, videos, n=RECIPES_MAX, prefer=(), avoid=(), exclude=()):
         md = dict(md or {})
         if BANNED.search(text or ""):
             continue
-        md["channel"] = RECIPE_SITES.get(md.get("source_site") or "", md.get("source_site") or "recipe")
+        md["channel"] = md.get("credit") or RECIPE_SITES.get(md.get("source_site") or "", md.get("source_site") or "recipe")
         if not md.get("title"):
             md["title"] = md.get("url", "")
         rows.append((text, created, md))

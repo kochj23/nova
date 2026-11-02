@@ -1000,6 +1000,12 @@ tasks:
     timeout: 43200
     overlap: skip
 
+  channel_recipes:                 # daily 05:30 (Jordan 2026-11-02: "All cooking channels that have recipes should be ingested into Nova's memories and be candidates for the recipes of the day"): written recipes linked from new videos of every Food and Friends channel -> recipes vector (schema.org or the page's Ingredients/Directions)
+    script: nova_channel_recipes.py
+    schedule: cron 30 5 * * *
+    timeout: 7200
+    overlap: skip
+
   yt_liked_download:               # SPOF plan 6c — moved back from scheduler-core (.2): writes /Volumes/external, a macOS path; it never ran there
     script: nova_yt_liked_download.py
     schedule: cron 0 1 * * 6
