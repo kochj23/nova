@@ -16,7 +16,7 @@ Per liked video not yet in nova_ops.yt_music_library:
   3. Download best audio -> MP3 V0 with ID3v2.4 (title, artist, album artist, album, year, track, genre if known,
      cover art from the video thumbnail, a comment with the YouTube URL) at
      /Volumes/Data/music/YouTube Liked/<Artist> - <Title>.mp3.
-  4. Music app: add the file, put it in "5 stars - Youtube" (created if missing), rating 100 (five stars).
+  4. Music app on TV-Movies-3 (.7, the iTunes library): add the file, put it in "5 stars - Youtube" (created if missing), rating 100 (five stars).
 Rows: status music_added / not_music / failed (failed retries next week, at most 3 times).
 
 Usage: nova_liked_playlist.py [--limit N] [--dry-run]       # scheduler: Mondays 09:00
@@ -197,8 +197,14 @@ def write_tags(mp3: Path, t: dict, vid: str, art: Path | None):
 
 
 # ── Music app ───────────────────────────────────────────────────────────────────────────
+MUSIC_HOST = "kochj@192.168.1.7"   # TV-Movies-3: the iTunes / Home Sharing library (Jordan: "the mac with itunes on it")
+
+
 def osa(script: str, timeout=300) -> str:
-    r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=timeout)
+    """AppleScript in Music on TV-Movies-3 (ssh: sshd holds the AppleEvents grant there; /Volumes/Data is the same
+    NFS share on both Macs, so the MP3 paths resolve as-is)."""
+    r = subprocess.run(["ssh", "-o", "BatchMode=yes", MUSIC_HOST, "osascript", "-"], input=script,
+                       capture_output=True, text=True, timeout=timeout)
     if r.returncode != 0:
         raise RuntimeError(r.stderr.strip()[-300:])
     return r.stdout.strip()
@@ -209,7 +215,7 @@ def esc_as(s: str) -> str:
 
 
 def ensure_music():
-    subprocess.run(["open", "-g", "-a", "Music"], check=False)
+    subprocess.run(["ssh", "-o", "BatchMode=yes", MUSIC_HOST, "open", "-g", "-a", "Music"], check=False)
     for _ in range(40):                                # a big NAS library takes a while to come up
         try:
             osa('tell application "Music" to get name', timeout=30); break
@@ -220,13 +226,56 @@ def ensure_music():
 end tell''', timeout=600)
 
 
-def add_to_music(mp3: Path) -> str:
-    """Add, put in the playlist, rate 5 stars. Returns the track's persistent ID."""
+def owned(artist: str, title: str) -> str:
+    """Jordan already has this song in the iTunes library (his own rip / purchase): put THAT copy in the playlist
+    at five stars instead of a YouTube MP3. Returns its persistent ID, or "" (AppleScript `is` ignores case)."""
     return osa(f'''tell application "Music"
+  set hits to (every track of library playlist 1 whose artist is "{esc_as(artist)}" and name is "{esc_as(title)}" and media kind is song and comment does not contain "youtube.com")
+  if hits is {{}} then return ""
+  set t to item 1 of hits
+  set tid to persistent ID of t
+  set p to user playlist "{esc_as(PLAYLIST)}"
+  if (count of (tracks of p whose persistent ID is tid)) = 0 then duplicate t to p
+  set rating of t to 100
+  return tid
+end tell''', timeout=600)
+
+
+def by_video(vid: str) -> str:
+    """The library track carrying this video's URL in its comment (our own import), into the playlist at five
+    stars; keeps the first copy and drops extra imports from the library. Persistent ID or ""."""
+    return osa(f'''tell application "Music"
+  set hits to (every track of library playlist 1 whose comment contains "{vid}")
+  if hits is {{}} then return ""
+  set t to item 1 of hits
+  set tid to persistent ID of t
+  repeat with x in (rest of hits)
+    delete x
+  end repeat
+  set p to user playlist "{esc_as(PLAYLIST)}"
+  if (count of (tracks of p whose persistent ID is tid)) = 0 then duplicate t to p
+  set rating of t to 100
+  return tid
+end tell''', timeout=600)
+
+
+def add_to_music(mp3: Path, vid: str) -> str:
+    """Add, put in the playlist, rate 5 stars. Returns the track's persistent ID. Music sometimes imports the
+    file but hands back nothing (or a stale file track) — then the import is found by the video id in its comment."""
+    if pid := by_video(vid):                           # already imported on an earlier try
+        return pid
+    try:
+        return osa(f'''tell application "Music"
   set t to add (POSIX file "{esc_as(str(mp3))}") to user playlist "{esc_as(PLAYLIST)}"
   set rating of t to 100
   return persistent ID of t
 end tell''', timeout=600)
+    except RuntimeError:
+        for _ in range(6):
+            time.sleep(5)
+            if pid := by_video(vid):
+                return pid
+        raise
 
 
 def retag(c) -> int:
@@ -240,7 +289,7 @@ def retag(c) -> int:
     for vid, artist, title, note in rows:
         mb = musicbrainz(artist, title)
         pid = (note or "").removeprefix("music pid ").strip()
-        if not mb.get("album") or not pid:
+        if not mb.get("album") or not pid or pid.endswith("owned"):   # never retag Jordan's own copies
             continue
         try:
             loc = osa(f'tell application "Music" to set f to location of (first track of library playlist 1 whose persistent ID is "{pid}")\n'
@@ -306,16 +355,21 @@ def main(argv) -> int:
             log(f"♪ {vid}: {t['artist']} — {t['title']} [{t['album']}, {t['year']}]")
             if dry:
                 added += 1; continue
-            mp3, art = download(vid, base)
-            write_tags(mp3, t, vid, art)
-            pid = add_to_music(mp3)
+            pid = owned(t["artist"], t["title"])
+            if pid:
+                log(f"  already in the library — that copy goes in the playlist")
+                mp3, pid = None, f"{pid} owned"
+            else:
+                mp3, art = download(vid, base)
+                write_tags(mp3, t, vid, art)
+                pid = add_to_music(mp3, vid)
             with c.cursor() as cur:
                 cur.execute("""INSERT INTO yt_music_library (video_id, status, verdict, artist, title, album, year, track_no, path, error)
                                VALUES (%s,'music_added',%s,%s,%s,%s,%s,%s,%s,%s)
                                ON CONFLICT (video_id) DO UPDATE SET status='music_added', verdict=EXCLUDED.verdict,
                                  artist=EXCLUDED.artist, title=EXCLUDED.title, album=EXCLUDED.album, year=EXCLUDED.year,
                                  track_no=EXCLUDED.track_no, path=EXCLUDED.path, error=EXCLUDED.error, updated_at=now()""",
-                            (vid, json.dumps(verdict), t["artist"], t["title"], t["album"], t["year"], t["track_no"], str(mp3),
+                            (vid, json.dumps(verdict), t["artist"], t["title"], t["album"], t["year"], t["track_no"], str(mp3) if mp3 else None,
                              f"music pid {pid}"))
             added += 1
         except Exception as ex:  # noqa: BLE001
