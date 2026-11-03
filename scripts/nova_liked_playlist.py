@@ -19,7 +19,8 @@ Per liked video not yet in nova_ops.yt_music_library:
   4. Music app on TV-Movies-3 (.7, the iTunes library): add the file, put it in "5 stars - Youtube" (created if missing), rating 100 (five stars).
 Rows: status music_added / not_music / failed (failed retries next week, at most 3 times).
 
-Usage: nova_liked_playlist.py [--limit N] [--dry-run]       # scheduler: Mondays 09:00
+Usage: nova_liked_playlist.py [--limit N] [--dry-run] [--shard i/n --llm URL[,MODEL]]   # scheduler: Mondays 09:00
+(--shard/--llm: parallel workers, one per model host; MusicBrainz and Music calls are serialised across them.)
 """
 from __future__ import annotations
 
@@ -53,6 +54,29 @@ def _conn():
     import nova_dsn
     c = nova_dsn.pg_connect(); c.autocommit = True
     return c
+
+
+_LOCK_CONN = None
+
+
+class serial:
+    """Cross-process critical section (PG advisory lock) so sharded workers (--shard) take turns at what must
+    not run concurrently: MusicBrainz (1 req/s for the whole house) and Music on TV-Movies-3."""
+    MB, MUSIC = 7301, 7302
+
+    def __init__(self, key: int):
+        self.key = key
+
+    def __enter__(self):
+        global _LOCK_CONN
+        if _LOCK_CONN is None:
+            _LOCK_CONN = _conn()
+        with _LOCK_CONN.cursor() as cur:
+            cur.execute("SELECT pg_advisory_lock(%s)", (self.key,))
+
+    def __exit__(self, *exc):
+        with _LOCK_CONN.cursor() as cur:
+            cur.execute("SELECT pg_advisory_unlock(%s)", (self.key,))
 
 
 # ── tags ────────────────────────────────────────────────────────────────────────────────
@@ -112,11 +136,12 @@ def musicbrainz(artist: str, title: str) -> dict:
         q = f'recording:"{title}" AND artist:"{artist}"{extra}'
         url = "https://musicbrainz.org/ws/2/recording?fmt=json&limit=100&query=" + urllib.parse.quote(q)
         for wait in (1.1, 3, 8):                       # MusicBrainz asks for <= 1 req/s; 503 = slow down
-            time.sleep(wait)
             try:
-                req = urllib.request.Request(url, headers={"User-Agent": MB_UA})
-                with urllib.request.urlopen(req, timeout=20) as r:
-                    recs = json.load(r).get("recordings") or []
+                with serial(serial.MB):
+                    time.sleep(wait)
+                    req = urllib.request.Request(url, headers={"User-Agent": MB_UA})
+                    with urllib.request.urlopen(req, timeout=20) as r:
+                        recs = json.load(r).get("recordings") or []
                 break
             except Exception as e:  # noqa: BLE001
                 log(f"musicbrainz: {type(e).__name__} (retrying)")
@@ -203,8 +228,9 @@ MUSIC_HOST = "kochj@192.168.1.7"   # TV-Movies-3: the iTunes / Home Sharing libr
 def osa(script: str, timeout=300) -> str:
     """AppleScript in Music on TV-Movies-3 (ssh: sshd holds the AppleEvents grant there; /Volumes/Data is the same
     NFS share on both Macs, so the MP3 paths resolve as-is)."""
-    r = subprocess.run(["ssh", "-o", "BatchMode=yes", MUSIC_HOST, "osascript", "-"], input=script,
-                       capture_output=True, text=True, timeout=timeout)
+    with serial(serial.MUSIC):
+        r = subprocess.run(["ssh", "-o", "BatchMode=yes", MUSIC_HOST, "osascript", "-"], input=script,
+                           capture_output=True, text=True, timeout=timeout)
     if r.returncode != 0:
         raise RuntimeError(r.stderr.strip()[-300:])
     return r.stdout.strip()
@@ -317,6 +343,11 @@ def main(argv) -> int:
     import nova_liked_music as lm
     limit = int(argv[argv.index("--limit") + 1]) if "--limit" in argv else 100000
     dry = "--dry-run" in argv
+    if "--llm" in argv:                                # a worker pinned to one model host: URL[,MODEL]
+        import nova_beliefs as nb
+        url, _, model = argv[argv.index("--llm") + 1].partition(",")
+        nb.LLM_URLS = (url,)
+        nb.LLM_MODEL = model or nb.LLM_MODEL
     likes = lm.liked(5000)
     log(f"{len(likes)} liked videos")
     c = _conn()
@@ -327,6 +358,9 @@ def main(argv) -> int:
         cur.execute("SELECT video_id, kind, verdict FROM yt_likes WHERE kind IS NOT NULL")
         known = {r[0]: (r[1], r[2] or {}) for r in cur.fetchall()}
     todo = [e for e in likes if e["id"] not in done][:limit]
+    if "--shard" in argv:                              # i/n: this worker takes every n-th item
+        i, n = map(int, argv[argv.index("--shard") + 1].split("/"))
+        todo = todo[i::n]
     log(f"{len(todo)} to look at")
     if not dry and todo:
         ensure_music()
