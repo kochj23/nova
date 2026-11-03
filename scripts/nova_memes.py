@@ -305,11 +305,11 @@ def vlm_json(prompt: str, images: list[str], max_tokens=4000) -> dict:
     body = json.dumps({"model": VLM, "stream": False, "think": False, "keep_alive": "30m", "format": "json",
                        "options": {"temperature": 0.5, "num_predict": max_tokens, "num_ctx": 16384},
                        "messages": [{"role": "user", "content": prompt + "\n/no_think", "images": imgs}]}).encode()
-    for base in nb.LLM_URLS:
+    for base in sorted(nb.LLM_URLS, key=lambda u: u.endswith(":11436")):   # 11436 hangs/thinks on qwen3-vl (2026-11-02, 11-03)
         for attempt in range(2):
             try:
                 req = urllib.request.Request(base + "/api/chat", data=body, headers={"Content-Type": "application/json"})
-                with urllib.request.urlopen(req, timeout=300) as r:   # healthy ~30 s; 11436 hung 15 min (2026-11-02)
+                with urllib.request.urlopen(req, timeout=150) as r:   # healthy ~30-40 s; a stuck host must not eat the 1 h budget
                     out = (json.load(r).get("message", {}).get("content", "") or "").strip()
                 if out:
                     return json.loads(out)
