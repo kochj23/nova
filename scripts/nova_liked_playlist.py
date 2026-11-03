@@ -192,10 +192,10 @@ def download(vid: str, base: Path) -> tuple[Path, Path | None]:
     r = subprocess.run([YTDLP, "--cookies-from-browser", "safari", "--no-warnings", "--no-playlist", "-x",
                         "--audio-format", "mp3", "--audio-quality", "0", "--write-thumbnail", "--convert-thumbnails", "jpg",
                         "-o", tmpl, f"https://www.youtube.com/watch?v={vid}"], capture_output=True, text=True, timeout=1800)
-    mp3 = base.with_suffix(".mp3")
+    mp3 = Path(f"{base}.mp3")             # not with_suffix: "(feat. X)" has a dot
     if r.returncode != 0 or not mp3.exists():
         raise RuntimeError((r.stderr or "download failed").strip()[-300:])
-    jpg = base.with_suffix(".jpg")
+    jpg = Path(f"{base}.jpg")
     return mp3, (jpg if jpg.exists() else None)
 
 
