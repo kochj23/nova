@@ -14,7 +14,7 @@ and disk capacity. Posts ONE consolidated report to Slack (#nova-bb) so a bad
 boot is visible at a glance instead of being discovered piecemeal days later.
 
 Modes (both delegate to nova_selfcheck.py):
-  --boot   Wait for /Volumes/Data + /Volumes/MoreData to mount, give services a
+  --boot   Wait for /Volumes/Data to mount, give services a
            grace period to come up, then run.   -> nova_selfcheck.py --boot
   (none)   Run immediately and report.          -> nova_selfcheck.py --boot --now
   --dry-run is passed through (no HA restart, no Slack, no PG writes).
@@ -268,7 +268,7 @@ def wait_for_boot():
     """Block until both volumes are mounted, then give services a grace period."""
     deadline = time.monotonic() + 180
     while time.monotonic() < deadline:
-        if all(os.path.ismount(v) for v in ("/Volumes/Data", "/Volumes/MoreData")):
+        if all(os.path.ismount(v) for v in ("/Volumes/Data",)):
             break
         time.sleep(5)
     # Volumes up (or timed out) — let Postgres/gateway/MLX finish coming online.
