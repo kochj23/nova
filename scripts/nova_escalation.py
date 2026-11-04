@@ -66,7 +66,7 @@ SPINNAKER_RUNG = {"note": "journal", "ask": "ask", "alert": "escalate", "outward
 DEFAULTS = {"latency_ms": 45000, "night_start": 23, "night_end": 7, "degraded_penalty": 0.25,
             "gateway_health": "http://nova-core.digitalnoise.net:18792/health",
             "memory_health": "http://memory-server.digitalnoise.net:18790/stats",
-            "studio_hosts": ["office-m4-2"], "focus_counts_as_depleted": False}
+            "studio_hosts": ["office-m4-2", "nova-core8"], "focus_counts_as_depleted": False}
 CHANNEL = "two-man"
 
 SCHEMA = """

@@ -123,7 +123,7 @@ def repair() -> list[str]:
 # 2026-11-01 all four were found on python3 -> 3.15 with no psycopg2; nothing had noticed.
 FLEET_MACS = {"nova-core4": "192.168.1.250", "nova-core6": "192.168.1.252",
               "nova-core9": "192.168.1.7", "nova-core10": "192.168.1.77"}
-CONTROL_PLANE = ("Office-M4-2", "office-m4-2")
+CONTROL_PLANE = ("Office-M4-2", "office-m4-2", "nova-core8")   # Studio renamed nova-core8 2026-11-04
 STABLE_PY = f"/opt/homebrew/opt/{WANT_FORMULA}/bin/python{WANT_PREFIX}"   # not the floating python3
 
 

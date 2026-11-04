@@ -111,6 +111,7 @@ RUNBOOKS = {
     ("Office-M4-2", "gpu"): ["restart_ollama", "reboot_host"],
     ("Office-M4-2", "tunnel"): ["restart_cloudflared"],  # Cloudflare tunnel down -> reconnect
 }
+RUNBOOKS.update({("nova-core8", c): v for (h, c), v in list(RUNBOOKS.items()) if h == "Office-M4-2"})  # Studio renamed 2026-11-04
 
 
 # ── schema ────────────────────────────────────────────────────────────────────
