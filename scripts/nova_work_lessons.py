@@ -1299,6 +1299,7 @@ def main_embed_ok(sleep=time.sleep) -> bool:
 # on a remote node notes what it is reading in minion_activity, and the work row records which node read it —
 # that is what the Nova Minion screensaver shows.
 MINION_FRESH_S = 90
+MINION_CACHE_S = 10                 # 2026-11-06: was 30; with 10 s heartbeats a new minion is seen within ~20 s
 STUDIO_NODE = "mac-studio"          # reads on this host (bulk or main Ollama) are recorded under this minion name
 _MIN = {"t": 0.0, "rows": [], "lock": threading.Lock()}
 _TL = threading.local()
@@ -1314,7 +1315,7 @@ def _minion_conn():
 
 def minion_rows() -> list:
     with _MIN["lock"]:
-        if time.time() - _MIN["t"] > 30:
+        if time.time() - _MIN["t"] > MINION_CACHE_S:
             try:
                 cur = _minion_conn().cursor()
                 cur.execute("SELECT node, ollama_url, models FROM minion_nodes WHERE state IN ('idle','dedicated') "
@@ -2325,11 +2326,44 @@ def claim(oc, tiers: tuple[str, ...], run_tag: str, kind: str | None = None, sou
     return [first] + [_row(x) for x in oc.fetchall() or []]
 
 
+MAX_STREAMS = 16
+ELASTIC_SCAN_S = 15
+
+
+def strong_minion_capacity(me=None) -> int:
+    """Reader calls the idle/dedicated minions with a strong model can take at once (REMOTE_SLOTS each)."""
+    me = local_hosts() if me is None else me
+    urls = {u.rstrip("/") for _, u, ms in minion_rows()
+            if any(m in (ms or []) for m in STRONG_MODELS) and ps._host(u) not in me}
+    return REMOTE_SLOTS * len(urls)
+
+
+def elastic_target(streams: int, capacity: int) -> int:
+    """Strong streams wanted: enough to fill every minion slot, plus two for core10/bulk headroom (never below
+    the configured floor, never above MAX_STREAMS)."""
+    return max(streams, min(MAX_STREAMS, capacity + 2))
+
+
+def still_allowed(oc) -> bool:
+    """Kill switch and work_lessons/enabled, re-checked during a run (runs are long now)."""
+    try:
+        import nova_autonomy_safety
+        if nova_autonomy_safety.kill_switch_engaged(oc):
+            return False
+    except Exception:  # noqa: BLE001
+        return False
+    return cfg_get(oc, "enabled", True) is not False
+
+
 def run_queue(minutes: float, streams: int = 2, run_tag: str = "backfill", quota: dict | None = None,
               max_works: int | None = None, kind: str | None = None, source: str | None = None,
-              dry_run: bool = False, tiers=("A", "B", "C"), only_new: bool = False) -> dict:
-    """Time-boxed worker pool: `streams` strong streams (tiers A/B) + one fleet stream (tier C)."""
+              dry_run: bool = False, tiers=("A", "B", "C"), only_new: bool = False, elastic: bool = False) -> dict:
+    """Time-boxed worker pool: `streams` strong streams (tiers A/B) + one fleet stream (tier C).
+    elastic (2026-11-06, Jordan: new minions get work "within a minute"): a supervisor re-reads minion_nodes every
+    ELASTIC_SCAN_S and starts strong streams until every idle minion slot has one; it also stops the run on the
+    kill switch / enabled=false and follows the per-tier switches."""
     deadline = time.monotonic() + minutes * 60
+    live = {"tiers": tuple(tiers)}
     done = {"A": 0, "B": 0, "C": 0}
     calls = {"A": 0, "B": 0, "C": 0}
     lock = threading.Lock()
@@ -2340,7 +2374,7 @@ def run_queue(minutes: float, streams: int = 2, run_tag: str = "backfill", quota
         mc = connect(ps.MEM_DSN).cursor()
         while not stop.is_set() and time.monotonic() < deadline:
             with lock:
-                open_t = tuple(t for t in my_tiers if t in tiers and (quota is None or done[t] < quota.get(t, 0)))
+                open_t = tuple(t for t in my_tiers if t in live["tiers"] and (quota is None or done[t] < quota.get(t, 0)))
                 if max_works is not None and sum(done.values()) >= max_works:
                     open_t = ()
             if not open_t:
@@ -2380,8 +2414,28 @@ def run_queue(minutes: float, streams: int = 2, run_tag: str = "backfill", quota
     t0 = time.monotonic()
     for th in threads:
         th.start()
-    for th in threads:
-        th.join(max(1.0, deadline - time.monotonic() + 1200))
+
+    def supervise():
+        soc = connect(ps.OPS_DSN).cursor()
+        n, last_cfg = streams, 0.0
+        while not stop.is_set() and time.monotonic() < deadline:
+            if time.monotonic() - last_cfg >= 60:
+                last_cfg = time.monotonic()
+                if not still_allowed(soc):
+                    log("kill switch / work_lessons disabled — stopping the run"); stop.set(); return
+                if run_tag == "backfill":
+                    live["tiers"] = enabled_tiers(soc)
+            want = elastic_target(streams, strong_minion_capacity())
+            while n < want:
+                th = threading.Thread(target=worker, args=(strong_t,), daemon=True)
+                th.start(); threads.append(th); n += 1
+                log(f"minion capacity grew — strong stream {n} started")
+            stop.wait(ELASTIC_SCAN_S)
+
+    if elastic:
+        threading.Thread(target=supervise, daemon=True).start()
+    while any(th.is_alive() for th in list(threads)) and time.monotonic() < deadline + 1200:
+        time.sleep(2)
     stop.set()
     hours = max((time.monotonic() - t0) / 3600, 1e-6)
     return {"works": done, "calls": calls, "works_per_hour": round(sum(done.values()) / hours, 1),
@@ -2577,7 +2631,7 @@ def scheduled(minutes: float, streams: int) -> int:
     if oc.fetchone()[0] == 0:
         enqueue(oc, mc, everything=True)
     if _has_new(oc) and enabled_tiers(oc):          # same-day reading of new ingests first (enabled tiers only)
-        run_queue(min(minutes, 5), 1, run_tag="new", only_new=True, tiers=enabled_tiers(oc))
+        run_queue(min(minutes, 5), 1, run_tag="new", only_new=True, tiers=enabled_tiers(oc), elastic=True)
     gates = {}
 
     pilot_tiers = tuple(cfg_get(oc, "pilot_tiers", ["B", "C"]) or ())
@@ -2590,7 +2644,7 @@ def scheduled(minutes: float, streams: int) -> int:
     for pt in pts:
         pt.start()
     on = enabled_tiers(oc)
-    r = run_queue(minutes, streams, run_tag="backfill", tiers=on) if on else \
+    r = run_queue(minutes, streams, run_tag="backfill", tiers=on, elastic=True) if on else \
         {"works": {}, "calls": {}, "works_per_hour": 0, "elapsed_min": 0}
     for pt in pts:
         pt.join(max(1.0, minutes * 60 + 1800))

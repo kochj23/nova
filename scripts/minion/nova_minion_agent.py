@@ -42,9 +42,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 CONF = os.path.expanduser("~/.nova-minion/config.json")
 LOCAL_PORT = 37591
-BEAT_S = 30
+BEAT_S = 10                     # 2026-11-06: was 30 — a minion going idle is offered work within ~30 s
 STATUS_TTL_S = 4
-VERSION = "1.6"
+VERSION = "1.7"
 _cache = {"t": 0.0, "body": None, "lock": threading.Lock()}
 _state = {"state": "offline", "since": None}
 

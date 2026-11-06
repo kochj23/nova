@@ -49,8 +49,11 @@ class TestRouteWatchdog(unittest.TestCase):
         self.assertEqual(AGENT.ROUTE_RESET_S, 600)
         self.assertEqual(PROBE.ROUTE_RESET_S, 600)
 
+    def test_heartbeat_fast_enough_for_a_minute_handoff(self):
+        self.assertLessEqual(AGENT.BEAT_S, 10)
+
     def test_versions_bumped(self):
-        self.assertEqual(AGENT.VERSION, "1.6")
+        self.assertEqual(AGENT.VERSION, "1.7")
         self.assertEqual(PROBE.VERSION, "1.3")
 
 

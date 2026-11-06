@@ -496,6 +496,45 @@ class TestSets(unittest.TestCase):
         self.assertTrue(all(u[13] == rows[0]["work_key"] for u in ups))   # set_id (14th parameter)
 
 
+class TestElasticMinions(unittest.TestCase):
+    """2026-11-06 (Jordan: new minions get work "within a minute"): the reader grows its strong streams to cover
+    every idle minion slot, sees minion_nodes every 10 s, and re-checks the kill switch during long runs."""
+
+    ROWS = [("office-2", "http://office-2:11434/", ["qwen3:30b-a3b"]),
+            ("nova-core10", "http://nova-core10:11434", ["nova:latest", "qwen3:8b"]),
+            ("nova-core3", "http://nova-core3:11434", ["qwen3:8b"]),           # fleet-only: not strong capacity
+            ("studio", "http://localhost:11434", ["nova:latest"])]             # this host: never counted
+
+    def test_capacity_counts_strong_remote_minions_only(self):
+        with mock.patch.object(wl, "minion_rows", return_value=self.ROWS):
+            self.assertEqual(wl.strong_minion_capacity(me={"localhost"}), 2 * wl.REMOTE_SLOTS)
+
+    def test_target_covers_every_slot_within_bounds(self):
+        self.assertEqual(wl.elastic_target(5, 0), 5)                       # floor = configured streams
+        self.assertEqual(wl.elastic_target(5, 6), 8)                       # 6 slots + 2 headroom
+        self.assertEqual(wl.elastic_target(5, 100), wl.MAX_STREAMS)
+
+    def test_new_minion_seen_within_a_minute(self):
+        self.assertLessEqual(wl.MINION_CACHE_S + wl.ELASTIC_SCAN_S, 30)
+
+    def test_kill_switch_stops_a_long_run(self):
+        fake = mock.MagicMock()
+        fake.kill_switch_engaged.return_value = True
+        with mock.patch.dict(sys.modules, {"nova_autonomy_safety": fake}):
+            self.assertFalse(wl.still_allowed(None))
+        fake.kill_switch_engaged.return_value = False
+        with mock.patch.dict(sys.modules, {"nova_autonomy_safety": fake}), \
+                mock.patch.object(wl, "cfg_get", return_value=False):
+            self.assertFalse(wl.still_allowed(None))
+        with mock.patch.dict(sys.modules, {"nova_autonomy_safety": fake}), \
+                mock.patch.object(wl, "cfg_get", return_value=True):
+            self.assertTrue(wl.still_allowed(None))
+
+    def test_scheduled_runs_are_elastic(self):
+        self.assertIn('run_tag="backfill", tiers=on, elastic=True', SRC)
+        self.assertIn('only_new=True, tiers=enabled_tiers(oc), elastic=True', SRC)
+
+
 class TestFrame(unittest.TestCase):
     def test_selftest_and_help_exit_zero(self):
         env = {**os.environ, "NOVA_TEST_QUIET": "1"}
