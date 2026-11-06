@@ -59,7 +59,8 @@ class TestSecurity(unittest.TestCase):
 
 class TestPerformance(unittest.TestCase):
     def test_10k_seasonings_fast(self):
-        with patch.object(lx, "ferengi_rule", return_value=(9, "Opportunity plus instinct equals profit.")):
+        with patch.object(lx, "ferengi_rule", return_value=(9, "Opportunity plus instinct equals profit.")), \
+             patch.object(lx, "military_lines", return_value=[]):   # DB lookups mocked like the Ferengi rule
             t0 = time.perf_counter()
             for i in range(10_000):
                 lx.seasoning("operations", f"topic {i}")

@@ -405,6 +405,92 @@ FAITHS = """THE WORLD'S FAITHS — creeds, sayings, liturgical words and gentle 
 RULES: one or two per article, only where it truly lands; always gloss it so an English-only reader gets it; cite chapter/verse
 when quoting scripture; NEVER invent or paraphrase-as-quote a verse; never preach, proselytize, rank religions, or mock believers."""
 
+# Jordan 2026-11-06: "add relevant statements from the military books you have inhaled — articles and e-mails."
+# Two halves, like the faiths: a fixed shelf of well-known doctrine/martial lines (offered every time), plus
+# military_lines(): verbatim sentences from the ingested manuals (military_doctrine* vectors in nova_memories),
+# matched to the topic by full-text rank, so the citation is a real publication Nova actually read.
+MILITARY = """THE MILITARY SHELF — doctrine, mottos and maxims from the services and the classics:
+  Moltke: "No plan of operations extends with any certainty beyond the first contact with the main hostile force." (every change window)
+  Clausewitz, On War (quoted in MCDP 1 Warfighting): "Everything in war is very simple, but the simplest thing is difficult." · friction and the fog of war
+  Sun Tzu, The Art of War I.18 (Giles): "All warfare is based on deception." (every vendor demo)
+  Rogers' Rangers, Standing Order 1: "Don't forget nothing." · Navy, Lawrence 1813: "Don't give up the ship."
+  Mottos: Semper Fidelis (Marines, always faithful) · Semper Paratus (Coast Guard, always ready) · Semper Supra (Space Force, always above) · Air Force core values "Integrity first, service before self, and excellence in all we do."
+  Doctrine shorthand (gloss it): commander's intent and mission command (ADP 6-0) — say what and why, let the node choose how · PACE plan (Primary, Alternate, Contingency, Emergency) — a failover chain with a name · OODA loop (Boyd: observe, orient, decide, act) · BLUF (bottom line up front) · "two is one, one is none" (soldier's saying, not doctrine)
+RULES: one or two per piece, only where they land; quote exactly and attribute (publication or person); gloss acronyms;
+never glorify killing, never make light of real casualties, never invent a manual or a quote."""
+
+_MIL_STOP = {"that", "this", "with", "from", "have", "were", "they", "their", "about", "into", "what", "when",
+             "which", "will", "would", "there", "been", "more", "than", "your", "just", "over", "after", "nova"}
+_MIL_FALLBACK = "leadership discipline mission planning readiness"
+
+
+def military_lines(topic: str = "", n: int = 3, conn=None):
+    """Verbatim (title, sentence) pairs from Nova's ingested military manuals, ranked against `topic`.
+
+    Full-text OR-match over the military_doctrine* vectors (tsv GIN index), then one clean sentence per
+    publication: 60-260 chars, mostly letters, no OCR debris. [] if the memory DB is unreachable."""
+    words = [w for w in re.findall(r"[a-z]{4,}", (topic or "").lower()) if w not in _MIL_STOP][:12]
+    words = words or _MIL_FALLBACK.split()
+    query = " | ".join(dict.fromkeys(words))          # alpha-only words: safe to_tsquery syntax
+    own = conn is None
+    try:
+        if own:
+            import psycopg2
+            conn = psycopg2.connect(_nova_dsn.pg_dsn("nova_memories"), connect_timeout=5)
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '8s'")
+            cur.execute("""/* lexicon military_lines */ SELECT text FROM memories, to_tsquery('english', %s) q
+                           WHERE source LIKE 'military_doctrine%%' AND text LIKE '[%%' AND tsv @@ q
+                           ORDER BY ts_rank(tsv, q) DESC LIMIT 60""", (query,))
+            rows = [r[0] for r in cur.fetchall()]
+    except Exception as e:  # noqa: BLE001 — seasoning must never break a publish or a send
+        import sys
+        print(f"[lexicon] military_lines unavailable ({type(e).__name__}: {e})", file=sys.stderr)
+        return []
+    finally:
+        if own and conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return _pick_military(rows, words, n)
+
+
+def _pick_military(rows, words, n):
+    out, titles, seen = [], set(), set()
+    for text in rows:
+        m = re.match(r"\[([^\]]{3,120})\]\s*(.*)", text or "", re.S)
+        if not m or m.group(1) in titles:
+            continue
+        body = re.sub(r"\s+", " ", re.sub(r"-\s+(?=[a-z])", "", m.group(2)))   # undo OCR hyphen breaks
+        best = None
+        for sent in re.split(r"(?<=[.!?])\s+", body):
+            sent = re.sub(r"^(?:[A-Z0-9&/,-]{2,} )+(?=[A-Z][a-z])", "", sent)   # drop an ALL-CAPS heading glued on
+            if sent in seen:
+                continue
+            letters = sum(c.isalpha() or c == " " for c in sent)
+            if not (60 <= len(sent) <= 260) or not sent[0].isupper() or letters < 0.85 * len(sent) \
+                    or re.search(r"\(\d\)|\b[a-z]\.\s|\.\.\.|\bsee (para|fig|table)", sent, re.I):
+                continue
+            score = sum(w[:5] in sent.lower() for w in words)
+            if score and (best is None or score > best[0]):
+                best = (score, sent)
+        if best:
+            titles.add(m.group(1)); seen.add(best[1])
+            out.append((m.group(1).strip(), best[1]))
+        if len(out) >= n:
+            break
+    return out
+
+
+def military_block(topic: str = "") -> str:
+    """MILITARY shelf + topic-matched verbatim lines from the manuals, as a prompt block."""
+    lines = military_lines(topic)
+    lib = "".join(f'\n  [{t}]: "{s}"' for t, s in lines)
+    return MILITARY + ("\nFROM NOVA'S MILITARY LIBRARY (verbatim, matched to this topic — quote EXACTLY, name the "
+                       "publication, use at most one):" + lib if lib else "")
+
+
 POOL = [MANDOA, KLINGON, MIDDLEEARTH, VALYRIAN, BELTER, DOVAHZUL, NAVI, WITCHER, DEEPCUTS,
         NEWSPEAK, DUNE, JEDI_SITH, WH40K, FIREFLY, BSG, WARCRAFT, TREK, HITCHHIKER, DBZ, ROBOTECH, TRON,
         THREE_LAWS, HUTTESE, NADSAT, GALACTIC, MAFIA] + HORROR_POOL
@@ -525,6 +611,7 @@ closing turn. It was matched to today's subject, so use it as commentary, not de
     for t in random.sample(POOL, min(SAMPLE_PER_ARTICLE, len(POOL))):
         block.append(t)
     block.append(FAITHS)
+    block.append(military_block(topic))
 
     block.append(
         """USAGE — LIBERALLY, but like a bilingual crew, not a Renaissance Faire. Target 2-4 of the tongues
