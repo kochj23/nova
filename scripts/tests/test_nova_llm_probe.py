@@ -114,7 +114,7 @@ class TestIntegration(unittest.TestCase):
                                                               "calls": [], "ips": ["1.2.3.9"]}):
             snap = probe.snapshot({"node": "n", "ollama_ports": [11434]})
         self.assertTrue(snap["llm"])
-        self.assertEqual(snap["probe"], "1.2")
+        self.assertEqual(snap["probe"], "1.3")
         for k in ("clients", "calls", "ips", "runners", "loaded", "net", "temps"):
             self.assertIn(k, snap)
         json.dumps(snap)

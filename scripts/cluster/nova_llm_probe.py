@@ -39,7 +39,7 @@ from datetime import datetime
 
 DIR = os.path.expanduser("~/.nova-probe")
 PUSH_S = 1          # 1 s: short requests and the last tokens before a request ends are not missed
-VERSION = "1.2"
+VERSION = "1.3"
 # LLM ports this machine may call elsewhere: Ollama, llama.cpp, MLX/MTPLX, the inference router
 CALL_PORTS = (11434, 11435, 5050, 37475)
 LINUX = platform.system() == "Linux"
@@ -668,6 +668,28 @@ def selftest() -> int:
     return 0
 
 
+# 1.6 (2026-11-06): a long-lived process on macOS can lose its Local Network access and get EHOSTUNREACH
+# ("No route to host") for every LAN call while the network itself is fine — nova-core10 sat silent for five days
+# that way until a restart. After ROUTE_RESET_S of nothing but no-route errors, exit so launchd (KeepAlive) starts a
+# fresh process, which gets its access back.
+ROUTE_RESET_S = 600
+
+
+def no_route(e: BaseException) -> bool:
+    r = getattr(e, "reason", e)
+    return getattr(r, "errno", None) == 65 or "No route to host" in str(e)
+
+
+def route_watch(state: dict, e: BaseException | None, now: float) -> bool:
+    """Pure: track consecutive no-route failures; True when it is time to exit for a fresh process."""
+    if e is None or not no_route(e):
+        state["no_route_since"] = None
+        return False
+    if state.get("no_route_since") is None:
+        state["no_route_since"] = now
+    return now - state["no_route_since"] >= ROUTE_RESET_S
+
+
 def main() -> int:
     if "--selftest" in sys.argv:
         return selftest()
@@ -681,14 +703,19 @@ def main() -> int:
         return 0
     log(f"probe {conf['node']} -> {conf['hub']} every {PUSH_S}s")
     fails = 0
+    watch: dict = {}
     while True:
         try:
             http(conf["hub"].rstrip("/") + "/llm", snapshot(conf), token=tok, timeout=5)
             fails = 0
+            route_watch(watch, None, time.time())
         except Exception as e:  # noqa: BLE001
             fails += 1
             if fails in (1, 10, 100) or fails % 1000 == 0:
                 log(f"push failed x{fails} ({e})")
+            if route_watch(watch, e, time.time()):
+                log(f"no route to the hub for {ROUTE_RESET_S}s — exiting so launchd restarts a fresh probe")
+                os._exit(75)
         time.sleep(PUSH_S)
 
 

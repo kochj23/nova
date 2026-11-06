@@ -44,7 +44,7 @@ CONF = os.path.expanduser("~/.nova-minion/config.json")
 LOCAL_PORT = 37591
 BEAT_S = 30
 STATUS_TTL_S = 4
-VERSION = "1.5"
+VERSION = "1.6"
 _cache = {"t": 0.0, "body": None, "lock": threading.Lock()}
 _state = {"state": "offline", "since": None}
 
@@ -192,6 +192,28 @@ def set_loaded(ollama: str, models: list, load: bool):
             log(f"{m} not {'loaded' if load else 'unloaded'} ({e})")
 
 
+# 1.6 (2026-11-06): a long-lived process on macOS can lose its Local Network access and get EHOSTUNREACH
+# ("No route to host") for every LAN call while the network itself is fine — nova-core10 sat silent for five days
+# that way until a restart. After ROUTE_RESET_S of nothing but no-route errors, exit so launchd (KeepAlive) starts a
+# fresh process, which gets its access back.
+ROUTE_RESET_S = 600
+
+
+def no_route(e: BaseException) -> bool:
+    r = getattr(e, "reason", e)
+    return getattr(r, "errno", None) == 65 or "No route to host" in str(e)
+
+
+def route_watch(state: dict, e: BaseException | None, now: float) -> bool:
+    """Pure: track consecutive no-route failures; True when it is time to exit for a fresh process."""
+    if e is None or not no_route(e):
+        state["no_route_since"] = None
+        return False
+    if state.get("no_route_since") is None:
+        state["no_route_since"] = now
+    return now - state["no_route_since"] >= ROUTE_RESET_S
+
+
 def tick(conf: dict, tok: str) -> str:
     ollama = conf.get("ollama_url") or ""
     # the memory guard is about LOADING a model: one that is already resident costs nothing more to use
@@ -223,8 +245,12 @@ def tick(conf: dict, tok: str) -> str:
                                                     "whisper_cpu_threads") if conf.get(k) is not None},
                        **({} if LINUX else {"ac": on_ac(), "throttled": throttled(), "idle_s": int(idle_seconds())})}},
              token=tok)
+        route_watch(_state, None, time.time())
     except Exception as e:  # noqa: BLE001
         log(f"heartbeat failed ({e})")
+        if route_watch(_state, e, time.time()):
+            log(f"no route to the hub for {ROUTE_RESET_S}s — exiting so launchd restarts a fresh agent")
+            os._exit(75)
     return state
 
 
@@ -297,6 +323,14 @@ def selftest() -> int:
     assert linux_busy({}, "0.10 0.50 1.0 1/1 1", "kochj pts/0 2026-10-16 (10.0.0.9)", 6) is False   # ssh is fine
     assert linux_busy({}, "0.10 0.50 1.0 1/1 1", "kochj tty2 2026-10-16", 6) is True     # someone at the console
     assert linux_busy({"ignore_console": True}, "0.10 0.50 1.0 1/1 1", "kochj tty2 2026-10-16", 6) is False
+    import errno as _errno
+    import urllib.error as _ue
+    w: dict = {}
+    nr = _ue.URLError(OSError(_errno.EHOSTUNREACH, "No route to host"))
+    assert no_route(nr) and not no_route(_ue.URLError(OSError(60, "Operation timed out")))
+    assert not route_watch(w, nr, 1000) and not route_watch(w, nr, 1000 + ROUTE_RESET_S - 1)
+    assert route_watch(w, nr, 1000 + ROUTE_RESET_S)
+    assert not route_watch(w, None, 2000) and not route_watch(w, nr, 2001), "a success resets the clock"
     print("selftest OK")
     return 0
 
