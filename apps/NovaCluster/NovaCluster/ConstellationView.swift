@@ -185,7 +185,7 @@ struct ConstellationScreen<Mark: View>: View {
             #elseif os(tvOS)
             let u = max(1.0, min(geo.size.width / 1440, geo.size.height / 900))
             #else
-            let u = max(0.8, min(geo.size.width, geo.size.height) / 820)
+            let u = DeviceLayout.unit(geo.size)
             #endif
             let landscape = geo.size.width > geo.size.height
             ZStack {
@@ -197,9 +197,10 @@ struct ConstellationScreen<Mark: View>: View {
                         MinionStrip(minions: minions, colors: colors, u: u,
                                     columns: MinionStrip.columns(width: geo.size.width - 52 * u, u: u, landscape: landscape))
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .phoneScroll(maxHeight: geo.size.height * (landscape ? 0.42 : 0.5))
                     }
                     .padding(.horizontal, 26 * u)
-                    .padding(.top, 14 * u)
+                    .padding(.top, 14 * u + DeviceLayout.stripPad(snap))
                     Spacer(minLength: 8 * u)
                     DashLesson(lessons: snap?.lessons ?? [], colors: colors, u: u,
                                width: geo.size.width * (landscape ? 0.74 : 0.88),

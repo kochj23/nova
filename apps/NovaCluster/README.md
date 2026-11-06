@@ -1,6 +1,6 @@
-# Nova Cluster (Mac + iPad)
+# Nova Cluster (Mac + iPad + iPhone + Apple TV)
 
-**Version 1.1.0 (build 3)** · macOS 14+ · iPadOS 17+ · tvOS 17+ · SwiftUI · xcodegen
+**Version 1.2.0 (build 5)** · macOS 14+ · iPadOS 17+ · iOS 17+ (iPhone) · tvOS 17+ · SwiftUI · xcodegen
 
 Nova Cluster is a live view of what every machine in Nova's cluster is doing with its language
 models, and what that work turns into. Each machine's Ollama and llama.cpp traffic arrives from
@@ -277,6 +277,30 @@ xcrun devicectl device process launch --device <udid> --terminate-existing \
 
 On first launch iOS may ask for Local Network access. Tap **Allow**.
 
+## iPhone app (1.2.0)
+
+The iOS target (`NovaClusterPad`, bundle `net.digitalnoise.NovaClusterPad`) is universal: the same app runs on
+iPhone and iPad. The phone shows the same three views at a phone-sized layout unit (`DeviceLayout.phoneUnit`,
+0.62), in portrait or landscape:
+
+- **Map:** the header stats stack in two rows. Station labels show only the name and state badge. **Tap a
+  machine** for everything else (the drill-down sheet).
+- **Dashboard:** machine cards in 2 columns (3 in landscape), and the grid scrolls inside the top half.
+- **Constellation:** minion cards in 2 columns, and the grid scrolls the same way.
+- The alert strip and "just published" ticker run full width, and the screens start below them.
+
+The phone is the viewer node `iphone` (enrolled with `nova_minion_hub.py --enroll iphone --viewer`). Its token
+is kept only in the Mac's Keychain, under service `nova-cluster-iphone` and account `cluster-token`. To set the
+phone up from a paired Mac:
+
+```sh
+xcrun devicectl device process launch --device <iphone-udid> --terminate-existing \
+  --payload-url "novacluster://setup?hub=http://nova-core8.digitalnoise.net:37590&node=iphone&token=$(security find-generic-password -s nova-cluster-iphone -a cluster-token -w)" \
+  net.digitalnoise.NovaClusterPad
+```
+
+Off a phone, `DeviceLayout` returns exactly the iPad formulas (`Tests/PhoneLayoutTests.swift`).
+
 ## Apple TV app (1.1.0, Nova wish #60)
 
 The same SwiftUI views as a wall display. It **starts in kiosk mode** (map → dashboard → constellation, 60 s
@@ -391,6 +415,7 @@ Ultra at 1440×900 with live traffic, the app uses about 24–28 % of one core.
 | `NovaCluster/NodeLines.swift` | per-machine LLM-job + purpose lines (text, cleaning, fixed-height view) |
 | `NovaCluster/Views.swift` | root view (view switch), wordmark, header + odometer hero, side panel, footer, iPad settings sheet |
 | `NovaCluster/DashboardView.swift` | Minion-style dashboard: machine hues, traffic starfield, machine cards, lesson, totals |
+| `NovaCluster/PhoneLayout.swift` | iPhone layout: `DeviceLayout` unit, card columns, strip padding, `phoneScroll` |
 | `NovaCluster/Palette.swift` | palette, model-family hues, number and age formatting, dust layer |
 | `NovaClusterMac/MacSettings.swift` | macOS Settings window |
 | `NovaCluster/Assets.xcassets`, `NovaClusterMac/Assets.xcassets` | iPad and macOS app icons |
@@ -400,5 +425,6 @@ Ultra at 1440×900 with live traffic, the app uses about 24–28 % of one core.
 
 | Version | Date | Notes |
 |---|---|---|
+| 1.2.0 (5) | 2026-11-06 | iPhone: universal iOS target, phone layout for all three views, `iphone` viewer node; 71/71 tests pass |
 | 1.0.1 (2) | 2026-10-17 | Every machine shows its LLM job and core purpose in both views; release build is clean; 17/17 tests pass; DMG |
 | 1.0.0 (1) | 2026-10-16 | First release: live Mac + iPad view of the whole cluster's LLM traffic |

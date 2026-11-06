@@ -601,6 +601,16 @@ struct StationLabel: View {
                 if onUPS { Text("⚡").font(.system(size: 10 * u)).accessibilityLabel("on UPS") }
             }
             .lineLimit(1)
+            if !DeviceLayout.isPhone { details }
+        }
+        .multilineTextAlignment(.center)
+        .padding(.horizontal, 8 * u).padding(.vertical, 5 * u)
+        .background(RoundedRectangle(cornerRadius: 8 * u).fill(Palette.space.opacity(0.55)).blur(radius: 6 * u))
+        .opacity(s.live ? 1 : 0.5)
+    }
+
+    /// Everything under the name line (iPhone: tap the node for these — the map is too small for them).
+    @ViewBuilder private var details: some View {
             NodeRoleLines(node: n, u: u, size: 11, alignment: .center)
             Text("\(Fmt.chip(n.chip)) · \(Fmt.os(n.os))")
                 .font(mono).foregroundStyle(.white.opacity(0.42)).lineLimit(1)
@@ -615,11 +625,6 @@ struct StationLabel: View {
                     .font(.system(size: 10.5 * u, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.36)).lineLimit(1).truncationMode(.tail)
             }
-        }
-        .multilineTextAlignment(.center)
-        .padding(.horizontal, 8 * u).padding(.vertical, 5 * u)
-        .background(RoundedRectangle(cornerRadius: 8 * u).fill(Palette.space.opacity(0.55)).blur(radius: 6 * u))
-        .opacity(s.live ? 1 : 0.5)
     }
 
     @ViewBuilder private var badge: some View {

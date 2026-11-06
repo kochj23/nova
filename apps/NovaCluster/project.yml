@@ -8,8 +8,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "1.1.0"
-    CURRENT_PROJECT_VERSION: "3"
+    MARKETING_VERSION: "1.2.0"
+    CURRENT_PROJECT_VERSION: "5"
     SWIFT_VERSION: "5.0"
 
 targets:
@@ -37,6 +37,10 @@ targets:
         UIViewControllerBasedStatusBarAppearance: false
         UIApplicationSupportsIndirectInputEvents: true
         UIRequiresFullScreen: true
+        UISupportedInterfaceOrientations~iphone:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         UISupportedInterfaceOrientations~ipad:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
@@ -58,7 +62,7 @@ targets:
       base:
         PRODUCT_NAME: NovaCluster
         PRODUCT_BUNDLE_IDENTIFIER: net.digitalnoise.NovaClusterPad
-        TARGETED_DEVICE_FAMILY: "2"
+        TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "Apple Development"
         DEVELOPMENT_TEAM: QRRCB8HB3W
@@ -181,6 +185,7 @@ targets:
       - path: NovaCluster/Palette.swift
       - path: NovaCluster/ConstellationFleet.swift
       - path: NovaCluster/NodeFacts.swift
+      - path: NovaCluster/PhoneLayout.swift
       - path: NovaClusterMac/MenuBarHealth.swift
       - path: ../Shared/NovaConstellationCore.swift
     settings:

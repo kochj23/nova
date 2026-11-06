@@ -90,7 +90,7 @@ struct ContentView: View {
                 #if os(macOS)
                 let u = max(0.8, min(geo.size.width / 1440, geo.size.height / 900))
                 #else
-                let u = max(0.8, min(geo.size.width, geo.size.height) / 820)
+                let u = DeviceLayout.unit(geo.size)
                 #endif
                 VStack(spacing: 5 * u) {
                     if showsContent {
@@ -98,7 +98,7 @@ struct ContentView: View {
                     PublishedTicker(posts: snap?.published ?? [], u: u)
                 }
                 }
-                .frame(maxWidth: geo.size.width * 0.56)
+                .frame(maxWidth: geo.size.width * (DeviceLayout.isPhone ? 0.94 : 0.56))
                 .frame(maxWidth: .infinity)
                 .padding(.top, 4 * u)
             }
@@ -215,7 +215,7 @@ struct ContentView: View {
             let u = max(0.8, min(geo.size.width / 1440, geo.size.height / 900))
             let topPad: CGFloat = 30 + strips
             #else
-            let u = max(0.8, min(geo.size.width, geo.size.height) / 820)
+            let u = DeviceLayout.unit(geo.size)
             let topPad: CGFloat = 18 + strips * 1.6
             #endif
             let landscape = geo.size.width > geo.size.height
@@ -303,7 +303,7 @@ struct ContentView: View {
             #endif
             .overlay(alignment: .bottomLeading) {
                 if let ups = snap?.ups, !ups.isEmpty {
-                    let u = max(0.8, min(mg.size.width / 1040, mg.size.height / 760))
+                    let u = max(DeviceLayout.isPhone ? 0.5 : 0.8, min(mg.size.width / 1040, mg.size.height / 760))
                     UPSBadge(list: ups, u: u).padding(.leading, 18 * u).padding(.bottom, 6 * u)
                 }
             }
@@ -391,7 +391,11 @@ struct HeaderBar<Mark: View>: View {
                         Spacer(minLength: 0)
                         mark()
                     }
-                    HStack(alignment: .top, spacing: 18 * v) { llm(v); divider; minions(v) }
+                    if DeviceLayout.isPhone {
+                        llm(v); minions(v)
+                    } else {
+                        HStack(alignment: .top, spacing: 18 * v) { llm(v); divider; minions(v) }
+                    }
                 }
             }
         }

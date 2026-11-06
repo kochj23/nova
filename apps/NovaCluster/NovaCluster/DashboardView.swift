@@ -180,7 +180,7 @@ struct DashboardScreen<Mark: View>: View {
             #if os(macOS)
             let u = max(0.8, min(geo.size.width / 1480, geo.size.height / 900))
             #else
-            let u = max(0.8, min(geo.size.width, geo.size.height) / 820)
+            let u = DeviceLayout.unit(geo.size)
             #endif
             let landscape = geo.size.width > geo.size.height
             ZStack {
@@ -196,10 +196,11 @@ struct DashboardScreen<Mark: View>: View {
                     #else
                     VStack(alignment: .trailing, spacing: 12 * u) {
                         HStack(alignment: .top) { TokenHero(ticker: cluster.ticker, u: u, compact: true, paused: paused); Spacer(); mark(u) }
-                        cards(u: u, columns: landscape ? 4 : 3, activityLines: 1)
+                        cards(u: u, columns: DeviceLayout.columns(pad: landscape ? 4 : 3), activityLines: 1)
+                            .phoneScroll(maxHeight: geo.size.height * (landscape ? 0.42 : 0.5))
                     }
                     .padding(.horizontal, 22 * u)
-                    .padding(.top, 18 * u)
+                    .padding(.top, 18 * u + DeviceLayout.stripPad(snap))
                     #endif
                     Spacer(minLength: 8 * u)
                     DashLesson(lessons: snap?.lessons ?? [], colors: colors, u: u,

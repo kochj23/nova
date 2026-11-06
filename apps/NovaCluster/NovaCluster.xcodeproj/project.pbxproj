@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		05466FD4003B614F068C1EC6 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A49C3E6C79225425EF4D2D19 /* Assets.xcassets */; };
 		0A671BF458173917DCA7A9C7 /* NovaConstellationCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91995B7ABB24BED7EAA8F220 /* NovaConstellationCore.swift */; };
+		16866B85D7518CCCD64BC5C7 /* PhoneLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 469D061F326B3FA6CD477064 /* PhoneLayout.swift */; };
 		1787256FFD39386EE3AEDB0E /* MacSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 170C4889C16562313989172B /* MacSettings.swift */; };
 		1971F20E1C07C1D5385086EC /* NodeLinesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2028B71DFC8AF1B259B7D4A3 /* NodeLinesTests.swift */; };
 		1DAA430E8894632FBAF93AAC /* ClusterMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4647A44D805423ED4850D6D /* ClusterMap.swift */; };
@@ -37,14 +38,18 @@
 		6B644FACA4B4E9E59980E493 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 07D292F2558B56C3E618E442 /* Assets.xcassets */; };
 		6F34B03F14F37FF1C2143227 /* NovaClusterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CADB3C72F3259EE50E0893B /* NovaClusterApp.swift */; };
 		7CA52776663E0C511416FC20 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9125D25D592C3C4A77303531 /* Views.swift */; };
+		7E8AB5B57EFACA784B3F3A8D /* PhoneLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 469D061F326B3FA6CD477064 /* PhoneLayout.swift */; };
+		8110F51AFF97C85B9A4CC4A8 /* PhoneLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 469D061F326B3FA6CD477064 /* PhoneLayout.swift */; };
 		81FDFDDEC2FFB97BAE2713F6 /* ClusterMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4647A44D805423ED4850D6D /* ClusterMap.swift */; };
 		829FBB3579A86E1686282DF9 /* MenuBarHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = C56F43247A86D6DAE5636ADE /* MenuBarHealth.swift */; };
 		8885A9553D4DA3BB86664073 /* MenuBarHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = C56F43247A86D6DAE5636ADE /* MenuBarHealth.swift */; };
+		8A160AEB5B9547EB5376394D /* PhoneLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 469D061F326B3FA6CD477064 /* PhoneLayout.swift */; };
 		9022275A31178CB551B90A0D /* Palette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 700FE44BE3D2E67271438271 /* Palette.swift */; };
 		9552A588DE102BB482143ECD /* NodeFacts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E94209F861B155CE2C865BE /* NodeFacts.swift */; };
 		9870D341F784253BBCE117AB /* ConstellationFleet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB6ACCEC499C3BD244511037 /* ConstellationFleet.swift */; };
 		9A1D7F223EC3660409BEF9E0 /* NovaClusterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CADB3C72F3259EE50E0893B /* NovaClusterApp.swift */; };
 		9C98E7F5A58B0D46F3183295 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C08C85821DFE82FC434B3C5 /* DashboardView.swift */; };
+		A34869F0F64FB89F13F770B6 /* PhoneLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F3F1C492E70C537AD52050F /* PhoneLayoutTests.swift */; };
 		A4B6958F8F674CC64E76DA3C /* Cluster11SevenCatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39EF3ED1CA0A1D5F65E6E8DC /* Cluster11SevenCatTests.swift */; };
 		A6246C837A8CA417956F9118 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9125D25D592C3C4A77303531 /* Views.swift */; };
 		A7DD4B8784BA1261B641376C /* Cluster.swift in Sources */ = {isa = PBXBuildFile; fileRef = C39A9ACD991F51B4B62E164E /* Cluster.swift */; };
@@ -71,10 +76,12 @@
 		170C4889C16562313989172B /* MacSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacSettings.swift; sourceTree = "<group>"; };
 		2028B71DFC8AF1B259B7D4A3 /* NodeLinesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeLinesTests.swift; sourceTree = "<group>"; };
 		39EF3ED1CA0A1D5F65E6E8DC /* Cluster11SevenCatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cluster11SevenCatTests.swift; sourceTree = "<group>"; };
+		469D061F326B3FA6CD477064 /* PhoneLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneLayout.swift; sourceTree = "<group>"; };
 		545DEA8821093A5EFF1BC9A2 /* NodeDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeDetailView.swift; sourceTree = "<group>"; };
 		5AE6ACA02422ADEE69F2BF7E /* NovaClusterTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NovaClusterTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		700FE44BE3D2E67271438271 /* Palette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Palette.swift; sourceTree = "<group>"; };
 		8C08C85821DFE82FC434B3C5 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
+		8F3F1C492E70C537AD52050F /* PhoneLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneLayoutTests.swift; sourceTree = "<group>"; };
 		9125D25D592C3C4A77303531 /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views.swift; sourceTree = "<group>"; };
 		91995B7ABB24BED7EAA8F220 /* NovaConstellationCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaConstellationCore.swift; sourceTree = "<group>"; };
 		92BA2A2357F8B87838FC3C20 /* ConstellationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConstellationView.swift; sourceTree = "<group>"; };
@@ -134,6 +141,7 @@
 				DB64327D9566EC841382BB8D /* KioskTests.swift */,
 				FBCE191F06C5CBCA0FC76890 /* NodeFactsTests.swift */,
 				2028B71DFC8AF1B259B7D4A3 /* NodeLinesTests.swift */,
+				8F3F1C492E70C537AD52050F /* PhoneLayoutTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -165,6 +173,7 @@
 				AD5B8178B5F9959A6DD1BF24 /* NodeLines.swift */,
 				9CADB3C72F3259EE50E0893B /* NovaClusterApp.swift */,
 				700FE44BE3D2E67271438271 /* Palette.swift */,
+				469D061F326B3FA6CD477064 /* PhoneLayout.swift */,
 				9125D25D592C3C4A77303531 /* Views.swift */,
 			);
 			path = NovaCluster;
@@ -330,6 +339,7 @@
 				D13CA4888B46747A75EFE0B9 /* NovaClusterApp.swift in Sources */,
 				43CA717AADE1DF43514F2575 /* NovaConstellationCore.swift in Sources */,
 				E9B152E78CC029F2F8DC3A57 /* Palette.swift in Sources */,
+				8110F51AFF97C85B9A4CC4A8 /* PhoneLayout.swift in Sources */,
 				49D65C334CEECD7A038FF43B /* Views.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -350,6 +360,7 @@
 				9A1D7F223EC3660409BEF9E0 /* NovaClusterApp.swift in Sources */,
 				0A671BF458173917DCA7A9C7 /* NovaConstellationCore.swift in Sources */,
 				9022275A31178CB551B90A0D /* Palette.swift in Sources */,
+				7E8AB5B57EFACA784B3F3A8D /* PhoneLayout.swift in Sources */,
 				A6246C837A8CA417956F9118 /* Views.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -370,6 +381,7 @@
 				6F34B03F14F37FF1C2143227 /* NovaClusterApp.swift in Sources */,
 				3D665E8AB465560BD002F4F9 /* NovaConstellationCore.swift in Sources */,
 				A9F9EB6A9CF09F585ADF6C76 /* Palette.swift in Sources */,
+				8A160AEB5B9547EB5376394D /* PhoneLayout.swift in Sources */,
 				7CA52776663E0C511416FC20 /* Views.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -391,6 +403,8 @@
 				1971F20E1C07C1D5385086EC /* NodeLinesTests.swift in Sources */,
 				DA26E54927FBE8293ADFC61F /* NovaConstellationCore.swift in Sources */,
 				691A846B7A287BF5F3923C79 /* Palette.swift in Sources */,
+				16866B85D7518CCCD64BC5C7 /* PhoneLayout.swift in Sources */,
+				A34869F0F64FB89F13F770B6 /* PhoneLayoutTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -431,7 +445,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 5;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -445,7 +459,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.1.0;
+				MARKETING_VERSION = 1.2.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -552,7 +566,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 3;
+				CURRENT_PROJECT_VERSION = 5;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -572,7 +586,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.1.0;
+				MARKETING_VERSION = 1.2.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -663,7 +677,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = net.digitalnoise.NovaClusterPad;
 				PRODUCT_NAME = NovaCluster;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = 2;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
@@ -684,7 +698,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = net.digitalnoise.NovaClusterPad;
 				PRODUCT_NAME = NovaCluster;
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = 2;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
