@@ -1313,6 +1313,36 @@ def _minion_conn():
     return c
 
 
+_QUIET = {"t": 0.0, "val": frozenset(), "lock": threading.Lock()}
+QUIET_CACHE_S = 60
+
+
+def quiet_hosts() -> frozenset:
+    """Nodes (minion names and IPs) that must get NO reader work right now. Jordan 2026-11-06: "When it is time for
+    there to be no noise in the master bedroom, it is time to make the office loud." nova_bedroom_quiet.py writes
+    work_lessons/quiet_hosts at 21:30 and clears it at 04:00; the office (Studio bulk slots raised by the same
+    script, office minions) takes the work. Re-read every minute, so a long run follows the window."""
+    with _QUIET["lock"]:
+        if time.time() - _QUIET["t"] > QUIET_CACHE_S:
+            try:
+                cur = _minion_conn().cursor()
+                cur.execute("SELECT value FROM service_config WHERE service=%s AND key='quiet_hosts'", (SERVICE,))
+                r = cur.fetchone()
+                v = r[0] if r else []
+                v = json.loads(v) if isinstance(v, str) else (v or [])
+                _QUIET["val"] = frozenset(str(x) for x in v)
+            except Exception as e:  # noqa: BLE001 — unreadable: keep the last answer
+                log(f"quiet_hosts unreadable ({e})")
+            _QUIET["t"] = time.time()
+        return _QUIET["val"]
+
+
+def is_quiet(base: str, quiet: frozenset | None = None) -> bool:
+    """True when this Ollama base URL belongs to a node in the quiet window (by IP/host or by minion name)."""
+    quiet = quiet_hosts() if quiet is None else quiet
+    return bool(quiet) and (ps._host(base) in quiet or node_of(base) in quiet)
+
+
 def minion_rows() -> list:
     with _MIN["lock"]:
         if time.time() - _MIN["t"] > MINION_CACHE_S:
@@ -1454,6 +1484,8 @@ def llm_work(prompt: str, oc=None, max_tokens: int = 1400, temperature: float = 
         for e in minion_endpoints(models or STRONG_MODELS):          # minions first: they asked for the work
             if e not in remotes and ps._host(e[0]) not in me:
                 remotes.insert(0, e)
+        quiet = quiet_hosts()
+        remotes = [e for e in remotes if not is_quiet(e[0], quiet)]   # bedroom at night: the office does it
         if remotes or bmodel:
             give_up = time.monotonic() + 900
             while time.monotonic() < give_up:
@@ -1486,6 +1518,7 @@ def llm_work(prompt: str, oc=None, max_tokens: int = 1400, temperature: float = 
         eps = strong_endpoints(ranking, avoid_local=held, models=models)
         if held and not eps:
             eps = strong_endpoints(ranking, avoid_local=False, models=models)
+        eps = [e for e in eps if not is_quiet(e[0])]
         eps = sorted(eps, key=lambda e: ps._host(e[0]) in me)          # remote first, the Studio last
         for base, model in eps:
             try:
@@ -1516,6 +1549,7 @@ def llm_work(prompt: str, oc=None, max_tokens: int = 1400, temperature: float = 
               and ps._host(r["url"]) not in ps.CPU_ONLY_HOSTS and ps._host(r["url"]) not in me
               and (r["url"].rstrip("/") not in enrolled or r["url"].rstrip("/") in usable)
               and (r["url"].rstrip("/"), FLEET_MODEL) not in fleet]
+    fleet = [e for e in fleet if not is_quiet(e[0])]
     fleet.sort(key=lambda e: e[0] in cpu_minions)                  # CPU-only minions last (stable)
     for base, model in fleet:
         try:
@@ -2333,8 +2367,10 @@ ELASTIC_SCAN_S = 15
 def strong_minion_capacity(me=None) -> int:
     """Reader calls the idle/dedicated minions with a strong model can take at once (REMOTE_SLOTS each)."""
     me = local_hosts() if me is None else me
-    urls = {u.rstrip("/") for _, u, ms in minion_rows()
-            if any(m in (ms or []) for m in STRONG_MODELS) and ps._host(u) not in me}
+    quiet = quiet_hosts()
+    urls = {u.rstrip("/") for n, u, ms in minion_rows()
+            if any(m in (ms or []) for m in STRONG_MODELS) and ps._host(u) not in me
+            and not (ps._host(u) in quiet or n in quiet)}
     return REMOTE_SLOTS * len(urls)
 
 

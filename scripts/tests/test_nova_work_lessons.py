@@ -506,7 +506,8 @@ class TestElasticMinions(unittest.TestCase):
             ("studio", "http://localhost:11434", ["nova:latest"])]             # this host: never counted
 
     def test_capacity_counts_strong_remote_minions_only(self):
-        with mock.patch.object(wl, "minion_rows", return_value=self.ROWS):
+        with mock.patch.object(wl, "minion_rows", return_value=self.ROWS), \
+                mock.patch.object(wl, "quiet_hosts", return_value=frozenset()):
             self.assertEqual(wl.strong_minion_capacity(me={"localhost"}), 2 * wl.REMOTE_SLOTS)
 
     def test_target_covers_every_slot_within_bounds(self):
@@ -546,6 +547,51 @@ class TestFrame(unittest.TestCase):
         with mock.patch.object(sys, "argv", ["x", "--scheduled"]):
             m = _load("wl_import_smoke", SCRIPT)
         self.assertTrue(callable(m.main))
+
+
+class TestBedroomQuietOfficeLoud(unittest.TestCase):
+    """2026-11-06 (Jordan: "When it is time for there to be no noise in the master bedroom, it is time to make the
+    office loud."): while nova_bedroom_quiet.py's window is open, no reader call goes to a bedroom node."""
+
+    QUIET = frozenset({"nova-core10", "192.168.1.77", "192.168.1.252"})
+
+    def test_is_quiet_by_ip_and_by_minion_name(self):
+        with mock.patch.object(wl, "node_of", side_effect=lambda b: "nova-core10" if "core10" in b else "other"):
+            self.assertTrue(wl.is_quiet("http://192.168.1.77:11434", self.QUIET))
+            self.assertTrue(wl.is_quiet("http://nova-core10.local:11434", self.QUIET))
+            self.assertFalse(wl.is_quiet("http://192.168.1.99:11434", self.QUIET))      # office-2 keeps working
+            self.assertFalse(wl.is_quiet("http://192.168.1.77:11434", frozenset()))      # window closed
+
+    def test_capacity_drops_quiet_minions(self):
+        rows = [("office-2", "http://192.168.1.99:11434", ["qwen3:30b-a3b"]),
+                ("nova-core10", "http://192.168.1.77:11434", ["qwen3:30b-a3b"])]
+        with mock.patch.object(wl, "minion_rows", return_value=rows), \
+                mock.patch.object(wl, "quiet_hosts", return_value=self.QUIET):
+            self.assertEqual(wl.strong_minion_capacity(me={"localhost"}), wl.REMOTE_SLOTS)
+
+    def test_llm_work_never_calls_a_quiet_node(self):
+        called = []
+
+        def fake_remote(base, model, *a, **k):
+            called.append(base)
+            return "ok"
+        with mock.patch.object(wl, "quiet_hosts", return_value=self.QUIET), \
+                mock.patch.object(wl, "gateway_busy", return_value=False), \
+                mock.patch.object(wl, "bulk_url", return_value=None), \
+                mock.patch.object(wl, "local_hosts", return_value={"localhost"}), \
+                mock.patch.object(wl.ps, "load_ranking", return_value={}), \
+                mock.patch.object(wl, "strong_endpoints", return_value=[("http://192.168.1.77:11434", "qwen3:30b-a3b")]), \
+                mock.patch.object(wl, "minion_endpoints", return_value=[("http://192.168.1.99:11434", "qwen3:30b-a3b")]), \
+                mock.patch.object(wl, "node_of", return_value="x"), \
+                mock.patch.object(wl, "remote_try", side_effect=fake_remote):
+            self.assertEqual(wl.llm_work("p"), ("ok", "qwen3:30b-a3b"))
+        self.assertEqual(called, ["http://192.168.1.99:11434"])
+
+    def test_quiet_hosts_cached_and_failure_keeps_last(self):
+        wl._QUIET.update(t=0.0, val=frozenset({"a"}))
+        with mock.patch.object(wl, "_minion_conn", side_effect=RuntimeError("db down")):
+            self.assertEqual(wl.quiet_hosts(), frozenset({"a"}))
+        wl._QUIET.update(t=0.0, val=frozenset())
 
 
 if __name__ == "__main__":

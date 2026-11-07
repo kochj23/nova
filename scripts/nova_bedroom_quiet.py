@@ -56,6 +56,48 @@ MARKER_KEY = "quiet_excluded"       # ours: what this script added, so off remov
 # nova-core4 is normally already in exclude_nodes by hand; the union below makes that a no-op.
 BEDROOM = ("nova-core10", "nova-core6", "nova-core7", "nova-core4")
 
+# Jordan 2026-11-06: "When it is time for there to be no noise in the master bedroom, it is time to make the
+# office loud." So the window ALSO takes the work reader (work_lessons: the hottest LLM load, see device-inventory
+# "If 21:30-04:00 is still audible" (a)) off every bedroom node -- names AND every IP the reader may see them by --
+# and raises the Studio's own reader slots so the office absorbs the work. Both keys belong to this script only.
+READER_SERVICE = "work_lessons"
+QUIET_HOSTS = list(BEDROOM) + ["192.168.1.77", "192.168.1.251", "192.168.1.252", "192.168.1.150", "192.168.1.250"]
+NIGHT_BULK_SLOTS = 5               # Studio (office) reader slots in the window; day value restored at off
+
+
+def reader_plan(slots: int, saved: int | None, turning_on: bool) -> tuple[int, int | None]:
+    """(new bulk_slots, new saved day value). Pure. on: remember the day value once, never lower it. off: restore."""
+    if turning_on:
+        day = saved if saved is not None else slots
+        return max(day, NIGHT_BULK_SLOTS), day
+    return (saved if saved is not None else slots), None
+
+
+def set_reader(cur, on: bool, dry_run: bool = False) -> list[str]:
+    def get(key):
+        cur.execute("SELECT value FROM service_config WHERE service=%s AND key=%s", (READER_SERVICE, key))
+        r = cur.fetchone()
+        v = r[0] if r else None
+        return json.loads(v) if isinstance(v, str) else v
+
+    def put(key, val):
+        if val is None:
+            cur.execute("DELETE FROM service_config WHERE service=%s AND key=%s", (READER_SERVICE, key))
+        else:
+            cur.execute("INSERT INTO service_config (service, key, value) VALUES (%s, %s, %s::jsonb) "
+                        "ON CONFLICT (service, key) DO UPDATE SET value = EXCLUDED.value",
+                        (READER_SERVICE, key, json.dumps(val)))
+    slots, saved = int(get("bulk_slots") or 3), get("day_bulk_slots")
+    new_slots, new_saved = reader_plan(slots, None if saved is None else int(saved), on)
+    hosts = QUIET_HOSTS if on else []
+    out = [f"work_lessons quiet_hosts -> {hosts}", f"work_lessons bulk_slots {slots} -> {new_slots} (office)"]
+    if not dry_run:
+        put("quiet_hosts", hosts)
+        put("bulk_slots", new_slots)
+        put("day_bulk_slots", new_saved)
+    return out
+
+
 # Only hosts whose hardware actually supports Low Power Mode. ssh target by IP, because
 # nova-core10's wired name and its .251 wifi address both resolve and we want the wired one.
 POWERMODE_HOSTS = {"nova-core10": "192.168.1.77"}
@@ -181,6 +223,14 @@ def main(argv: list[str]) -> int:
         a, ma = plan([], [], True)
         b, mb = plan(a, ma, True)
         assert (b, mb) == (a, ma), (b, mb)
+        # reader: on raises the Studio slots and remembers the day value once; off restores it
+        assert reader_plan(3, None, True) == (NIGHT_BULK_SLOTS, 3)
+        assert reader_plan(NIGHT_BULK_SLOTS, 3, True) == (NIGHT_BULK_SLOTS, 3)     # on twice: day value kept
+        assert reader_plan(8, None, True) == (8, 8)                                # never lowers a higher day value
+        assert reader_plan(NIGHT_BULK_SLOTS, 3, False) == (3, None)
+        assert reader_plan(4, None, False) == (4, None)                            # off with nothing saved: no-op
+        assert all(n in QUIET_HOSTS for n in BEDROOM) and "192.168.1.77" in QUIET_HOSTS
+        assert not any(h in QUIET_HOSTS for h in ("192.168.1.6", "192.168.1.99", "192.168.1.7"))   # office stays in
         print("selftest OK")
         return 0
 
@@ -199,6 +249,10 @@ def main(argv: list[str]) -> int:
             if cmd == "status":
                 print(f"exclude_nodes : {existing}")
                 print(f"quiet_excluded: {marker}  ({'WINDOW OPEN' if marker else 'window closed'})")
+                cur.execute("SELECT key, value FROM service_config WHERE service=%s AND key IN "
+                            "('quiet_hosts','bulk_slots','day_bulk_slots') ORDER BY key", (READER_SERVICE,))
+                for k, v in cur.fetchall():
+                    print(f"work_lessons {k}: {v}")
                 for line in read_powermode():
                     print(line)
                 return 0
@@ -209,6 +263,8 @@ def main(argv: list[str]) -> int:
             if not dry:
                 _put(cur, EXCLUDE_KEY, new)
                 _put(cur, MARKER_KEY, new_marker)
+            for line in set_reader(cur, cmd == "on", dry):
+                print(line)
     finally:
         conn.close()
 
