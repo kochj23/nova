@@ -448,7 +448,7 @@ def run(rows: list[dict], window: str, dry: bool) -> int:
         cur.execute(DDL)
         for r in rows:
             t = next((t for t in tracks if t["id"] == r["video_id"]), None)
-            cur.execute("UPDATE yt_likes SET kind=%s, verdict=%s WHERE video_id=%s",
+            cur.execute("UPDATE yt_likes SET kind=%s, verdict=coalesce(verdict,'{}'::jsonb) || %s::jsonb WHERE video_id=%s",
                         (t["kind"] if t else "not_music", json.dumps(t["verdict"] if t else {}), r["video_id"]))
     if not tracks:
         log(f"no new liked music {window} — no article (Jordan's rule)")

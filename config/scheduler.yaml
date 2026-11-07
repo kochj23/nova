@@ -981,6 +981,13 @@ tasks:
     timeout: 3600
     overlap: skip
 
+  liked_learned:                   # daily 08:15 (Jordan 2026-11-06): "Liked and Learned" (/learned/) — every NON-music YouTube like in the last 24 rolling hours: what it is, takeaways, 15 s clips (cued here, PLAYED in Nova Speaks), and what he is most interested in today + the 30-day trend; no non-music likes = no article. After liked_music (07:30) so music is already labelled
+    script: nova_liked_learned.py
+    args: ["--scheduled"]
+    schedule: cron 15 8 * * *
+    timeout: 5400
+    overlap: skip
+
   memes_and_friends:               # daily 08:00 (Jordan 2026-11-02): "Memes and Friends" — PUBLIC memes (IG/FB/TikTok/Shorts) that arrived over iMessage in the last 24h, analysed + PLAYED in the Nova Speaks video. Rules: never names/personal details; public-only (anonymous fetch + reach + vision check). chat.db -> .6 only. No memes = no article
     script: nova_memes.py
     args: ["--scheduled"]
