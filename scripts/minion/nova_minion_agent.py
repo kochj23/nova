@@ -42,9 +42,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 CONF = os.path.expanduser("~/.nova-minion/config.json")
 LOCAL_PORT = 37591
+SESSION_INPUT_S = 15             # input within the last 15 s ends a screensaver session
 BEAT_S = 10                     # 2026-11-06: was 30 — a minion going idle is offered work within ~30 s
 STATUS_TTL_S = 4
-VERSION = "1.7"
+VERSION = "1.8"
 _cache = {"t": 0.0, "body": None, "lock": threading.Lock()}
 _state = {"state": "offline", "since": None}
 
@@ -77,6 +78,19 @@ def idle_seconds(ioreg_out: str | None = None) -> float:
 
 def screensaver_up() -> bool:
     return bool(sh("/usr/bin/pgrep", "-x", "ScreenSaverEngine").strip())
+
+
+
+def saver_session(st: dict, saver_up: bool, idle_s: float) -> bool:
+    """1.8 (2026-11-06, Jordan: "If the screensaver is running, the box is yours. If it is not, it is mine."): a
+    screensaver session starts when ScreenSaverEngine runs and lasts until the next keyboard/mouse input — so the
+    display sleeping on top of the saver (macOS may stop the engine then) does not hand the Mac back early. No
+    screensaver, no session: a sleeping display alone never lends the Mac."""
+    if saver_up:
+        st["saver_session"] = True
+    elif idle_s < SESSION_INPUT_S:
+        st["saver_session"] = False
+    return bool(st.get("saver_session"))
 
 
 def on_ac(pmset_out: str | None = None) -> bool:
@@ -222,7 +236,8 @@ def tick(conf: dict, tok: str) -> str:
     if LINUX:
         state = decide(conf, 0, False, True, False, datetime.now().hour, mem, busy=linux_busy(conf))
     else:
-        state = decide(conf, idle_seconds(), screensaver_up(), on_ac(), throttled(), datetime.now().hour, mem)
+        idle_s = idle_seconds()
+        state = decide(conf, idle_s, saver_session(_state, screensaver_up(), idle_s), on_ac(), throttled(), datetime.now().hour, mem)
     have = models_here(ollama) if ollama else []
     if not have and state != "away" and not conf.get("whisper"):
         state = "away"                           # Ollama is down and no Whisper: nothing to lend (1.5: a Whisper
@@ -331,6 +346,10 @@ def selftest() -> int:
     assert not route_watch(w, nr, 1000) and not route_watch(w, nr, 1000 + ROUTE_RESET_S - 1)
     assert route_watch(w, nr, 1000 + ROUTE_RESET_S)
     assert not route_watch(w, None, 2000) and not route_watch(w, nr, 2001), "a success resets the clock"
+    ss: dict = {}
+    assert not saver_session(ss, False, 9999), "no screensaver, no session (display sleep alone lends nothing)"
+    assert saver_session(ss, True, 0) and saver_session(ss, False, 600), "the session outlives the engine"
+    assert not saver_session(ss, False, 3), "any input hands the Mac back"
     print("selftest OK")
     return 0
 

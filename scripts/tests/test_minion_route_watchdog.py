@@ -52,8 +52,20 @@ class TestRouteWatchdog(unittest.TestCase):
     def test_heartbeat_fast_enough_for_a_minute_handoff(self):
         self.assertLessEqual(AGENT.BEAT_S, 10)
 
+    def test_screensaver_session_rules(self):
+        st = {}
+        self.assertFalse(AGENT.saver_session(st, False, 10_000))   # display asleep, no saver: still Jordan's
+        self.assertTrue(AGENT.saver_session(st, True, 0))           # saver up: Nova's
+        self.assertTrue(AGENT.saver_session(st, False, 900))        # saver engine gone under a sleeping display
+        self.assertFalse(AGENT.saver_session(st, False, 2))         # a key press: Jordan's again
+        self.assertFalse(AGENT.saver_session(st, False, 900))       # and it stays his until the saver returns
+
+    def test_idle_decision_uses_the_session(self):
+        self.assertIn("saver_session(_state, screensaver_up(), idle_s)",
+                      (SCRIPTS / "minion/nova_minion_agent.py").read_text())
+
     def test_versions_bumped(self):
-        self.assertEqual(AGENT.VERSION, "1.7")
+        self.assertEqual(AGENT.VERSION, "1.8")
         self.assertEqual(PROBE.VERSION, "1.3")
 
 
