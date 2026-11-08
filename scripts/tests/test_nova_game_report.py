@@ -435,5 +435,76 @@ class TestFrame(unittest.TestCase):
             run.assert_not_called()
 
 
+class TestCaseFile(unittest.TestCase):
+    """GTNW 3.22 roast log: the case file (Unit / Functional / Security / Performance)."""
+
+    def _ev(self):
+        order = {"action": "Air Strike", "target_name": "Cuba", "overruled_advisor": True, "advisor": "Secretary of State Jane Hawk",
+                 "advisor_said": "This will start a war we cannot win.", "advisor_odds": 0.22, "worked": False,
+                 "result": ["AIR STRIKE FAILED"], "approval_before": 48, "approval_after": 41, "game_date": "2025-03-01"}
+        return [{"seq": 0, "kind": "game_start", "detail": {"country": "USA"}},
+                {"seq": 1, "kind": "president_order", "detail": order},
+                {"seq": 2, "kind": "president_order", "detail": {"action": "Sanctions", "danger_warnings_ignored": 1,
+                                                                 "cabinet_warnings": [{"who": "Joint Chiefs", "level": 2, "said": "No."}]}},
+                {"seq": 3, "kind": "crisis_decision", "detail": {"title": "The October Surprise", "chose": "Change the subject",
+                                                                 "worked": False, "other_options": ["Come clean"]}},
+                {"seq": 4, "kind": "approval_swing", "detail": {"from": 48, "to": 36, "change": -12}},
+                {"seq": 5, "kind": "approval_swing", "detail": {"from": 36, "to": 42, "change": 6}},
+                {"seq": 6, "kind": "election_result", "detail": {"year": 2028, "outcome": "lost", "electoral_votes": 112}},
+                {"seq": 7, "kind": "game_over", "detail": {"reason": "Impeached"}}]
+
+    def test_case_file_is_built_and_sits_ahead_of_the_summary(self):
+        s = session(game="gtnw", summary={"session_stats": {"advisors_overruled": 1},
+                                          "polls": [{"date": "2025-01-01", "popularity": i} for i in range(3000)]})
+        f = gr.build_facts(s, self._ev(), [], dict(gr.DEFAULTS))
+        cf = f["case_file"]
+        self.assertEqual(cf["orders_over_advisor_objections"][0]["advisor_said"], "This will start a war we cannot win.")
+        self.assertEqual(cf["danger_warnings_clicked_past"][0]["action"], "Sanctions")
+        self.assertEqual(cf["orders_that_failed"][0]["action"], "Air Strike")
+        self.assertEqual(cf["crisis_calls"][0]["other_options"], ["Come clean"])
+        self.assertEqual(cf["worst_approval_drops"][0]["change"], -12)
+        self.assertEqual(cf["best_approval_gains"][0]["change"], 6)
+        self.assertEqual(cf["elections"][0]["outcome"], "lost")
+        self.assertEqual(cf["tallies"], {"advisors_overruled": 1})
+        keys = list(f)
+        self.assertLess(keys.index("case_file"), keys.index("summary"))
+        self.assertIn("This will start a war", gr.facts_text(f), "a huge summary can't push the case file past the cap")
+        self.assertFalse(any(e["kind"] == "president_order" for e in f["events"]), "orders live in the case file only")
+
+    def test_other_games_and_old_builds_get_no_case_file(self):
+        self.assertNotIn("case_file", gr.build_facts(session(game="cartest"), self._ev(), [], dict(gr.DEFAULTS)))
+        old = [{"seq": 0, "kind": "ticker", "detail": {"text": "FLASH"}}]
+        self.assertNotIn("case_file", gr.build_facts(session(game="gtnw"), old, [], dict(gr.DEFAULTS)))
+
+    def test_long_games_keep_their_ending(self):
+        evs = [{"seq": i, "kind": "ticker", "detail": {"text": f"item {i}"}} for i in range(1000)]
+        evs.append({"seq": 1000, "kind": "game_over", "detail": {"reason": "Impeached"}})
+        f = gr.build_facts(session(game="gtnw"), evs, [], dict(gr.DEFAULTS))
+        self.assertEqual(len(f["events"]), 120)
+        self.assertEqual(f["events"][-1]["kind"], "game_over")
+        self.assertEqual(f["events"][0]["text"], "item 0")
+
+    def test_case_file_is_sanitised(self):
+        evs = [{"seq": 0, "kind": "president_order",
+                "detail": {"action": "Air Strike", "overruled_advisor": True, "advisor_said": "call 192.168.1.5 at /home/someone/x"}}]
+        f = gr.build_facts(session(game="gtnw"), evs, [], dict(gr.DEFAULTS))
+        said = f["case_file"]["orders_over_advisor_objections"][0]["advisor_said"]
+        self.assertNotIn("192.168.1.5", said)
+        self.assertNotIn("/home/someone", said)
+
+    def test_prompt_makes_the_case_file_the_spine(self):
+        system, _ = gr.build_prompt({"case_file": {}})
+        self.assertIn("CASE FILE (GTNW)", system)
+        self.assertIn("never about him as a person", system)
+
+    def test_case_file_fast_on_5k_events(self):
+        evs = [{"seq": i, "kind": "president_order", "detail": {"action": "A", "overruled_advisor": i % 2 == 0, "worked": False}}
+               for i in range(5000)]
+        t = time.time()
+        f = gr.build_facts(session(game="gtnw"), evs, [], dict(gr.DEFAULTS))
+        self.assertLess(time.time() - t, 2.0)
+        self.assertEqual(len(f["case_file"]["orders_over_advisor_objections"]), 8)
+
+
 if __name__ == "__main__":
     unittest.main()

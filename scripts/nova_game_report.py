@@ -332,7 +332,7 @@ def fetch_candidates(gcur, cfg: dict, only: str | None = None) -> list[dict]:
     return [dict(zip(SESSION_COLS, r)) for r in gcur.fetchall()]
 
 
-def fetch_events(gcur, sid, limit: int = 400) -> list[dict]:
+def fetch_events(gcur, sid, limit: int = 3000) -> list[dict]:
     gcur.execute("SELECT seq, kind, detail FROM play.events WHERE session_id = %s ORDER BY seq LIMIT %s",
                  (str(sid), limit))
     return [{"seq": r[0], "kind": r[1], "detail": r[2]} for r in gcur.fetchall()]
@@ -504,6 +504,59 @@ def _show(v) -> str:
     return str(v)
 
 
+# GTNW 3.22.0 logs every order with what the cabinet said, every crisis call, elections and swings.
+CASE_FILE_KINDS = {"president_order", "backed_down", "recommendation", "crisis_decision", "election_result", "midterms",
+                   "approval_swing", "defcon_change", "impeachment_track", "congress_swing"}
+_ORDER_KEYS = ("game_date", "action", "target_name", "advisor", "advisor_stance", "advisor_said", "advisor_odds",
+               "cabinet_warnings", "worked", "result", "approval_before", "approval_after", "resignation")
+
+
+def _pick(e: dict, keys) -> dict:
+    return {k: e[k] for k in keys if e.get(k) not in (None, "", [], {})}
+
+
+def case_file_block(events: list[dict], summary: dict | None = None, limit: int = 8) -> dict | None:
+    """GTNW: the presidency as evidence, from the (already sanitised) 3.22 events: the orders he gave over his
+    advisors' objections, the danger warnings he clicked past, the orders that failed, his crisis calls and the
+    options he passed over, the times he listened, elections, and the approval / DEFCON / impeachment swings.
+    Every string and number is the game's own. None when the game logged none of it (pre-3.22 builds)."""
+    ev = [e for e in events if e.get("kind") in CASE_FILE_KINDS]
+    stats = (summary or {}).get("session_stats") if isinstance(summary, dict) else None
+    if not ev and not stats:
+        return None
+    orders = [e for e in ev if e["kind"] == "president_order"]
+    swings = sorted((e for e in ev if e["kind"] == "approval_swing" and isinstance(e.get("change"), (int, float))),
+                    key=lambda e: e["change"])
+    block = {
+        "tallies": stats or {},
+        "orders_over_advisor_objections": [_pick(e, _ORDER_KEYS) for e in orders if e.get("overruled_advisor")][-limit:],
+        "danger_warnings_clicked_past": [_pick(e, _ORDER_KEYS) for e in orders
+                                         if (e.get("danger_warnings_ignored") or 0) > 0 and not e.get("overruled_advisor")][-limit:],
+        "orders_that_failed": [_pick(e, ("game_date", "action", "target_name", "advisor_odds", "result"))
+                               for e in orders if e.get("worked") is False][-limit:],
+        "crisis_calls": [_pick(e, ("game_date", "title", "situation", "chose", "chose_why", "odds", "worked",
+                                   "other_options", "passed_over_advised", "recommended_by"))
+                         for e in ev if e["kind"] == "crisis_decision"][-limit:],
+        "times_he_listened": [_pick(e, ("game_date", "action", "target_name", "advisor", "advisor_said"))
+                              for e in ev if e["kind"] == "backed_down"][-limit:],
+        "advisor_recommendations": [_pick(e, ("game_date", "advisor", "accepted", "recommended", "target_name", "advice",
+                                              "resignation")) for e in ev if e["kind"] == "recommendation"][-limit:],
+        "elections": [{k: v for k, v in e.items() if k not in ("seq",)} for e in ev
+                      if e["kind"] in ("election_result", "midterms")][-limit:],
+        "worst_approval_drops": [_pick(e, ("game_date", "from", "to", "change")) for e in swings if e["change"] < 0][:5],
+        "best_approval_gains": [_pick(e, ("game_date", "from", "to", "change")) for e in reversed(swings) if e["change"] > 0][:3],
+        "impeachment_track": [_pick(e, ("game_date", "from", "to", "approval")) for e in ev if e["kind"] == "impeachment_track"][-limit:],
+        "defcon_changes": [_pick(e, ("game_date", "from", "to")) for e in ev if e["kind"] == "defcon_change"][-limit:],
+        "congress_swings": [_pick(e, ("game_date", "from", "to")) for e in ev if e["kind"] == "congress_swing"][-limit:],
+    }
+    return {k: v for k, v in block.items() if v} or None
+
+
+def _trim_events(events: list[dict], head: int = 40, tail: int = 80) -> list[dict]:
+    """A long game keeps its opening and its ending (the part that explains how it ended)."""
+    return events if len(events) <= head + tail else events[:head] + events[-tail:]
+
+
 def build_facts(s: dict, events: list[dict], history: list[dict], cfg: dict) -> dict:
     """Everything the column may say, sanitised. This dict (as JSON) is the article's `sources`."""
     red = [w.lower() for w in cfg["redline"]]
@@ -529,8 +582,13 @@ def build_facts(s: dict, events: list[dict], history: list[dict], cfg: dict) -> 
     strat = strategy_block(clean, facts["summary"])
     if strat:  # ahead of the raw events so a long sitting's sheet never truncates it away
         facts["strategy"] = strat
-    facts["events"] = [{k: v for k, v in e.items() if k != "seq"} for e in clean
-                       if e["kind"] not in STRATEGY_KINDS][:120]
+    case = case_file_block(clean, facts["summary"]) if s.get("game") == "gtnw" else None
+    if case:  # ahead of the (up to 64 KB) summary, so the sheet's length cap can never cut the story
+        summary = facts.pop("summary")
+        facts["case_file"] = case
+        facts["summary"] = summary
+    facts["events"] = _trim_events([{k: v for k, v in e.items() if k != "seq"} for e in clean
+                                    if e["kind"] not in STRATEGY_KINDS and e["kind"] != "president_order"])
     facts["his_record_in_this_game_before_this_session"] = history_stats(history, s)
     return facts
 
@@ -622,6 +680,13 @@ def build_prompt(facts: dict) -> tuple[str, str]:
         "answers he left on the table, settings he tried and put back). Judge the approach: methodical or "
         "scattershot, which call was smart, what you'd have tried next. The times are the scoreboard; the strategy "
         "is the story.\n"
+        "- CASE FILE (GTNW): if the sheet has a `case_file` block, it is the spine of the column, and he asked to be "
+        "roasted. Build the case from it: the orders he gave over his advisors' objections (quote what the advisor "
+        "said, as written, and say what happened next), the danger warnings he clicked past, the orders that failed "
+        "and their odds, his crisis calls and the options he passed over, the rare times he listened, the elections, "
+        "and the worst approval drops. Be merciless and funny about the decisions, never about him as a person; every "
+        "jab must point at something in the block. End with the one call that sank him (or saved him) and what a "
+        "sane President would have done instead.\n"
         "Shape: 500-900 words, markdown, a few section headers welcome, no H1 (the title is added separately). "
         "Lead with the verdict.\n\n"
         "OUTPUT EXACTLY THIS SHAPE:\nTITLE: <one punchy opinion-column title, no quotes>\n<blank line>\n<the body>")
