@@ -1427,11 +1427,40 @@ def end_work(work_keys: list[str]):
 
 REMOTE_SLOTS = int(os.environ.get("NOVA_WORK_REMOTE_SLOTS", "2"))   # concurrent reader calls per remote strong node
 _REMOTE = {"sems": {}, "lock": threading.Lock()}
+_SLOTS = {"t": 0.0, "val": {}, "lock": threading.Lock()}
+
+
+def slot_overrides() -> dict:
+    """work_lessons/remote_slots: {"<ip or minion name>": n} — reader calls a node takes at once, set to match its
+    Ollama OLLAMA_NUM_PARALLEL (2026-11-07, Jordan: "I want more out of the cluster"). Re-read every minute; an
+    unreadable value keeps the last answer."""
+    with _SLOTS["lock"]:
+        if time.time() - _SLOTS["t"] > QUIET_CACHE_S:
+            try:
+                cur = _minion_conn().cursor()
+                cur.execute("SELECT value FROM service_config WHERE service=%s AND key='remote_slots'", (SERVICE,))
+                r = cur.fetchone()
+                v = r[0] if r else {}
+                v = json.loads(v) if isinstance(v, str) else (v or {})
+                _SLOTS["val"] = {str(k): int(n) for k, n in v.items() if int(n) > 0}
+            except Exception as e:  # noqa: BLE001
+                log(f"remote_slots unreadable ({e})")
+            _SLOTS["t"] = time.time()
+        return _SLOTS["val"]
+
+
+def slots_for(base: str, name: str | None = None, over: dict | None = None) -> int:
+    over = slot_overrides() if over is None else over
+    return over.get(ps._host(base)) or (over.get(name) if name else None) or REMOTE_SLOTS
 
 
 def remote_sem(base: str) -> threading.BoundedSemaphore:
+    n = slots_for(base)
     with _REMOTE["lock"]:
-        return _REMOTE["sems"].setdefault(base, threading.BoundedSemaphore(REMOTE_SLOTS))
+        cur = _REMOTE["sems"].get(base)
+        if cur is None or cur[0] != n:                 # slot count changed: new calls use the new size
+            cur = _REMOTE["sems"][base] = (n, threading.BoundedSemaphore(n))
+        return cur[1]
 
 
 def remote_try(base: str, model: str, prompt: str, max_tokens: int, temperature: float) -> str | None:
@@ -2365,13 +2394,13 @@ ELASTIC_SCAN_S = 15
 
 
 def strong_minion_capacity(me=None) -> int:
-    """Reader calls the idle/dedicated minions with a strong model can take at once (REMOTE_SLOTS each)."""
+    """Reader calls the idle/dedicated minions with a strong model can take at once (slots_for each)."""
     me = local_hosts() if me is None else me
     quiet = quiet_hosts()
-    urls = {u.rstrip("/") for n, u, ms in minion_rows()
+    urls = {u.rstrip("/"): n for n, u, ms in minion_rows()
             if any(m in (ms or []) for m in STRONG_MODELS) and ps._host(u) not in me
             and not (ps._host(u) in quiet or n in quiet)}
-    return REMOTE_SLOTS * len(urls)
+    return sum(slots_for(u, n) for u, n in urls.items())
 
 
 def elastic_target(streams: int, capacity: int) -> int:

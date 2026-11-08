@@ -507,7 +507,8 @@ class TestElasticMinions(unittest.TestCase):
 
     def test_capacity_counts_strong_remote_minions_only(self):
         with mock.patch.object(wl, "minion_rows", return_value=self.ROWS), \
-                mock.patch.object(wl, "quiet_hosts", return_value=frozenset()):
+                mock.patch.object(wl, "quiet_hosts", return_value=frozenset()), \
+                mock.patch.object(wl, "slot_overrides", return_value={}):
             self.assertEqual(wl.strong_minion_capacity(me={"localhost"}), 2 * wl.REMOTE_SLOTS)
 
     def test_target_covers_every_slot_within_bounds(self):
@@ -534,6 +535,46 @@ class TestElasticMinions(unittest.TestCase):
     def test_scheduled_runs_are_elastic(self):
         self.assertIn('run_tag="backfill", tiers=on, elastic=True', SRC)
         self.assertIn('only_new=True, tiers=enabled_tiers(oc), elastic=True', SRC)
+
+
+class TestPerNodeSlots(unittest.TestCase):
+    """2026-11-07 (Jordan: "I want more out of the cluster"): a node whose Ollama serves N requests in parallel
+    takes N reader calls at once (work_lessons/remote_slots), not the flat REMOTE_SLOTS."""
+
+    OVER = {"192.168.1.77": 4, "nova-core9": 3}
+
+    def test_slots_by_ip_then_name_then_default(self):
+        self.assertEqual(wl.slots_for("http://192.168.1.77:11434", "nova-core10", self.OVER), 4)
+        self.assertEqual(wl.slots_for("http://192.168.1.7:11434", "nova-core9", self.OVER), 3)
+        self.assertEqual(wl.slots_for("http://192.168.1.99:11434", "office-2", self.OVER), wl.REMOTE_SLOTS)
+
+    def test_capacity_sums_each_nodes_slots(self):
+        rows = [("nova-core10", "http://192.168.1.77:11434", ["qwen3:30b-a3b"]),
+                ("nova-core9", "http://192.168.1.7:11434", ["qwen3:30b-a3b"]),
+                ("office-2", "http://192.168.1.99:11434", ["qwen3:30b-a3b"])]
+        with mock.patch.object(wl, "minion_rows", return_value=rows), \
+                mock.patch.object(wl, "quiet_hosts", return_value=frozenset()), \
+                mock.patch.object(wl, "slot_overrides", return_value=self.OVER):
+            self.assertEqual(wl.strong_minion_capacity(me={"localhost"}), 4 + 3 + wl.REMOTE_SLOTS)
+
+    def test_remote_try_admits_exactly_the_nodes_slots(self):
+        base = "http://192.168.1.77:11434"
+        wl._REMOTE["sems"].pop(base, None)
+        with mock.patch.object(wl, "slot_overrides", return_value={"192.168.1.77": 4}):
+            sem = wl.remote_sem(base)
+            got = [sem.acquire(blocking=False) for _ in range(5)]
+            self.assertEqual(got, [True] * 4 + [False])
+            for _ in range(4):
+                sem.release()
+        with mock.patch.object(wl, "slot_overrides", return_value={}):
+            self.assertEqual(wl._REMOTE["sems"].get(base, (4,))[0], 4)
+            wl.remote_sem(base)
+            self.assertEqual(wl._REMOTE["sems"][base][0], wl.REMOTE_SLOTS)   # config change resizes
+
+    def test_bad_config_value_keeps_last_answer(self):
+        wl._SLOTS.update(t=0.0, val={"192.168.1.77": 4})
+        with mock.patch.object(wl, "_minion_conn", side_effect=RuntimeError("pg down")):
+            self.assertEqual(wl.slot_overrides(), {"192.168.1.77": 4})
 
 
 class TestFrame(unittest.TestCase):
@@ -566,7 +607,8 @@ class TestBedroomQuietOfficeLoud(unittest.TestCase):
         rows = [("office-2", "http://192.168.1.99:11434", ["qwen3:30b-a3b"]),
                 ("nova-core10", "http://192.168.1.77:11434", ["qwen3:30b-a3b"])]
         with mock.patch.object(wl, "minion_rows", return_value=rows), \
-                mock.patch.object(wl, "quiet_hosts", return_value=self.QUIET):
+                mock.patch.object(wl, "quiet_hosts", return_value=self.QUIET), \
+                mock.patch.object(wl, "slot_overrides", return_value={}):
             self.assertEqual(wl.strong_minion_capacity(me={"localhost"}), wl.REMOTE_SLOTS)
 
     def test_llm_work_never_calls_a_quiet_node(self):
