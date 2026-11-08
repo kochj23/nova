@@ -45,7 +45,7 @@ LOCAL_PORT = 37591
 SESSION_INPUT_S = 15             # input within the last 15 s ends a screensaver session
 BEAT_S = 10                     # 2026-11-06: was 30 — a minion going idle is offered work within ~30 s
 STATUS_TTL_S = 4
-VERSION = "1.8"
+VERSION = "1.9"
 _cache = {"t": 0.0, "body": None, "lock": threading.Lock()}
 _state = {"state": "offline", "since": None}
 
@@ -76,8 +76,19 @@ def idle_seconds(ioreg_out: str | None = None) -> float:
     return int(m.group(1)) / 1e9 if m else 0.0
 
 
-def screensaver_up() -> bool:
-    return bool(sh("/usr/bin/pgrep", "-x", "ScreenSaverEngine").strip())
+def screen_locked(ioreg_root: str | None = None) -> bool:
+    """macOS sets CGSSessionScreenIsLocked on the console session only while the lock screen is up."""
+    out = ioreg_root if ioreg_root is not None else sh("/usr/sbin/ioreg", "-n", "Root", "-d1")
+    return bool(re.search(r'"?CGSSessionScreenIsLocked"?\s*=\s*Yes', out))
+
+
+def screensaver_up(pgrep_out: str | None = None, ioreg_root: str | None = None) -> bool:
+    """1.9 (2026-11-07): macOS 26+ runs the idle screensaver as legacyScreenSaver under WallpaperAgent —
+    ScreenSaverEngine only appears when the saver is opened by hand — so 1.8 never saw office-2's saver and it
+    lent nothing for a day and a half. The saver locks the Mac when it starts (and display sleep locks it too), so a
+    locked screen is the dependable sign. legacyScreenSaver itself is NOT used: it lingers after the saver ends."""
+    eng = pgrep_out if pgrep_out is not None else sh("/usr/bin/pgrep", "-x", "ScreenSaverEngine")
+    return bool(eng.strip()) or screen_locked(ioreg_root)
 
 
 
@@ -86,10 +97,10 @@ def saver_session(st: dict, saver_up: bool, idle_s: float) -> bool:
     screensaver session starts when ScreenSaverEngine runs and lasts until the next keyboard/mouse input — so the
     display sleeping on top of the saver (macOS may stop the engine then) does not hand the Mac back early. No
     screensaver, no session: a sleeping display alone never lends the Mac."""
-    if saver_up:
-        st["saver_session"] = True
-    elif idle_s < SESSION_INPUT_S:
+    if idle_s < SESSION_INPUT_S:                 # input first: a saver/lock never survives a keypress
         st["saver_session"] = False
+    elif saver_up:
+        st["saver_session"] = True
     return bool(st.get("saver_session"))
 
 
@@ -348,8 +359,14 @@ def selftest() -> int:
     assert not route_watch(w, None, 2000) and not route_watch(w, nr, 2001), "a success resets the clock"
     ss: dict = {}
     assert not saver_session(ss, False, 9999), "no screensaver, no session (display sleep alone lends nothing)"
-    assert saver_session(ss, True, 0) and saver_session(ss, False, 600), "the session outlives the engine"
+    assert saver_session(ss, True, 300) and saver_session(ss, False, 600), "the session outlives the engine"
     assert not saver_session(ss, False, 3), "any input hands the Mac back"
+    assert not saver_session(ss, True, 3), "input ends the session even if a saver process lingers"
+    locked = '"IOConsoleUsers" = ({"kCGSSessionOnConsoleKey"=Yes,"CGSSessionScreenIsLocked"=Yes,"kCGSSessionUserIDKey"=501})'
+    unlocked = '"IOConsoleUsers" = ({"kCGSSessionOnConsoleKey"=Yes,"kCGSSessionUserIDKey"=501})'
+    assert screen_locked(locked) and not screen_locked(unlocked) and not screen_locked("")
+    assert screensaver_up("", locked), "the macOS 26+ idle saver: no ScreenSaverEngine, but the screen is locked"
+    assert screensaver_up("17595\n", unlocked) and not screensaver_up("", unlocked)
     print("selftest OK")
     return 0
 

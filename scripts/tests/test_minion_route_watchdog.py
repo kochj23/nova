@@ -55,17 +55,28 @@ class TestRouteWatchdog(unittest.TestCase):
     def test_screensaver_session_rules(self):
         st = {}
         self.assertFalse(AGENT.saver_session(st, False, 10_000))   # display asleep, no saver: still Jordan's
-        self.assertTrue(AGENT.saver_session(st, True, 0))           # saver up: Nova's
+        self.assertTrue(AGENT.saver_session(st, True, 300))         # saver up: Nova's
         self.assertTrue(AGENT.saver_session(st, False, 900))        # saver engine gone under a sleeping display
         self.assertFalse(AGENT.saver_session(st, False, 2))         # a key press: Jordan's again
         self.assertFalse(AGENT.saver_session(st, False, 900))       # and it stays his until the saver returns
+        self.assertFalse(AGENT.saver_session(st, True, 3))          # a lingering saver process never beats input
+
+    def test_macos26_idle_saver_is_seen_via_the_lock_screen(self):
+        # 2026-11-07: macOS 26+ runs the idle saver as legacyScreenSaver, never ScreenSaverEngine — office-2 lent
+        # nothing for a day and a half. The saver locks the screen, and the lock is what 1.9 watches.
+        locked = '"IOConsoleUsers" = ({"kCGSSessionOnConsoleKey"=Yes,"CGSSessionScreenIsLocked"=Yes})'
+        unlocked = '"IOConsoleUsers" = ({"kCGSSessionOnConsoleKey"=Yes})'
+        self.assertTrue(AGENT.screensaver_up("", locked))
+        self.assertTrue(AGENT.screensaver_up("17595\n", unlocked))
+        self.assertFalse(AGENT.screensaver_up("", unlocked))
+        self.assertFalse(AGENT.screen_locked(""))
 
     def test_idle_decision_uses_the_session(self):
         self.assertIn("saver_session(_state, screensaver_up(), idle_s)",
                       (SCRIPTS / "minion/nova_minion_agent.py").read_text())
 
     def test_versions_bumped(self):
-        self.assertEqual(AGENT.VERSION, "1.8")
+        self.assertEqual(AGENT.VERSION, "1.9")
         self.assertEqual(PROBE.VERSION, "1.3")
 
 
