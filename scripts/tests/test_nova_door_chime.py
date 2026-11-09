@@ -76,6 +76,45 @@ class TestSound(unittest.TestCase):
             self.assertIn("Little Mister", dc.ANNOUNCE[k])
 
 
+class TestSpeakers(unittest.TestCase):
+    def test_only_the_quiet_rooms(self):
+        # Jordan 2026-11-09: dogs -> garage, outdoor, master bath, guest bath only
+        names = {s["name"] for s in dc.DEFAULTS["speakers"]}
+        self.assertEqual(names, {"GarPod", "Outpod", "MBath", "GBath"})
+        self.assertTrue(all(s["entity"].startswith("media_player.") for s in dc.DEFAULTS["speakers"]))
+
+    def test_chime_restores_each_speakers_volume(self):
+        from unittest import mock
+        calls = []
+        state = {"media_player.garpod": 0.84, "media_player.gbath": None}
+        def fake_ha(path, body=None):
+            calls.append((path, body))
+            if body is None:
+                return {"attributes": {"volume_level": state[path.rsplit("/", 1)[1]]}}
+        async def fake_all(speakers, volume, path):
+            return [s["name"] for s in speakers], []
+        cfg = {"speakers": [{"name": "GarPod", "entity": "media_player.garpod"},
+                            {"name": "GBath", "entity": "media_player.gbath"}], "volume": 50}
+        with mock.patch.object(dc, "_ha", fake_ha), mock.patch.object(dc, "_chime_all", fake_all), \
+             mock.patch.object(dc, "clip", lambda k: SCRIPT):
+            ok, bad = dc.chime(cfg)
+        self.assertEqual(ok, ["GarPod", "GBath"])
+        sets = [b for p, b in calls if b]
+        # known level restored; unknown (None) left alone rather than guessed
+        self.assertEqual(sets, [{"entity_id": "media_player.garpod", "volume_level": 0.84}])
+
+    def test_restore_runs_even_if_the_stream_fails(self):
+        from unittest import mock
+        sets = []
+        async def boom(*a):
+            raise RuntimeError("airplay down")
+        with mock.patch.object(dc, "_ha", lambda p, b=None: sets.append(b) if b else {"attributes": {"volume_level": 0.5}}), \
+             mock.patch.object(dc, "_chime_all", boom), mock.patch.object(dc, "clip", lambda k: SCRIPT):
+            with self.assertRaises(RuntimeError):
+                dc.chime({"speakers": [{"name": "MBath", "entity": "media_player.mbath"}], "volume": 50})
+        self.assertEqual(sets, [{"entity_id": "media_player.mbath", "volume_level": 0.5}])
+
+
 class TestSecurity(unittest.TestCase):
     def test_no_secrets_and_exterior_only(self):
         src = SCRIPT.read_text()

@@ -22,9 +22,10 @@ the cameras with this"). No Protect login, no Keychain for the cameras. Polls /a
             nova_voice_room XTTS voice, Whisper-checked clips) saying e.g. "Little Mister, someone is at
             the front door." Clips pre-rendered once (--prerender) to /Volumes/Data/AI/door-chime/.
   chime     tone + announcement streamed over AirPlay (pyatv RAOP, no pairing) to every speaker in
-            service_config door_chime/speakers, in parallel at volume 50, which the HomePod keeps
-            afterwards (a pre-stream volume read over RAOP is a placeholder, so no restore). It DOES interrupt
-            whatever that HomePod was playing (AirPlay takes the speaker) — same as a doorbell.
+            service_config door_chime/speakers, in parallel at volume 50. Jordan 2026-11-09: only garage,
+            outdoor, master bath, guest bath (+ master bedroom) — the dogs; never office/living/dining/
+            kitchen. Each speaker's level is read from Home Assistant first and restored after (the RAOP
+            read is a placeholder; HA's is real). It DOES interrupt whatever that HomePod was playing.
   quiet     22:00-07:00 no chime (Slack DM still goes out); service_config door_chime/quiet
   DM        Jordan's Slack DM (pushes to his phone) with Frigate's event snapshot
   audit     nova_ops.door_chime_log (one row per alert: cameras, kinds, chimed speakers, outcome)
@@ -53,6 +54,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 SERVICE = "door_chime"
 FRIGATE = "http://192.168.1.2:8971"
+HA = "http://127.0.0.1:8123"                 # Home Assistant on the Studio: pre-chime volume read + restore
 HOME = Path("/Volumes/Data/AI/door-chime")
 CHIME = HOME / "tone.wav"
 SNAP_DIR = HOME / "snaps"
@@ -72,11 +74,12 @@ DEFAULTS = {
     "zones": {"front_door": [[0.60, 0.15, 0.82, 0.40]]},
     "cameras": {"front_door": "Exterior - Front Right", "front_door_patio": "Exterior - Front Door Left"},
     "quiet": {"start": 22, "end": 7},
-    # every HomePod that streams with no pairing (pyatv scan 2026-11-02). Apple TVs need pairing.
-    "speakers": [{"name": "OfficePod", "host": "192.168.1.91"}, {"name": "BackDoorPod", "host": "192.168.1.26"},
-                 {"name": "GarPod", "host": "192.168.1.85"}, {"name": "Outpod", "host": "192.168.1.70"},
-                 {"name": "MBath", "host": "192.168.1.108"}, {"name": "GBath", "host": "192.168.1.72"},
-                 {"name": "Dylan’s Room", "host": "192.168.1.52"}],
+    # Jordan 2026-11-09: the chime set the dogs off -> only these rooms. entity = HA media_player
+    # used to restore the volume afterwards. Apple TVs need pairing.
+    "speakers": [{"name": "GarPod", "host": "192.168.1.85", "entity": "media_player.garpod"},
+                 {"name": "Outpod", "host": "192.168.1.70", "entity": "media_player.outpod"},
+                 {"name": "MBath", "host": "192.168.1.108", "entity": "media_player.mbath"},
+                 {"name": "GBath", "host": "192.168.1.72", "entity": "media_player.gbath"}],
 }
 DDL = """CREATE TABLE IF NOT EXISTS door_chime_log (
   id bigserial PRIMARY KEY, ts timestamptz NOT NULL DEFAULT now(), event_id text, camera text,
@@ -227,9 +230,8 @@ async def _chime_one(spk: dict, volume: int, path: Path) -> str | None:
         raise RuntimeError("not found")
     atv = await pyatv.connect(devs[0], loop)
     try:
-        # No read-then-restore: over RAOP pyatv reports a placeholder volume until a stream is up
-        # (2026-11-02 test read OfficePod 0.0 / MBath 75), so "restoring" it could mute or blast a
-        # speaker. Like nova_voice_room, the HomePod simply keeps the gentle chime volume.
+        # Never read the volume here: over RAOP pyatv reports a placeholder until a stream is up
+        # (2026-11-02 read OfficePod 0.0 / MBath 75). chime() restores from Home Assistant instead.
         await atv.audio.set_volume(volume)
         await atv.stream.stream_file(str(path))
         return spk["name"]
@@ -245,10 +247,48 @@ async def _chime_all(speakers, volume, path):
     return ok, bad
 
 
+def _ha(path, body=None):
+    import urllib.request
+    import nova_ha_metrics
+    req = urllib.request.Request(f"{HA}{path}", data=json.dumps(body).encode() if body else None,
+                                 headers={"Authorization": f"Bearer {nova_ha_metrics.get_ha_token()}",
+                                          "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return json.loads(r.read() or b"null")
+
+
+def ha_volumes(speakers) -> dict:
+    """{entity: volume_level} before the chime, read from Home Assistant (its apple_tv integration
+    reports the HomePod's real level; pyatv over RAOP does not). Unknown -> left out, not restored."""
+    vols = {}
+    for s in speakers:
+        try:
+            v = _ha(f"/api/states/{s['entity']}")["attributes"].get("volume_level")
+            if v is not None:
+                vols[s["entity"]] = v
+        except Exception as e:
+            log(f"volume read {s.get('entity') or s['name']}: {e}")
+    return vols
+
+
+def restore_volumes(vols: dict):
+    for entity, v in vols.items():
+        try:
+            _ha("/api/services/media_player/volume_set", {"entity_id": entity, "volume_level": v})
+        except Exception as e:
+            log(f"volume restore {entity} -> {v}: {e}")
+
+
 def chime(cfg, kind="person") -> tuple[list, list]:
+    """Jordan 2026-11-09: put the volume back where it was. Chime at cfg volume, then restore each
+    speaker's pre-chime level via Home Assistant."""
     if not clip(kind).exists():
         prerender()
-    return asyncio.run(_chime_all(cfg["speakers"], int(cfg["volume"]), clip(kind)))
+    before = ha_volumes([s for s in cfg["speakers"] if s.get("entity")])
+    try:
+        return asyncio.run(_chime_all(cfg["speakers"], int(cfg["volume"]), clip(kind)))
+    finally:
+        restore_volumes(before)
 
 
 # ── notify ─────────────────────────────────────────────────────────────────────────────
