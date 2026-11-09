@@ -27,6 +27,12 @@ the cameras with this"). No Protect login, no Keychain for the cameras. Polls /a
             kitchen. Each speaker's level is read from Home Assistant first and restored after (the RAOP
             read is a placeholder; HA's is real). It DOES interrupt whatever that HomePod was playing.
   quiet     22:00-07:00 no chime (Slack DM still goes out); service_config door_chime/quiet
+  tv        Jordan 2026-11-09: silent pop-up on any Apple TV that's on. tvOS has no notification API, so
+            the front_door camera (Protect AC8BA98FCCAD) is a HomeKit DOORBELL via homebridge-unifi-protect
+            Enable.Doorbell.Trigger on nova-core5; ringing it (MQTT unifi/protect/<mac>/doorbell/set "true"
+            on core5's localhost broker, over ssh) makes tvOS show the camera top-right. Gated by
+            service_config door_chime/tv_popup (default off): Home app must have the camera added and
+            its HomePod doorbell chime OFF, or every HomePod in the house rings (the dogs).
   DM        Jordan's Slack DM (pushes to his phone) with Frigate's event snapshot
   audit     nova_ops.door_chime_log (one row per alert: cameras, kinds, chimed speakers, outcome)
 
@@ -36,7 +42,7 @@ Config (service_config, service='door_chime'): enabled (bool, kill switch), spea
 Runs on the Studio (homebrew python3.14 has pyatv) as LaunchAgent net.digitalnoise.nova-door-chime
 (gui session: the Slack bot token is in the login Keychain).
 
-Usage: nova_door_chime.py --daemon | --prerender [--force] | --test-chime [--kind person|package|ring] [--speaker NAME] | --selftest
+Usage: nova_door_chime.py --daemon | --prerender [--force] | --test-chime [--kind person|package|ring] [--speaker NAME] [--tv] | --tv-test | --selftest
 """
 from __future__ import annotations
 
@@ -74,6 +80,8 @@ DEFAULTS = {
     "zones": {"front_door": [[0.60, 0.15, 0.82, 0.40]]},
     "cameras": {"front_door": "Exterior - Front Right", "front_door_patio": "Exterior - Front Door Left"},
     "quiet": {"start": 22, "end": 7},
+    "tv_popup": False,
+    "tv_doorbell": {"host": "192.168.1.10", "mac": "AC8BA98FCCAD"},
     # Jordan 2026-11-09: the chime set the dogs off -> only these rooms. entity = HA media_player
     # used to restore the volume afterwards. Apple TVs need pairing.
     "speakers": [{"name": "GarPod", "host": "192.168.1.85", "entity": "media_player.garpod"},
@@ -291,6 +299,20 @@ def chime(cfg, kind="person") -> tuple[list, list]:
         restore_volumes(before)
 
 
+def tv_popup(cfg) -> bool:
+    """Ring the HomeKit doorbell -> Apple TVs that are on show the front camera top-right (silent)."""
+    import subprocess
+    d = cfg["tv_doorbell"]
+    try:
+        subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", f"kochj@{d['host']}",
+                        "mosquitto_pub", "-h", "127.0.0.1", "-t", f"unifi/protect/{d['mac']}/doorbell/set", "-m", "true"],
+                       check=True, timeout=15, capture_output=True)
+        return True
+    except Exception as e:
+        log(f"tv popup failed: {e}")
+        return False
+
+
 # ── notify ─────────────────────────────────────────────────────────────────────────────
 def _get(path, timeout=10):
     import urllib.request
@@ -347,13 +369,14 @@ def daemon():
                 if not quiet:   # chime in parallel with the photo DM — the sound is the point
                     t = threading.Thread(target=lambda: result.update(zip(("ok", "bad"), chime(cfg, "person"))))
                     t.start()
+                tv = cfg.get("tv_popup") and tv_popup(cfg)   # silent, so quiet hours don't apply
                 text = dm(ev, "person", label)
                 if not quiet:
                     t.join(40)
                 ok, bad = result.get("ok", []), result.get("bad", [])
                 outcome = "quiet_hours" if quiet else ("chimed" if ok else "chime_failed")
                 record(event_id=eid, camera=label, kinds=["person"], ring=False, chimed=ok, outcome=outcome,
-                       detail="; ".join(bad) or None)
+                       detail="; ".join(bad + ([] if tv or not cfg.get("tv_popup") else ["tv_popup failed"])) or None)
                 log(f"{outcome}: {text} box={ev['data'].get('box')} chimed={ok} failed={bad}")
             done = {k: v for k, v in done.items() if v > time.time() - 900}
         except Exception as e:
@@ -388,6 +411,11 @@ def main(argv):
         kind = argv[argv.index("--kind") + 1] if "--kind" in argv else "person"
         ok, bad = chime(cfg, kind)
         print(f"chimed: {ok}\nfailed: {bad}")
+        if "--tv" in argv:
+            print(f"tv popup: {tv_popup(cfg)}")
+        return 0 if ok else 1
+    if "--tv-test" in argv:
+        ok = tv_popup(load_cfg()); print(f"tv popup: {ok}")
         return 0 if ok else 1
     if "--prerender" in argv:
         prerender(force="--force" in argv)

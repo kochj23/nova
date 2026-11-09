@@ -115,6 +115,25 @@ class TestSpeakers(unittest.TestCase):
         self.assertEqual(sets, [{"entity_id": "media_player.mbath", "volume_level": 0.5}])
 
 
+class TestTvPopup(unittest.TestCase):
+    def test_off_by_default_so_homepods_never_ring_by_surprise(self):
+        self.assertFalse(dc.DEFAULTS["tv_popup"])
+
+    def test_rings_the_homekit_doorbell_over_core5_mqtt(self):
+        from unittest import mock
+        with mock.patch("subprocess.run") as run:
+            self.assertTrue(dc.tv_popup(dc.DEFAULTS))
+        cmd = run.call_args[0][0]
+        self.assertIn("kochj@192.168.1.10", cmd)
+        self.assertEqual(cmd[cmd.index("-t") + 1], "unifi/protect/AC8BA98FCCAD/doorbell/set")
+        self.assertEqual(cmd[cmd.index("-m") + 1], "true")
+
+    def test_failure_is_logged_not_raised(self):
+        from unittest import mock
+        with mock.patch("subprocess.run", side_effect=OSError("no route")):
+            self.assertFalse(dc.tv_popup(dc.DEFAULTS))
+
+
 class TestSecurity(unittest.TestCase):
     def test_no_secrets_and_exterior_only(self):
         src = SCRIPT.read_text()
