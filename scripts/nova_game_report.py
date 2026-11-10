@@ -113,7 +113,9 @@ GAME_ABOUT = {
     "casting": "Austin Fonacier's retro 90s DOS-style Hollywood game (github.com/austinrfnd/casting_director; credit "
                "him by name): pick a real book, a studio greenlights it with a budget, cast real actors at the fees "
                "their agents quote, then the critics (IMDb, Letterboxd, Rotten Tomatoes, Siskel & Ebert) and the box "
-               "office judge the movie. Events: greenlit (studio, budget), quote (actor, fee), released (cast, score, "
+               "office judge the movie. Events: greenlit (studio, budget), quote (actor, fee), advice (the Studio Exec, "
+               "Casting Agent and Director's stances and the odds a casting works), overrule (he cast over their "
+               "objections), crisis / crisis_choice (a mid-shoot crisis and what he did), released (cast, score, "
                "box office)",
 }
 
