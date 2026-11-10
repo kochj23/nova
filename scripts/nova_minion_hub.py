@@ -17,6 +17,8 @@ screensaver draws: what this Mac is reading now, what it has learned for Nova to
   GET  /fleet?node=N        X-Minion-Token; every minion's state + what it is reading, for displays (the iPad app)
   POST /llm                 X-Minion-Token; a node's LLM snapshot (scripts/cluster/nova_llm_probe.py, every 3 s)
   GET  /cluster?node=N      X-Minion-Token (viewer); the whole cluster's LLM activity, for the Nova Cluster app.
+  GET  /games?node=N        X-Minion-Token (viewer); the Games screen (2026-11-10): Nova Games DB health, live and
+                            recent play sessions, Casting Director AI calls + tok/s, relay counters, game LLM jobs.
                             Every node carries llm_job {state running|idle|none|silent, text, jobs[], model?, last?}
                             and purpose / alias / display_name / ip (minion_nodes columns, seeded from agent_docs).
   GET  /health
@@ -727,8 +729,114 @@ def collect_published(_cur=None, limit: int = 12) -> list:
     return out
 
 
+# ── games (2026-11-10, Nova Cluster Games screen) ───────────────────────────────────────────────────────────
+# The Nova Games DB (core3 games-pg :5433, read-only play_reader, TLS verify-full) and the relay's counters.
+GAMES_PG = {"host": "192.168.1.5", "port": 5433, "dbname": "games", "user": "play_reader", "sslmode": "verify-full",
+            "connect_timeout": 5}
+GAMES_CA = ["/Volumes/nas/xcode/NovaGames/deploy/db/games-pg-ca.crt",
+            "/Volumes/Data/xcode/NovaGames/deploy/db/games-pg-ca.crt"]
+RELAY_STATS = "http://192.168.1.5:8088/healthz/relay/stats"
+GAME_CALLER = re.compile(r"(?i)\b(gtnw|casting|nova\.server|blompie|cartest|stunt|mush|ng-relay|nova_games_relay|game_report)")
+_GAMES_PW: dict = {}
+
+
+def _games_password() -> str | None:
+    if "pw" not in _GAMES_PW:
+        r = subprocess.run(["security", "find-generic-password", "-s", "nova-games-play-reader", "-a", "nova", "-w"],
+                           capture_output=True, text=True, timeout=10)
+        _GAMES_PW["pw"] = r.stdout.strip() if r.returncode == 0 else None
+    return _GAMES_PW["pw"]
+
+
+def _session_view(r) -> dict:
+    sid, game, client, player, started, seen, ended, outcome, score, actions, summ = r
+    summ = summ or {}
+    who = summ.get("leader") or summ.get("country_name") or ""
+    what = summ.get("book") or summ.get("scenario") or ""
+    return {"id": str(sid), "game": game, "client": client, "player": player, "started": iso(started),
+            "last_seen": iso(seen), "ended": iso(ended) if ended else None, "outcome": outcome, "score": score,
+            "actions": actions, "who": str(who)[:80], "what": str(what)[:120]}
+
+
+def h_game(text: str) -> bool:
+    """A game's LLM call (by caller name) — never a minion reading a book that happens to say "casting"."""
+    t = text or ""
+    return not t.startswith(("reading", "transcribing")) and bool(GAME_CALLER.search(t))
+
+
+def collect_games(_cur=None) -> dict:
+    """Games DB health + sessions + Casting Director's AI calls, and the relay counters. Never raises for one part."""
+    import psycopg2
+    out: dict = {"db": {"up": False}, "relay": None}
+    t0 = time.time()
+    try:
+        ca = next((c for c in GAMES_CA if os.path.exists(c)), None)
+        conn = psycopg2.connect(password=_games_password(), sslrootcert=ca, **GAMES_PG)
+        conn.autocommit = True
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT 1")
+            out["db"] = {"up": True, "ms": round((time.time() - t0) * 1000), "host": "core3 :5433"}
+            cols = "id, game, client, player, started_at, last_seen_at, ended_at, outcome, score, actions, summary"
+            cur.execute(f"SELECT {cols} FROM play.sessions WHERE ended_at IS NULL AND last_seen_at > now() - interval '10 minutes' "
+                        "ORDER BY last_seen_at DESC LIMIT 12")
+            out["live"] = [_session_view(r) for r in cur.fetchall()]
+            cur.execute(f"SELECT {cols} FROM play.sessions ORDER BY last_seen_at DESC LIMIT 12")
+            out["recent"] = [_session_view(r) for r in cur.fetchall()]
+            cur.execute("SELECT game, count(*), count(*) FILTER (WHERE started_at::date = current_date), max(last_seen_at) "
+                        "FROM play.sessions GROUP BY game ORDER BY 4 DESC")
+            out["games"] = [{"game": g, "sessions": n, "today": d, "last": iso(m)} for g, n, d, m in cur.fetchall()]
+            cur.execute("SELECT count(*), count(*) FILTER (WHERE ts > now() - interval '1 hour') FROM play.events "
+                        "WHERE ts > now() - interval '1 day'")
+            e_day, e_hour = cur.fetchone()
+            out["events"] = {"day": e_day, "hour": e_hour}
+            try:
+                cur.execute("SELECT t, role, backend, model, ok, ms, tokens_out FROM casting.ai_calls ORDER BY t DESC LIMIT 15")
+                calls = [{"t": iso(t), "game": "casting", "role": ro, "backend": b, "model": m, "ok": ok, "ms": ms,
+                          "tokens_out": to, "tok_s": round(to / (ms / 1000), 1) if to and ms else None}
+                         for t, ro, b, m, ok, ms, to in cur.fetchall()]
+                cur.execute("SELECT count(*), coalesce(sum(tokens_out),0), coalesce(sum(ms),0) FROM casting.ai_calls "
+                            "WHERE t::date = current_date")
+                n, toks, ms = cur.fetchone()
+                out["ai"] = {"calls": calls, "today": {"calls": n, "tokens_out": int(toks),
+                                                      "tok_s": round(toks / (ms / 1000), 1) if ms else None}}
+            except Exception as e:  # noqa: BLE001  (an older games DB without the casting grant)
+                out["ai"] = {"calls": [], "today": None, "error": str(e)[:120]}
+        finally:
+            conn.close()
+    except Exception as e:  # noqa: BLE001
+        out["db"] = {"up": False, "error": str(e).splitlines()[0][:160] if str(e) else type(e).__name__}
+    try:
+        with urllib.request.urlopen(RELAY_STATS, timeout=4) as r:
+            out["relay"] = json.loads(r.read())
+    except Exception as e:  # noqa: BLE001
+        out["relay"] = {"status": "down", "error": str(e)[:120]}
+    return out
+
+
+def games_view(now: float) -> dict:
+    """The Games screen: the collector's cache + which LLM work on the cluster right now is for a game."""
+    with _EXTRAS_LOCK:
+        g = dict(_EXTRAS.get("games") or {"db": {"up": False, "error": "not collected yet"}})
+    running, recent, tok_s = [], [], 0.0
+    with _LLM_LOCK:
+        for node, d in _LLM.items():
+            live = now - d["t"] < LLM_FRESH_S
+            labels = [k for k, t in _JOBS.get(node, {}).items() if now - t <= JOB_LINGER_S and h_game(k)]
+            if labels and live:
+                model, phase = busy_phase(d["snap"].get("runners", []))
+                running.append({"node": node, "jobs": labels, "model": model, "phase": phase, "tok_s": d["tok_s"]})
+                tok_s += d["tok_s"] or 0
+            recent += [{"node": node, "text": txt, "at": iso(datetime.fromtimestamp(t, timezone.utc))}
+                       for t, txt in _RECENT_LLM.get(node, []) if h_game(txt)]
+    g["llm"] = {"running": running, "tok_s": round(tok_s, 1),
+                "recent": sorted(recent, key=lambda r: r["at"], reverse=True)[:15]}
+    g["updated"] = iso(datetime.now(timezone.utc))
+    return g
+
+
 COLLECTORS = [("ups", collect_ups, 10), ("recent_jobs", collect_recent_jobs, 30), ("alerts", collect_alerts, 30),
-              ("published", collect_published, 60)]
+              ("published", collect_published, 60), ("games", collect_games, 10)]
 
 
 def refresh_extras(force: bool = False):
@@ -872,6 +980,17 @@ class Handler(BaseHTTPRequestHandler):
                 _LOCAL.conn = None
                 log(f"cluster failed: {e}")
                 return self._send(503, {"error": "cluster unavailable"})
+        if u.path == "/games":
+            node = (parse_qs(u.query).get("node") or [""])[0]
+            try:
+                cur = db()
+                if not authed(cur, node, self.headers.get("X-Minion-Token")):
+                    return self._send(403, {"error": "unknown node or bad token"})
+                return self._send(200, games_view(time.time()))
+            except Exception as e:  # noqa: BLE001
+                _LOCAL.conn = None
+                log(f"games failed: {e}")
+                return self._send(503, {"error": "games unavailable"})
         if u.path == "/fleet":
             node = (parse_qs(u.query).get("node") or [""])[0]
             try:
@@ -950,6 +1069,10 @@ def enroll(node: str, url: str | None, dedicated: bool, viewer: bool = False, pr
 
 
 def selftest() -> int:
+    # games (2026-11-10): only game callers count as game traffic
+    assert h_game("GTNW @ mac-studio") and h_game("python3.14 nova.server @ nova-core8") and h_game("ng-relay")
+    assert not h_game("nova_notifier @ mac-studio") and not h_game("reading: The Gaming of America")
+    assert not h_game("reading: Casting Shadows")
     assert clean_hb({"state": "idle", "ollama_url": "http://10.0.0.5:11434/", "models": ["qwen3:30b-a3b", 5],
                      "info": {"ac": True, "x": {"no": 1}}}) == {
         "state": "idle", "ollama_url": "http://10.0.0.5:11434", "models": ["qwen3:30b-a3b"], "info": {"ac": True}}

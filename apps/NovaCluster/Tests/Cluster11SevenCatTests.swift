@@ -129,8 +129,8 @@ extension RetryTests {
 
 extension UnitTests {
     func testViewModeCycleAndSubtitles() {
-        XCTAssertEqual(ViewMode.allCases.map(\.next), [.dashboard, .constellation, .map])
-        XCTAssertEqual(ViewMode.allCases.map(\.subtitle), ["· CLUSTER", "· DASHBOARD", "· MINION"])
+        XCTAssertEqual(ViewMode.allCases.map(\.next), [.dashboard, .constellation, .games, .map])
+        XCTAssertEqual(ViewMode.allCases.map(\.subtitle), ["· CLUSTER", "· DASHBOARD", "· MINION", "· GAMES"])
     }
 
     func testLinkAndBackdoorWording() {
@@ -170,7 +170,7 @@ extension IntegrationTests {
 // MARK: - Functional
 
 extension FunctionalTests {
-    func testKioskVisitsAllThreeViewsThenPausesOnTouch() {
+    func testKioskVisitsAllFourViewsThenPausesOnTouch() {
         let k = KioskPolicy(enabled: true, interval: 60)
         var mode = ViewMode.map, lastSwitch = Date(timeIntervalSince1970: 0)
         var visited: [ViewMode] = [mode]
@@ -178,7 +178,7 @@ extension FunctionalTests {
             let now = Date(timeIntervalSince1970: s)
             if k.shouldAdvance(now: now, lastSwitch: lastSwitch, lastTouch: nil) { mode = mode.next; lastSwitch = now; visited.append(mode) }
         }
-        XCTAssertEqual(visited, [.map, .dashboard, .constellation, .map])
+        XCTAssertEqual(visited, [.map, .dashboard, .constellation, .games])
         let touch = Date(timeIntervalSince1970: 300)
         XCTAssertFalse(k.shouldAdvance(now: Date(timeIntervalSince1970: 400), lastSwitch: lastSwitch, lastTouch: touch))
     }

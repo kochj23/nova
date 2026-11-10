@@ -650,3 +650,18 @@ def test_not_nova_keeps_real_novas():
     import nova_work_lessons as w
     s = "When the '66 Nova got a Nelson motor, it won [2]."
     assert w.not_nova(s, "my 66 nova build") == s
+
+
+def test_proposal_lesson_label_like_L4_is_filed(monkeypatch):
+    """2026-11-10: 'proposal not filed (invalid literal for int() with base 10: 'L4')' — the model labels lessons."""
+    import nova_work_lessons as wl
+    filed = []
+    monkeypatch.setattr(wl, "file_change", lambda oc, prop, lesson, c, title, key: filed.append(lesson) or {"id": 1})
+    res = {"beliefs": [], "memory_id": None}
+    rd = {"lessons": [{"lesson": f"lesson {i}"} for i in range(1, 6)]}
+    mj = {"proposal": {"lesson": "L4", "action": "do the thing"}}
+    wl._write_back(None, res, rd, [{"lesson": 4, "ref": None}], [], "T", "book", {"work_key": "k"}, mj, None, {})
+    assert filed == [] and "proposal" not in res          # lesson 4 not connected: nothing filed, no crash
+    monkeypatch.setattr(wl, "book_belief", lambda *a, **k: (7, "reinforced:7"))
+    wl._write_back(None, res, rd, [{"lesson": 4, "ref": "belief:7"}], [], "T", "book", {"work_key": "k"}, mj, None, {})
+    assert filed == ["lesson 4"] and res["proposal"]["action"] == "do the thing"

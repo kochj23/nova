@@ -11,11 +11,15 @@
 		0A671BF458173917DCA7A9C7 /* NovaConstellationCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91995B7ABB24BED7EAA8F220 /* NovaConstellationCore.swift */; };
 		16866B85D7518CCCD64BC5C7 /* PhoneLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 469D061F326B3FA6CD477064 /* PhoneLayout.swift */; };
 		1787256FFD39386EE3AEDB0E /* MacSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 170C4889C16562313989172B /* MacSettings.swift */; };
+		17DF6327C6CD7C918EDD4DA5 /* GamesModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 565E0EBB1238BE4599BCF180 /* GamesModel.swift */; };
 		1971F20E1C07C1D5385086EC /* NodeLinesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2028B71DFC8AF1B259B7D4A3 /* NodeLinesTests.swift */; };
 		1DAA430E8894632FBAF93AAC /* ClusterMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4647A44D805423ED4850D6D /* ClusterMap.swift */; };
 		264E014E2713BD92B23B778E /* NodeDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 545DEA8821093A5EFF1BC9A2 /* NodeDetailView.swift */; };
+		28226C8F28B22C713C597D99 /* GamesModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 565E0EBB1238BE4599BCF180 /* GamesModel.swift */; };
+		28688CBFCFD5226E0F68E285 /* GamesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5098FB3A098F4C9779D941D /* GamesView.swift */; };
 		2B12F22EBC21E534CED8C52B /* ConstellationFleet.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB6ACCEC499C3BD244511037 /* ConstellationFleet.swift */; };
 		2C759BEE081611554D20E0E4 /* ConstellationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92BA2A2357F8B87838FC3C20 /* ConstellationView.swift */; };
+		313B9E7446C907127A198A9B /* GamesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5098FB3A098F4C9779D941D /* GamesView.swift */; };
 		340E2A142E63656FE5DD371C /* NodeFacts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E94209F861B155CE2C865BE /* NodeFacts.swift */; };
 		364C257BBEEBC05868D228F5 /* NodeFactsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBCE191F06C5CBCA0FC76890 /* NodeFactsTests.swift */; };
 		3D665E8AB465560BD002F4F9 /* NovaConstellationCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91995B7ABB24BED7EAA8F220 /* NovaConstellationCore.swift */; };
@@ -23,6 +27,7 @@
 		3F4E3EA4CFA6489420CE542E /* NodeDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 545DEA8821093A5EFF1BC9A2 /* NodeDetailView.swift */; };
 		43CA717AADE1DF43514F2575 /* NovaConstellationCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91995B7ABB24BED7EAA8F220 /* NovaConstellationCore.swift */; };
 		43CEB11962D4E65D62500C0F /* Cluster.swift in Sources */ = {isa = PBXBuildFile; fileRef = C39A9ACD991F51B4B62E164E /* Cluster.swift */; };
+		46E3B0E9D4D2677C550804EC /* GamesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5098FB3A098F4C9779D941D /* GamesView.swift */; };
 		49D65C334CEECD7A038FF43B /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9125D25D592C3C4A77303531 /* Views.swift */; };
 		4CD93514B7B612EA84F5D475 /* ClusterConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD81C272AC09022CFF3383D7 /* ClusterConfig.swift */; };
 		5828D215145C650C6A453D3A /* NodeLines.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5B8178B5F9959A6DD1BF24 /* NodeLines.swift */; };
@@ -43,6 +48,7 @@
 		81FDFDDEC2FFB97BAE2713F6 /* ClusterMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4647A44D805423ED4850D6D /* ClusterMap.swift */; };
 		829FBB3579A86E1686282DF9 /* MenuBarHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = C56F43247A86D6DAE5636ADE /* MenuBarHealth.swift */; };
 		8885A9553D4DA3BB86664073 /* MenuBarHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = C56F43247A86D6DAE5636ADE /* MenuBarHealth.swift */; };
+		8968E515CA42A9978CD37529 /* GamesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D544160E1CF274A03F37A296 /* GamesTests.swift */; };
 		8A160AEB5B9547EB5376394D /* PhoneLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 469D061F326B3FA6CD477064 /* PhoneLayout.swift */; };
 		9022275A31178CB551B90A0D /* Palette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 700FE44BE3D2E67271438271 /* Palette.swift */; };
 		9552A588DE102BB482143ECD /* NodeFacts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E94209F861B155CE2C865BE /* NodeFacts.swift */; };
@@ -54,7 +60,9 @@
 		A6246C837A8CA417956F9118 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9125D25D592C3C4A77303531 /* Views.swift */; };
 		A7DD4B8784BA1261B641376C /* Cluster.swift in Sources */ = {isa = PBXBuildFile; fileRef = C39A9ACD991F51B4B62E164E /* Cluster.swift */; };
 		A9F9EB6A9CF09F585ADF6C76 /* Palette.swift in Sources */ = {isa = PBXBuildFile; fileRef = 700FE44BE3D2E67271438271 /* Palette.swift */; };
+		AA8AE58EE7851A8A4BD967EF /* GamesModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 565E0EBB1238BE4599BCF180 /* GamesModel.swift */; };
 		B01B7B143DFE19B6C35422E1 /* ConstellationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109108D8DD81DDF87532EA87 /* ConstellationTests.swift */; };
+		B0DC30AE9C769BDCE22AD9E2 /* GamesModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 565E0EBB1238BE4599BCF180 /* GamesModel.swift */; };
 		B44719D7ADF38A3B6FB31B90 /* KioskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB64327D9566EC841382BB8D /* KioskTests.swift */; };
 		C773B41E3A2F121B27779A0E /* NodeLines.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5B8178B5F9959A6DD1BF24 /* NodeLines.swift */; };
 		D13CA4888B46747A75EFE0B9 /* NovaClusterApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CADB3C72F3259EE50E0893B /* NovaClusterApp.swift */; };
@@ -78,6 +86,7 @@
 		39EF3ED1CA0A1D5F65E6E8DC /* Cluster11SevenCatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cluster11SevenCatTests.swift; sourceTree = "<group>"; };
 		469D061F326B3FA6CD477064 /* PhoneLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneLayout.swift; sourceTree = "<group>"; };
 		545DEA8821093A5EFF1BC9A2 /* NodeDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeDetailView.swift; sourceTree = "<group>"; };
+		565E0EBB1238BE4599BCF180 /* GamesModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GamesModel.swift; sourceTree = "<group>"; };
 		5AE6ACA02422ADEE69F2BF7E /* NovaClusterTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NovaClusterTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		700FE44BE3D2E67271438271 /* Palette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Palette.swift; sourceTree = "<group>"; };
 		8C08C85821DFE82FC434B3C5 /* DashboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardView.swift; sourceTree = "<group>"; };
@@ -88,6 +97,7 @@
 		9CADB3C72F3259EE50E0893B /* NovaClusterApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaClusterApp.swift; sourceTree = "<group>"; };
 		9E94209F861B155CE2C865BE /* NodeFacts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeFacts.swift; sourceTree = "<group>"; };
 		A49C3E6C79225425EF4D2D19 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A5098FB3A098F4C9779D941D /* GamesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GamesView.swift; sourceTree = "<group>"; };
 		AB6ACCEC499C3BD244511037 /* ConstellationFleet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConstellationFleet.swift; sourceTree = "<group>"; };
 		ACA7F39CD05736028AF22DD1 /* NovaClusterMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NovaClusterMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AD5B8178B5F9959A6DD1BF24 /* NodeLines.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeLines.swift; sourceTree = "<group>"; };
@@ -95,6 +105,7 @@
 		C39A9ACD991F51B4B62E164E /* Cluster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Cluster.swift; sourceTree = "<group>"; };
 		C4647A44D805423ED4850D6D /* ClusterMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClusterMap.swift; sourceTree = "<group>"; };
 		C56F43247A86D6DAE5636ADE /* MenuBarHealth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarHealth.swift; sourceTree = "<group>"; };
+		D544160E1CF274A03F37A296 /* GamesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GamesTests.swift; sourceTree = "<group>"; };
 		D722EFD1B4DA8014C032194A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		DB64327D9566EC841382BB8D /* KioskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KioskTests.swift; sourceTree = "<group>"; };
 		F156BDC51B34A60ADF576BD9 /* NovaClusterPad.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = NovaClusterPad.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -138,6 +149,7 @@
 			children = (
 				39EF3ED1CA0A1D5F65E6E8DC /* Cluster11SevenCatTests.swift */,
 				109108D8DD81DDF87532EA87 /* ConstellationTests.swift */,
+				D544160E1CF274A03F37A296 /* GamesTests.swift */,
 				DB64327D9566EC841382BB8D /* KioskTests.swift */,
 				FBCE191F06C5CBCA0FC76890 /* NodeFactsTests.swift */,
 				2028B71DFC8AF1B259B7D4A3 /* NodeLinesTests.swift */,
@@ -167,6 +179,8 @@
 				AB6ACCEC499C3BD244511037 /* ConstellationFleet.swift */,
 				92BA2A2357F8B87838FC3C20 /* ConstellationView.swift */,
 				8C08C85821DFE82FC434B3C5 /* DashboardView.swift */,
+				565E0EBB1238BE4599BCF180 /* GamesModel.swift */,
+				A5098FB3A098F4C9779D941D /* GamesView.swift */,
 				D722EFD1B4DA8014C032194A /* Info.plist */,
 				545DEA8821093A5EFF1BC9A2 /* NodeDetailView.swift */,
 				9E94209F861B155CE2C865BE /* NodeFacts.swift */,
@@ -331,6 +345,8 @@
 				2B12F22EBC21E534CED8C52B /* ConstellationFleet.swift in Sources */,
 				6053AA0B638698721146B018 /* ConstellationView.swift in Sources */,
 				647AE03B21E362DD0B2B472D /* DashboardView.swift in Sources */,
+				17DF6327C6CD7C918EDD4DA5 /* GamesModel.swift in Sources */,
+				46E3B0E9D4D2677C550804EC /* GamesView.swift in Sources */,
 				1787256FFD39386EE3AEDB0E /* MacSettings.swift in Sources */,
 				8885A9553D4DA3BB86664073 /* MenuBarHealth.swift in Sources */,
 				264E014E2713BD92B23B778E /* NodeDetailView.swift in Sources */,
@@ -354,6 +370,8 @@
 				598E11F569086287739E7EFA /* ConstellationFleet.swift in Sources */,
 				FF7475926DB945A6130D58D9 /* ConstellationView.swift in Sources */,
 				6A347574D4034C27C67DD3F1 /* DashboardView.swift in Sources */,
+				AA8AE58EE7851A8A4BD967EF /* GamesModel.swift in Sources */,
+				313B9E7446C907127A198A9B /* GamesView.swift in Sources */,
 				EE89A8CB8D66B223CA16ECC7 /* NodeDetailView.swift in Sources */,
 				9552A588DE102BB482143ECD /* NodeFacts.swift in Sources */,
 				5828D215145C650C6A453D3A /* NodeLines.swift in Sources */,
@@ -375,6 +393,8 @@
 				9870D341F784253BBCE117AB /* ConstellationFleet.swift in Sources */,
 				2C759BEE081611554D20E0E4 /* ConstellationView.swift in Sources */,
 				9C98E7F5A58B0D46F3183295 /* DashboardView.swift in Sources */,
+				28226C8F28B22C713C597D99 /* GamesModel.swift in Sources */,
+				28688CBFCFD5226E0F68E285 /* GamesView.swift in Sources */,
 				3F4E3EA4CFA6489420CE542E /* NodeDetailView.swift in Sources */,
 				340E2A142E63656FE5DD371C /* NodeFacts.swift in Sources */,
 				5BA8BF79C75461D03DEAB51C /* NodeLines.swift in Sources */,
@@ -395,6 +415,8 @@
 				D9EC7E22CB0FE60C8CEA6E87 /* ClusterConfig.swift in Sources */,
 				5CBF7074213855DAE8204857 /* ConstellationFleet.swift in Sources */,
 				B01B7B143DFE19B6C35422E1 /* ConstellationTests.swift in Sources */,
+				B0DC30AE9C769BDCE22AD9E2 /* GamesModel.swift in Sources */,
+				8968E515CA42A9978CD37529 /* GamesTests.swift in Sources */,
 				B44719D7ADF38A3B6FB31B90 /* KioskTests.swift in Sources */,
 				829FBB3579A86E1686282DF9 /* MenuBarHealth.swift in Sources */,
 				3EF6FB7C912F3608D21DA6B0 /* NodeFacts.swift in Sources */,
@@ -445,7 +467,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -459,7 +481,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -566,7 +588,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -586,7 +608,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

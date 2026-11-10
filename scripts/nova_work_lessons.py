@@ -1984,7 +1984,8 @@ def _write_back(oc, res, rd, conns, srcs, title, kind, work, mj, verdict, taste,
     prop = mj.get("proposal") if isinstance(mj.get("proposal"), dict) else None
     if prop:
         try:
-            i = int(prop.get("lesson") or 0)
+            m = re.search(r"\d+", str(prop.get("lesson") or ""))     # the model writes 4, "4" or "L4"
+            i = int(m.group(0)) if m else 0
             c = next((x for x in connected if x["lesson"] == i), None)
             if c:
                 res["proposal"] = file_change(oc, prop, rd["lessons"][i - 1]["lesson"], c, title, work["work_key"])

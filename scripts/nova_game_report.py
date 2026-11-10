@@ -93,6 +93,7 @@ GAME_NAMES = {
     ("blompie-mac", "mac"): "Blompie for Mac",
     ("mush", "web"): "the Nova MUSH",
     ("stuntdriver", "mac"): "Stunt Driver",
+    ("casting", "mac"): "Casting Director (Nova edition)",
 }
 GAME_ABOUT = {
     "gtnw": "a Cold War presidential strategy simulator: you are President, run diplomacy, budgets, covert ops, "
@@ -109,6 +110,11 @@ GAME_ABOUT = {
     "stuntdriver": "a native Mac rebuild of Spectrum HoloByte's 1990 3D stunt-racing game: laps of stunt courses with "
                    "jumps, loops and a drawbridge, AI opponent drivers, penalties for cutting the course, crashes, "
                    "ghost races and seeded stunt challenges",
+    "casting": "Austin Fonacier's retro 90s DOS-style Hollywood game (github.com/austinrfnd/casting_director; credit "
+               "him by name): pick a real book, a studio greenlights it with a budget, cast real actors at the fees "
+               "their agents quote, then the critics (IMDb, Letterboxd, Rotten Tomatoes, Siskel & Ebert) and the box "
+               "office judge the movie. Events: greenlit (studio, budget), quote (actor, fee), released (cast, score, "
+               "box office)",
 }
 
 
@@ -589,8 +595,9 @@ def build_facts(s: dict, events: list[dict], history: list[dict], cfg: dict) -> 
         facts["summary"] = summary
     facts["events"] = _trim_events([{k: v for k, v in e.items() if k != "seq"} for e in clean
                                     if e["kind"] not in STRATEGY_KINDS and e["kind"] != "president_order"])
-    facts["his_record_in_this_game_before_this_session"] = history_stats(history, s)
-    return facts
+    # First in the sheet (2026-11-10): placed last, it fell past the sheet's length cap behind a big GTNW summary,
+    # and the column claimed a 35-session player's game was "the first one on the books".
+    return {"his_record_in_this_game_before_this_session": history_stats(history, s), **facts}
 
 
 def facts_text(facts: dict, limit: int = 24000) -> str:
@@ -599,12 +606,13 @@ def facts_text(facts: dict, limit: int = 24000) -> str:
 
 
 _STAT_KEYS = {
-    "gtnw": [("scenario", "Scenario"), ("country", "Played as"), ("difficulty", "Difficulty"),
+    "gtnw": [("scenario", "Scenario"), ("country", "Played as"), ("leader", "Leader"), ("difficulty", "Difficulty"),
              ("game_date_start", "In-game start"), ("game_date_end", "In-game end"), ("turns", "Turns"),
              ("reason", "How it ended"), ("final_score", "Final score"), ("casualties", "Casualties"),
              ("nuclear_strikes", "Nuclear strikes"), ("wars_won", "Wars won"), ("popularity_start", "Approval at start"),
              ("popularity_peak", "Approval peak"), ("popularity_end", "Approval at end"),
              ("popularity_at_turn_35", "Approval near the end")],
+    "casting": [("book", "Book"), ("author", "Author"), ("verdict", "Critics' verdict")],
 }
 
 
@@ -671,6 +679,9 @@ def build_prompt(facts: dict) -> tuple[str, str]:
         "- Say which platform he played on (the sheet's `platform`: the macOS app or the web version), early on.\n"
         "- If his record shows no earlier sessions, say this is the first one on the books; don't fake history.\n"
         "- If the session was abandoned rather than finished, say so plainly.\n"
+        "- WHO HE PLAYED AS: if the sheet's summary has a `leader` (GTNW: the president or head of state he chose to "
+        "be, e.g. Donald Trump in a 2025 game), name that role early and use it ('Little Mister, playing as Donald "
+        "Trump, ...'). The leader is the role he played, not a real person's actions: keep it to the game.\n"
         "- Game-world events (wars, nukes, races, quests) are fiction inside the game; treat them as such.\n"
         "- A numbers table is appended automatically: don't write your own table or a Sources list.\n"
         "- STRATEGY: if the sheet has a `strategy` block, it is the spine of the column. Tell how he played: what he "

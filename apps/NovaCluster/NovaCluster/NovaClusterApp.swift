@@ -44,6 +44,8 @@ struct NovaClusterApp: App {
                     .keyboardShortcut("2", modifiers: .command)
                 Button("Constellation") { UserDefaults.standard.set(ViewMode.constellation.rawValue, forKey: ViewMode.key) }
                     .keyboardShortcut("3", modifiers: .command)
+                Button("Games") { UserDefaults.standard.set(ViewMode.games.rawValue, forKey: ViewMode.key) }
+                    .keyboardShortcut("4", modifiers: .command)
                 Toggle("Kiosk Mode", isOn: $kioskOn)
                     .keyboardShortcut("k", modifiers: [.command, .shift])
                 Divider()

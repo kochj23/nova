@@ -51,7 +51,8 @@ final class ViewModeTests: XCTestCase {
     func testCycleVisitsAllThreeAndWraps() {
         XCTAssertEqual(ViewMode.map.next, .dashboard)
         XCTAssertEqual(ViewMode.dashboard.next, .constellation)
-        XCTAssertEqual(ViewMode.constellation.next, .map)
+        XCTAssertEqual(ViewMode.constellation.next, .games)
+        XCTAssertEqual(ViewMode.games.next, .map)
     }
 
     func testStoredFallbackAndSubtitles() {

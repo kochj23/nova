@@ -27,6 +27,7 @@ struct ContentView: View {
     @State private var lastPointer: CGPoint?
     #endif
     @State private var map = MapModel()
+    @State private var games = GamesModel()
     @State private var pointer = MapPointer()
     @State private var version = 0
     @State private var showSettings = false
@@ -78,6 +79,9 @@ struct ContentView: View {
                         .transition(.opacity)
                 case .constellation:
                     ConstellationScreen(cluster: cluster, stations: map.stations, paused: !isLive) { u in mark(u: u) }
+                        .transition(.opacity)
+                case .games:
+                    GamesScreen(model: games, paused: !isLive) { u in mark(u: u) }
                         .transition(.opacity)
                 case .map:
                     mapScreen.transition(.opacity)

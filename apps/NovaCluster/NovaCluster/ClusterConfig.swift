@@ -36,6 +36,13 @@ struct ClusterConfig: Equatable {
 
     var isConfigured: Bool { clusterURL != nil }
 
+    /// 1.3.0: the hub's Games screen payload, same host, node and token as /cluster.
+    var gamesURL: URL? {
+        guard var comps = clusterURL.flatMap({ URLComponents(url: $0, resolvingAgainstBaseURL: false) }) else { return nil }
+        comps.path = "/games"
+        return comps.url
+    }
+
     var clusterURL: URL? {
         var h = hub.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !h.isEmpty else { return nil }
@@ -108,10 +115,10 @@ struct ClusterConfig: Equatable {
     }
 }
 
-/// The three views (1.1.0: Nova Minion's constellation joined the map and the dashboard).
-/// Tap the wordmark to step through them; Mac: ⌘1 / ⌘2 / ⌘3; kiosk mode cycles them.
+/// The four views (1.1.0: Nova Minion's constellation joined the map and the dashboard; 1.3.0: the Games screen).
+/// Tap the wordmark to step through them; Mac: ⌘1 / ⌘2 / ⌘3 / ⌘4; kiosk mode cycles them.
 enum ViewMode: String, CaseIterable {
-    case map, dashboard, constellation
+    case map, dashboard, constellation, games
     static let key = "view.mode"
 
     /// Unknown or missing stored values fall back to the map.
@@ -128,6 +135,7 @@ enum ViewMode: String, CaseIterable {
         case .map: return "· CLUSTER"
         case .dashboard: return "· DASHBOARD"
         case .constellation: return "· MINION"
+        case .games: return "· GAMES"
         }
     }
 }
