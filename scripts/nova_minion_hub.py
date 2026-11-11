@@ -19,6 +19,14 @@ screensaver draws: what this Mac is reading now, what it has learned for Nova to
   GET  /cluster?node=N      X-Minion-Token (viewer); the whole cluster's LLM activity, for the Nova Cluster app.
   GET  /games?node=N        X-Minion-Token (viewer); the Games screen (2026-11-10): Nova Games DB health, live and
                             recent play sessions, Casting Director AI calls + tok/s, relay counters, game LLM jobs.
+                            1.4 (2026-11-11, Nova Cluster 1.4.0), all additive: live sessions carry elapsed_s, apm,
+                            events_5m, events, last_event {kind,text,level,ts} and for GTNW defcon / turn / game_date /
+                            polls (last 12 approval values) / difficulty; plus timeline {minutes, series[{game,
+                            counts[60]}]} (events per minute, oldest first), feed (last 20 events: id, ts, game, kind,
+                            text, count (a same-tick burst), level bad|warn|good|gold|nova|start|info), today (per game: sessions, minutes, wins,
+                            losses, other, open, best, events — Burbank day), week {days[7], rows[{day,game,sessions,
+                            minutes}], wins, losses, win_rate}, fame (top 5 scores), ai_share {ai, other, pct, sources}
+                            (today's events that carry `source`), and partial[] naming any extra that failed.
                             Every node carries llm_job {state running|idle|none|silent, text, jobs[], model?, last?}
                             and purpose / alias / display_name / ip (minion_nodes columns, seeded from agent_docs).
   GET  /health
@@ -764,11 +772,296 @@ def h_game(text: str) -> bool:
     return not t.startswith(("reading", "transcribing")) and bool(GAME_CALLER.search(t))
 
 
+# ── games 1.4 (2026-11-11, Nova Cluster 1.4.0: "pretty-up the games section … more stats about live game play") ──
+# Every extra below is its own small query against tiny tables (play.events is ~1 MB), each in its own try: one
+# failing part leaves the rest of the payload intact and names itself in out["partial"]. Days are Burbank days.
+GAMES_TZ = "America/Los_Angeles"
+LIVE_MIN = 10                    # a session is live while open and seen within this many minutes
+FEED_N = 20
+TIMELINE_MIN = 60
+WEEK_DAYS = 7
+FAME_N = 5
+AI_SOURCES = ("llm", "ai", "ollama", "nova", "model")
+_CTRL = re.compile(r"[\x00-\x1f\x7f​-‏‪-‮⁦-⁩]")
+_TODAY = f"date_trunc('day', now() AT TIME ZONE '{GAMES_TZ}') AT TIME ZONE '{GAMES_TZ}'"
+# Fixed SQL, built once from the constants above (no per-request interpolation; values go in as parameters).
+_COLS = "id, game, client, player, started_at, last_seen_at, ended_at, outcome, score, actions, summary"
+_JOIN = "FROM play.events e JOIN play.sessions s ON s.id = e.session_id"
+SQL_LIVE = (f"SELECT {_COLS}, now() FROM play.sessions WHERE ended_at IS NULL AND "
+            f"last_seen_at > now() - interval '{LIVE_MIN} minutes' ORDER BY last_seen_at DESC LIMIT 12")
+SQL_RECENT = f"SELECT {_COLS} FROM play.sessions ORDER BY last_seen_at DESC LIMIT 12"
+SQL_TIMELINE = (f"SELECT s.game, floor(extract(epoch FROM now() - e.ts) / 60)::int, count(*) {_JOIN} "
+                f"WHERE e.ts > now() - interval '{TIMELINE_MIN} minutes' GROUP BY 1, 2")
+SQL_FEED = (f"SELECT e.session_id::text, e.seq, e.ts, s.game, e.kind, e.detail {_JOIN} "
+            f"ORDER BY e.ts DESC, e.seq DESC LIMIT {FEED_N * 3}")
+SQL_TODAY = (f"SELECT game, count(*), coalesce(sum(extract(epoch FROM last_seen_at - greatest(started_at, {_TODAY}))), 0) "
+             "/ 60, count(*) FILTER (WHERE outcome = 'victory'), count(*) FILTER (WHERE outcome = 'defeat'), "
+             "count(*) FILTER (WHERE ended_at IS NOT NULL AND coalesce(outcome, '') NOT IN ('victory', 'defeat')), "
+             "count(*) FILTER (WHERE ended_at IS NULL), max(score) FILTER (WHERE score > 0) "
+             f"FROM play.sessions WHERE last_seen_at >= {_TODAY} GROUP BY 1")
+SQL_TODAY_EVENTS = f"SELECT s.game, count(*) {_JOIN} WHERE e.ts >= {_TODAY} GROUP BY 1"
+SQL_WEEK = (f"SELECT to_char(started_at AT TIME ZONE '{GAMES_TZ}', 'YYYY-MM-DD'), game, count(*), "
+            "coalesce(sum(extract(epoch FROM last_seen_at - started_at)), 0) / 60 FROM play.sessions "
+            f"WHERE started_at >= {_TODAY} - interval '{WEEK_DAYS - 1} days' GROUP BY 1, 2 ORDER BY 1")
+SQL_WEEK_DAYS = (f"SELECT to_char((now() AT TIME ZONE '{GAMES_TZ}')::date - i, 'YYYY-MM-DD') "
+                 f"FROM generate_series({WEEK_DAYS - 1}, 0, -1) i")
+SQL_WEEK_WL = ("SELECT count(*) FILTER (WHERE outcome = 'victory'), count(*) FILTER (WHERE outcome = 'defeat'), count(*) "
+               f"FROM play.sessions WHERE coalesce(ended_at, last_seen_at) >= {_TODAY} - interval '{WEEK_DAYS - 1} days'")
+SQL_FAME = ("SELECT game, player, summary, score, outcome, coalesce(ended_at, last_seen_at) FROM play.sessions "
+            f"WHERE score IS NOT NULL AND score > 0 ORDER BY score DESC LIMIT {FAME_N}")
+SQL_AI_SHARE = (f"SELECT s.game, lower(e.detail->>'source'), count(*) {_JOIN} "
+                f"WHERE e.ts >= {_TODAY} AND e.detail ? 'source' GROUP BY 1, 2")
+
+
+def clean_text(s, cap: int = 140) -> str:
+    """Hub text for a wall display: no control / bidi characters, one line, capped."""
+    t = " ".join(_CTRL.sub(" ", str(s if s is not None else "")).split())
+    return t if len(t) <= cap else t[:cap - 1] + "…"
+
+
+def _n(v):
+    try:
+        f = float(v)
+        return int(f) if f == int(f) else round(f, 1)
+    except (TypeError, ValueError):
+        return v
+
+
+def _big(v) -> str:
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    for div, suf in ((1e9, "B"), (1e6, "M"), (1e3, "k")):
+        if abs(f) >= div:
+            return f"{f / div:.1f}".rstrip("0").rstrip(".") + suf
+    return str(_n(f))
+
+
+def human_kind(kind: str) -> str:
+    return (kind or "event").replace("_", " ").replace("-", " ").capitalize()
+
+
+def event_text(kind: str, d) -> str:
+    """One human line for a play event (GTNW, Blompie, CarTest, Stunt Driver …)."""
+    d = d if isinstance(d, dict) else {}
+    g = d.get
+    k = kind or ""
+    try:
+        if k in ("ticker", "nova_commentary") and g("text"):
+            t = g("text")
+        elif k == "game_over":
+            t = ("Victory" if g("won") else "Game over") + (f" after {g('turns')} turns" if g("turns") is not None else "")
+            if g("final_score"):
+                t += f" · score {_big(g('final_score'))}"
+            if g("reason"):
+                t += f" — {g('reason')}"
+        elif k == "game_start":
+            bits = [g("country_name") or g("country"), g("scenario"), g("difficulty"), g("game_date")]
+            t = "New game: " + " · ".join(str(b) for b in bits if b) if any(bits) else "New game"
+        elif k == "start":
+            t = "New adventure" + (f" · {g('model')}" if g("model") else "") + (f" · {g('tone')}" if g("tone") else "")
+        elif k == "turn":
+            t = f"Turn {g('turn')}: {g('action') or 'acts'}" + (" (failed)" if g("failed") else "")
+        elif k == "nuclear_strike":
+            t = f"☢ {g('attacker') or '?'} nukes {g('target') or '?'}: {g('warheads') or '?'} warheads"
+            if g("casualties"):
+                t += f", {_big(g('casualties'))} dead"
+        elif k == "defcon_change":
+            t = f"DEFCON {g('from')} → {g('to')}"
+        elif k in ("approval_swing", "congress_swing"):
+            t = f"{'Approval' if k == 'approval_swing' else 'Congress'} {_n(g('from'))}% → {_n(g('to'))}%"
+        elif k == "impeachment_track":
+            t = f"Impeachment stage {g('from')} → {g('to')}"
+        elif k == "record_set":
+            rec = re.sub(r"(?<!^)(?=[A-Z])", " ", str(g("record") or "record")).lower()
+            t = f"Record: {rec} {_n(g('value'))}" + (f" (was {_n(g('previous'))})" if g("previous") is not None else "")
+        elif k == "crisis_decision":
+            t = f"{g('title') or 'Crisis'}: {g('chose') or '?'}" + (" — worked" if g("worked") else " — failed" if g("worked") is False else "")
+        elif k == "treaty_answered":
+            t = f"{g('type') or 'Treaty'} with {g('from') or '?'} {'accepted' if g('accepted') else 'rejected'}"
+        elif k == "world_war":
+            t = f"War: {g('aggressor') or '?'} attacks {g('defender') or '?'}"
+        elif k in ("president_order", "attack_ordered"):
+            t = f"{g('action') or 'Order'} → {g('target_name') or g('target') or '?'}" + (f": {g('summary')}" if g("summary") else "")
+        elif k == "peace_brokered":
+            t = f"Peace {'brokered' if g('success') else 'failed'}: {g('a')} – {g('b')}"
+        elif k == "election_result":
+            t = f"Election {g('year')}: {g('outcome')} vs {g('opponent')}"
+        elif k in ("ai_tactic", "tactic_used"):
+            t = f"{g('actor') or 'US'} {str(g('tactic') or 'tactic').replace('_', ' ')} → {g('target') or '?'}"
+        elif k == "world_claim":
+            t = f"{g('power') or '?'} {g('how') or 'claims'} {g('land') or '?'}"
+        elif k == "renamed_territory":
+            t = f"{g('old_name') or g('land') or '?'} renamed {g('name') or '?'}"
+        elif k == "drag_race":
+            t = f"{g('winner_car') or 'Drag race'} wins" + (f" by {g('margin')}s" if g("margin") is not None else "")
+        elif k == "race":
+            t = f"{g('car') or 'Race'} · place {g('place')} · {g('course') or ''}".rstrip(" ·")
+        else:
+            key = next((x for x in ("text", "sentence", "reason", "title", "name", "target_name", "summary") if g(x)), None)
+            t = human_kind(k) + (f": {g(key)}" if key else "")
+    except Exception:  # noqa: BLE001  (odd detail shapes never break the feed)
+        t = human_kind(k)
+    return clean_text(t)
+
+
+def event_level(kind: str, d) -> str:
+    """bad | warn | good | gold | nova | start | info — the app maps these to colours."""
+    d = d if isinstance(d, dict) else {}
+    k = kind or ""
+    if k in ("nuclear_strike", "world_war", "world_atrocity", "war_powers_violation", "territory_lost", "wmd_program_started"):
+        return "bad"
+    if k == "defcon_change":
+        to, fr = d.get("to"), d.get("from")
+        if isinstance(to, (int, float)) and to <= 2:
+            return "bad"
+        return "warn" if isinstance(to, (int, float)) and isinstance(fr, (int, float)) and to < fr else "good"
+    if k in ("treaty_answered", "peace_brokered"):
+        return "good" if d.get("accepted", d.get("success")) else "warn"
+    if k in ("record_set", "statehood", "nation_founded"):
+        return "gold"
+    if k == "game_over":
+        return "gold" if d.get("won") else "bad"
+    if k in ("game_start", "start"):
+        return "start"
+    if k == "nova_commentary":
+        return "nova"
+    if k in ("approval_swing", "congress_swing"):
+        ch = d.get("change")
+        if not isinstance(ch, (int, float)):
+            to, fr = d.get("to"), d.get("from")
+            ch = to - fr if isinstance(to, (int, float)) and isinstance(fr, (int, float)) else 0
+        return "warn" if ch < 0 else "good"
+    if k in ("impeachment_track", "crisis_decision", "attack_ordered", "president_order", "ai_tactic", "tactic_used"):
+        return "warn"
+    if k == "ticker":
+        return "warn" if (d.get("severity") or 0) >= 3 else "info"
+    if k == "turn":
+        return "warn" if d.get("failed") else "info"
+    return "info"
+
+
+def _gtnw_extras(summ: dict, last_detail: dict | None = None) -> dict:
+    polls = [p.get("popularity") for p in (summ.get("polls") or []) if isinstance(p, dict)]
+    polls = [round(float(p), 1) for p in polls if isinstance(p, (int, float))][-12:]
+    gd = summ.get("game_date") or (last_detail or {}).get("game_date") or summ.get("game_date_end")
+    return {"defcon": summ.get("defcon") if isinstance(summ.get("defcon"), int) else None,
+            "turn": summ.get("turns") if isinstance(summ.get("turns"), int) else None,
+            "game_date": clean_text(gd, 24) if gd else None, "polls": polls,
+            "difficulty": clean_text(summ.get("difficulty"), 24) if summ.get("difficulty") else None}
+
+
+def _live_extras(cur, live: list, raw: dict, now: datetime) -> None:
+    """Elapsed, APM, events in the last 5 min, last event; GTNW: DEFCON, turn, date, approval polls."""
+    ids = [s["id"] for s in live]
+    if not ids:
+        return
+    cur.execute("SELECT session_id::text, count(*) FILTER (WHERE ts > now() - interval '5 minutes'), count(*) "
+                "FROM play.events WHERE session_id = ANY(%s::uuid[]) GROUP BY 1", (ids,))
+    counts = {sid: (n5, n) for sid, n5, n in cur.fetchall()}
+    cur.execute("SELECT DISTINCT ON (session_id) session_id::text, ts, kind, detail FROM play.events "
+                "WHERE session_id = ANY(%s::uuid[]) ORDER BY session_id, seq DESC", (ids,))
+    last = {sid: (ts, kind, det) for sid, ts, kind, det in cur.fetchall()}
+    for s in live:
+        st = raw[s["id"]]
+        elapsed = max(0.0, (now - st["started"]).total_seconds()) if st["started"] else 0.0
+        s["elapsed_s"] = int(elapsed)
+        s["apm"] = round((s.get("actions") or 0) / max(1.0, elapsed / 60), 2)
+        n5, n = counts.get(s["id"], (0, 0))
+        s["events_5m"], s["events"] = n5, n
+        if s["id"] in last:
+            ts, kind, det = last[s["id"]]
+            s["last_event"] = {"kind": kind, "text": event_text(kind, det), "level": event_level(kind, det), "ts": iso(ts)}
+        if s.get("game") == "gtnw":
+            s.update(_gtnw_extras(st["summary"], last.get(s["id"], (None, None, None))[2]))
+
+
+def _timeline(cur) -> dict:
+    cur.execute(SQL_TIMELINE)
+    series: dict = {}
+    for game, ago, n in cur.fetchall():
+        if 0 <= ago < TIMELINE_MIN:
+            series.setdefault(game, [0] * TIMELINE_MIN)[TIMELINE_MIN - 1 - ago] += n
+    return {"minutes": TIMELINE_MIN,
+            "series": [{"game": g, "counts": c} for g, c in sorted(series.items(), key=lambda x: -sum(x[1]))]}
+
+
+def _feed(cur) -> list:
+    """The newest events across games. A burst of the same kind from one session in the same tick (eight
+    world_claims within two seconds) is one line with a count, so the feed reads as a story, not a log."""
+    cur.execute(SQL_FEED)
+    out: list = []
+    for sid, seq, ts, game, kind, det in cur.fetchall():
+        prev = out[-1] if out else None
+        if prev and prev["_k"][:2] == (sid, kind) and abs((prev["_k"][2] - ts).total_seconds()) <= 2:
+            prev["count"] += 1
+            prev["_k"] = (sid, kind, ts)
+            continue
+        if len(out) >= FEED_N:
+            break
+        out.append({"_k": (sid, kind, ts), "id": f"{sid}:{seq}", "ts": iso(ts), "game": game, "kind": clean_text(kind, 40),
+                    "text": event_text(kind, det), "level": event_level(kind, det), "count": 1})
+    for e in out:
+        del e["_k"]
+    return out
+
+
+def _today(cur) -> list:
+    cur.execute(SQL_TODAY)
+    rows = {g: {"game": g, "sessions": n, "minutes": round(float(m), 1), "wins": w, "losses": lo, "other": o,
+                "open": op, "best": sc, "events": 0} for g, n, m, w, lo, o, op, sc in cur.fetchall()}
+    cur.execute(SQL_TODAY_EVENTS)
+    for g, n in cur.fetchall():
+        rows.setdefault(g, {"game": g, "sessions": 0, "minutes": 0.0, "wins": 0, "losses": 0, "other": 0,
+                            "open": 0, "best": None, "events": 0})["events"] = n
+    return sorted(rows.values(), key=lambda r: (-r["minutes"], -r["events"]))
+
+
+def _week(cur) -> dict:
+    cur.execute(SQL_WEEK)
+    rows = [{"day": d, "game": g, "sessions": n, "minutes": round(float(m), 1)} for d, g, n, m in cur.fetchall()]
+    cur.execute(SQL_WEEK_DAYS)
+    days = [d for (d,) in cur.fetchall()]
+    cur.execute(SQL_WEEK_WL)
+    w, lo, n = cur.fetchone()
+    return {"days": days, "rows": rows, "wins": w, "losses": lo, "sessions": n,
+            "win_rate": round(w / (w + lo), 3) if (w + lo) else None}
+
+
+def _fame(cur) -> list:
+    cur.execute(SQL_FAME)
+    out = []
+    for game, player, summ, score, outcome, at in cur.fetchall():
+        summ = summ or {}
+        who = summ.get("leader") or summ.get("country_name") or player or ""
+        out.append({"game": game, "who": clean_text(who, 60), "score": score, "outcome": outcome, "at": iso(at),
+                    "turns": summ.get("turns") if isinstance(summ.get("turns"), int) else None})
+    return out
+
+
+def _ai_share(cur) -> dict:
+    cur.execute(SQL_AI_SHARE)
+    rows = [{"game": g, "source": clean_text(src, 20), "n": n} for g, src, n in cur.fetchall()]
+    ai = sum(r["n"] for r in rows if r["source"] in AI_SOURCES)
+    total = sum(r["n"] for r in rows)
+    return {"ai": ai, "other": total - ai, "pct": round(ai / total, 3) if total else None, "sources": rows}
+
+
 def collect_games(_cur=None) -> dict:
-    """Games DB health + sessions + Casting Director's AI calls, and the relay counters. Never raises for one part."""
+    """Games DB health + sessions + live-play stats + Casting Director's AI calls, and the relay counters.
+    Never raises for one part: each extra is its own try, and a failed one is listed in out["partial"]."""
     import psycopg2
     out: dict = {"db": {"up": False}, "relay": None}
     t0 = time.time()
+
+    def part(name, fn):
+        try:
+            out[name] = fn()
+        except Exception as e:  # noqa: BLE001
+            out.setdefault("partial", []).append(name)
+            log(f"games {name} failed: {str(e).splitlines()[0][:160] if str(e) else type(e).__name__}")
+
     try:
         ca = next((c for c in GAMES_CA if os.path.exists(c)), None)
         conn = psycopg2.connect(password=_games_password(), sslrootcert=ca, **GAMES_PG)
@@ -777,11 +1070,14 @@ def collect_games(_cur=None) -> dict:
             cur = conn.cursor()
             cur.execute("SELECT 1")
             out["db"] = {"up": True, "ms": round((time.time() - t0) * 1000), "host": "core3 :5433"}
-            cols = "id, game, client, player, started_at, last_seen_at, ended_at, outcome, score, actions, summary"
-            cur.execute(f"SELECT {cols} FROM play.sessions WHERE ended_at IS NULL AND last_seen_at > now() - interval '10 minutes' "
-                        "ORDER BY last_seen_at DESC LIMIT 12")
-            out["live"] = [_session_view(r) for r in cur.fetchall()]
-            cur.execute(f"SELECT {cols} FROM play.sessions ORDER BY last_seen_at DESC LIMIT 12")
+            cur.execute(SQL_LIVE)
+            rows = cur.fetchall()
+            out["live"] = [_session_view(r[:-1]) for r in rows]
+            raw = {str(r[0]): {"started": r[4], "summary": r[10] or {}} for r in rows}
+            db_now = rows[0][-1] if rows else datetime.now(timezone.utc)
+            part("live_stats", lambda: _live_extras(cur, out["live"], raw, db_now))
+            out.pop("live_stats", None)                 # _live_extras enriches out["live"] in place
+            cur.execute(SQL_RECENT)
             out["recent"] = [_session_view(r) for r in cur.fetchall()]
             cur.execute("SELECT game, count(*), count(*) FILTER (WHERE started_at::date = current_date), max(last_seen_at) "
                         "FROM play.sessions GROUP BY game ORDER BY 4 DESC")
@@ -790,6 +1086,12 @@ def collect_games(_cur=None) -> dict:
                         "WHERE ts > now() - interval '1 day'")
             e_day, e_hour = cur.fetchone()
             out["events"] = {"day": e_day, "hour": e_hour}
+            part("timeline", lambda: _timeline(cur))
+            part("feed", lambda: _feed(cur))
+            part("today", lambda: _today(cur))
+            part("week", lambda: _week(cur))
+            part("fame", lambda: _fame(cur))
+            part("ai_share", lambda: _ai_share(cur))
             try:
                 cur.execute("SELECT t, role, backend, model, ok, ms, tokens_out FROM casting.ai_calls ORDER BY t DESC LIMIT 15")
                 calls = [{"t": iso(t), "game": "casting", "role": ro, "backend": b, "model": m, "ok": ok, "ms": ms,
@@ -1073,6 +1375,11 @@ def selftest() -> int:
     assert h_game("GTNW @ mac-studio") and h_game("python3.14 nova.server @ nova-core8") and h_game("ng-relay")
     assert not h_game("nova_notifier @ mac-studio") and not h_game("reading: The Gaming of America")
     assert not h_game("reading: Casting Shadows")
+    # games 1.4 (2026-11-11): one human line + a level per play event, never raising on odd shapes
+    assert event_text("defcon_change", {"from": 3, "to": 2}) == "DEFCON 3 → 2" and event_level("defcon_change", {"from": 3, "to": 2}) == "bad"
+    assert event_text("ticker", {"text": "a\u202eb\nc"}) == "a b c" and event_level("nuclear_strike", {}) == "bad"
+    assert event_text("weird_kind", None) == "Weird kind" and event_text("game_over", "x") == "Game over"
+    assert event_level("record_set", {}) == "gold" and event_level("treaty_answered", {"accepted": True}) == "good"
     assert clean_hb({"state": "idle", "ollama_url": "http://10.0.0.5:11434/", "models": ["qwen3:30b-a3b", 5],
                      "info": {"ac": True, "x": {"no": 1}}}) == {
         "state": "idle", "ollama_url": "http://10.0.0.5:11434", "models": ["qwen3:30b-a3b"], "info": {"ac": True}}
