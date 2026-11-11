@@ -854,7 +854,7 @@ struct RecentRow: View {
             Text(NodeLines.clean(GamesStats.who(p), max: 40)).font(.system(size: 11 * u)).foregroundStyle(Palette.text.opacity(0.75)).lineLimit(1)
             Spacer(minLength: 4 * u)
             if let sc = p.score, sc > 0 { Text(GamesStats.score(sc)).font(.system(size: 10 * u, design: .monospaced)).foregroundStyle(.white.opacity(0.55)) }
-            Chip(text: OutcomeStyle.label(p.outcome, ended: p.ended != nil), hue: OutcomeStyle.hue(p.outcome, ended: p.ended != nil), u: u)
+            Chip(text: OutcomeStyle.label(p, now: now), hue: OutcomeStyle.hue(p, now: now), u: u)
             Text(GameNames.ago(p.last_seen, now: now)).font(.system(size: 9.5 * u, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.4)).frame(width: 52 * u, alignment: .trailing)
         }

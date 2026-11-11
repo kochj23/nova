@@ -239,6 +239,24 @@ extension UnitTests {
         XCTAssertEqual(GamesStats.spark([5, 5]), [0.5, 0.5])
     }
 
+    func testGames141RecentChipUsesTheLiveRule() {
+        let now = Date()
+        let iso = ISO8601DateFormatter()
+        var s = GamesSnapshot.Session(id: "x", game: "gtnw", last_seen: iso.string(from: now.addingTimeInterval(-120)))
+        XCTAssertEqual(OutcomeStyle.state(s, now: now), .live)
+        XCTAssertEqual(OutcomeStyle.label(s, now: now), "LIVE")
+        s.last_seen = iso.string(from: now.addingTimeInterval(-19 * 60))        // open but stale: the screenshot's bug
+        XCTAssertEqual(OutcomeStyle.state(s, now: now), .leftOpen)
+        XCTAssertEqual(OutcomeStyle.label(s, now: now), "LEFT OPEN")
+        XCTAssertNotEqual(OutcomeStyle.hue(s, now: now), Palette.amber, "left open is muted, not the live amber")
+        s.last_seen = nil
+        XCTAssertEqual(OutcomeStyle.state(s, now: now), .leftOpen)
+        s.ended = iso.string(from: now); s.outcome = "defeat"
+        XCTAssertEqual(OutcomeStyle.state(s, now: now), .ended)
+        XCTAssertEqual(OutcomeStyle.label(s, now: now), "LOSS")
+        XCTAssertEqual(OutcomeStyle.liveWindow, 600, "same 10 minutes as the hub's LIVE_MIN")
+    }
+
     func testGames14ElapsedTicksFromStarted() {
         let now = Date()
         let s = Fixture14.snapshot(now: now).live![0]

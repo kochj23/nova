@@ -1,6 +1,6 @@
 # Nova Cluster (Mac + iPad + iPhone + Apple TV)
 
-**Version 1.4.0 (build 7)** · macOS 14+ · iPadOS 17+ · iOS 17+ (iPhone) · tvOS 17+ · SwiftUI · xcodegen
+**Version 1.4.1 (build 8)** · macOS 14+ · iPadOS 17+ · iOS 17+ (iPhone) · tvOS 17+ · SwiftUI · xcodegen
 
 Nova Cluster is a live view of what every machine in Nova's cluster is doing with its language
 models, and what that work turns into. Each machine's Ollama and llama.cpp traffic arrives from
@@ -101,7 +101,7 @@ read-only through the hub's `GET /games`; polled every 5 s, only while the view 
 | Today by game | per game: play minutes, sessions, events, best score, and a W–L ring |
 | Last 7 days | stacked bars of play minutes per day per game, with the day's session count on top |
 | Hall of fame | top 5 scores ever: medal, score, who, turns, outcome chip, date |
-| Recent sessions | game, who, score, outcome chip (LIVE / WIN / LOSS / COMPLETED / QUIT …), age |
+| Recent sessions | game, who, score, outcome chip (LIVE only when open and seen in the last 10 min, the live tables' rule; a stale open session is a muted LEFT OPEN; WIN / LOSS / COMPLETED / QUIT …), age |
 | Game AI · relay · DB | AI-written vs template / fallback share bar, Casting Director's AI calls today and the last call, the game LLM work on the cluster now, the relay's counters, Games DB latency (or why it is down) |
 
 **Layout.** Wide (Mac, iPad landscape, Apple TV: landscape with at least 1100 layout units) is three columns
@@ -440,7 +440,7 @@ xcodebuild -project NovaCluster.xcodeproj -scheme NovaClusterMac -configuration 
   -destination 'platform=macOS' -derivedDataPath <dd> test
 ```
 
-There are 94 XCTest cases, all passing in 1.4.0. They are organised in the house's 7 categories in `SecurityTests` … `FrameTests` (`Tests/NodeLinesTests.swift`), which `Tests/Cluster11SevenCatTests.swift` extends for 1.1.0 and `Tests/Games14SevenCatTests.swift` extends for the 1.4.0 Games screen (18 cases: Security 2, Performance 2, Retry 2, Unit 3, Integration 2, Functional 3, Frame 4), plus feature tests (`Tests/ConstellationTests.swift`, `Tests/KioskTests.swift`, `Tests/NodeFactsTests.swift`, `Tests/GamesTests.swift`, `Tests/PhoneLayoutTests.swift`). The constellation tests pin the shared hash and random stream so the screensaver's sky can't shift silently. The test bundle
+There are 95 XCTest cases, all passing in 1.4.1. They are organised in the house's 7 categories in `SecurityTests` … `FrameTests` (`Tests/NodeLinesTests.swift`), which `Tests/Cluster11SevenCatTests.swift` extends for 1.1.0 and `Tests/Games14SevenCatTests.swift` extends for the 1.4.0 Games screen (19 cases: Security 2, Performance 2, Retry 2, Unit 4, Integration 2, Functional 3, Frame 4), plus feature tests (`Tests/ConstellationTests.swift`, `Tests/KioskTests.swift`, `Tests/NodeFactsTests.swift`, `Tests/GamesTests.swift`, `Tests/PhoneLayoutTests.swift`). The constellation tests pin the shared hash and random stream so the screensaver's sky can't shift silently. The test bundle
 is not hosted in the app: it has no window, no live hub, and no real UserDefaults or Keychain. The
 sources under test are compiled straight into the bundle. The network is stubbed with a `URLProtocol`.
 
@@ -504,6 +504,7 @@ Ultra at 1440×900 with live traffic, the app uses about 24–28 % of one core.
 
 | Version | Date | Notes |
 |---|---|---|
+| 1.4.1 (8) | 2026-11-11 | Recent sessions: a session left open for more than 10 min shows a muted LEFT OPEN chip, not LIVE (same rule as live tables); 95/95 tests pass |
 | 1.4.0 (7) | 2026-11-11 | Games redesign: header tiles, live table cards (timer, APM, last event, GTNW DEFCON gauge + approval sparkline), 60-min activity chart, animated live feed, today per game, 7-day chart, hall of fame, AI/relay/DB panel; fits a 1080p TV; hub `/games` 1.4; 94/94 tests pass |
 | 1.3.0 (6) | 2026-11-10 | Games view: Games DB health, live and recent sessions, Casting Director AI calls, relay counters, game LLM jobs (hub `/games`) |
 | 1.2.0 (5) | 2026-11-06 | iPhone: universal iOS target, phone layout for all three views, `iphone` viewer node; 71/71 tests pass |

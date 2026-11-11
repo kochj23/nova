@@ -219,6 +219,32 @@ enum EventStyle {
 
 /// Session outcome chip: label + hue.
 enum OutcomeStyle {
+    /// The hub's live rule: open (ended NULL) and seen within the last 10 minutes.
+    static let liveWindow: TimeInterval = 600
+
+    enum State: Equatable { case live, leftOpen, ended }
+
+    /// 1.4.1: an open session that has not been seen for 10 minutes is "left open", not live (same rule as live tables).
+    static func state(_ s: GamesSnapshot.Session, now: Date) -> State {
+        if s.ended != nil { return .ended }
+        guard let seen = s.last_seen.flatMap(GameNames.parse) else { return .leftOpen }
+        return now.timeIntervalSince(seen) < liveWindow ? .live : .leftOpen
+    }
+    static func label(_ s: GamesSnapshot.Session, now: Date) -> String {
+        switch state(s, now: now) {
+        case .live: return "LIVE"
+        case .leftOpen: return "LEFT OPEN"
+        case .ended: return label(s.outcome, ended: true)
+        }
+    }
+    static func hue(_ s: GamesSnapshot.Session, now: Date) -> Palette.RGB {
+        switch state(s, now: now) {
+        case .live: return Palette.amber
+        case .leftOpen: return Palette.RGB(0.48, 0.52, 0.58)
+        case .ended: return hue(s.outcome, ended: true)
+        }
+    }
+
     static func label(_ outcome: String?, ended: Bool) -> String {
         guard ended else { return "LIVE" }
         let o = (outcome ?? "ended").lowercased()
