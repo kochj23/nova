@@ -19,7 +19,7 @@ final class StatusItemController: NSObject {
     private var openMain: (() -> Void)?
     private var defaultsObserver: NSObjectProtocol?
 
-    static let menuBarKey = "menubar.enabled"
+    nonisolated static let menuBarKey = "menubar.enabled"
     static var enabled: Bool { UserDefaults.standard.object(forKey: menuBarKey) as? Bool ?? true }
     /// Tests: whether the status item exists right now.
     var isShowing: Bool { item != nil }

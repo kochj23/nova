@@ -1,6 +1,6 @@
 # Nova Cluster (Mac + iPad + iPhone + Apple TV)
 
-**Version 1.2.0 (build 5)** · macOS 14+ · iPadOS 17+ · iOS 17+ (iPhone) · tvOS 17+ · SwiftUI · xcodegen
+**Version 1.4.0 (build 7)** · macOS 14+ · iPadOS 17+ · iOS 17+ (iPhone) · tvOS 17+ · SwiftUI · xcodegen
 
 Nova Cluster is a live view of what every machine in Nova's cluster is doing with its language
 models, and what that work turns into. Each machine's Ollama and llama.cpp traffic arrives from
@@ -8,7 +8,8 @@ Nova's hub every 2 s: the models in memory, the requests being served right now,
 requests. So does the minions' reading work: current jobs, tonight's works and lessons, episodes
 transcribed, and the latest lesson. The app only displays this data. It never computes or writes
 anything back. Since 1.1.0 it also contains [Nova Minion](../NovaMinionPad/): the lesson
-constellation is its third view, so one app shows the traffic and what the traffic turns into.
+constellation is its third view, so one app shows the traffic and what the traffic turns into. Since 1.3.0 a
+fourth view, **Games**, shows live play on the Nova Games platform (redesigned in 1.4.0 as a wall display).
 
 There is one multiplatform xcodegen project with two app targets that share every source in
 `NovaCluster/`. Platform-specific code sits behind `#if os(iOS)` / `#if os(macOS)`.
@@ -45,11 +46,11 @@ and bidi overrides are removed and the length is capped at 240 characters. Long 
 To see the full text, hover over it (Mac), tap a station on the map (both platforms), or long-press a
 dashboard card (iPad).
 
-### Three views
+### Four views
 
-Tap the wordmark to step through **Cluster Map → Dashboard → Constellation**. On the Mac you can also use
-**View › Cluster Map (⌘1) / Dashboard (⌘2) / Constellation (⌘3)**, or
-`novacluster://view?mode=map|dashboard|constellation`. The app remembers your choice (`view.mode`).
+Tap the wordmark to step through **Cluster Map → Dashboard → Constellation → Games**. On the Mac you can also use
+**View › Cluster Map (⌘1) / Dashboard (⌘2) / Constellation (⌘3) / Games (⌘4)**, or
+`novacluster://view?mode=map|dashboard|constellation|games`. The app remembers your choice (`view.mode`).
 
 #### Cluster map (`NOVA · CLUSTER`)
 
@@ -84,6 +85,70 @@ Tap the wordmark to step through **Cluster Map → Dashboard → Constellation**
 | Bottom | Machine legend and the fleet line: minions, works and lessons tonight, episodes transcribed, and the reading queue with its ETA. |
 
 It reads the same `/cluster` poll as the other two views (no second hub client, no second token).
+
+#### Games (`NOVA · GAMES`, 1.3.0; redesigned 1.4.0)
+
+Little Mister, 2026-11-11: *"Can you pretty-up the games section of Nova Cluster. More stats about live game
+play, please."* The Games view is a wall display of the Nova Games platform (Games DB `play` schema on core3,
+read-only through the hub's `GET /games`; polled every 5 s, only while the view is on screen).
+
+| Area | Shows |
+|---|---|
+| Header tiles | **Playing now** (pulses while someone plays) · **play time today** · **sessions today** · **play events / hr** · **win rate, 7 days** (W/L) · **game AI**: today's AI-written share of events that carry a `source`, else the cluster's game tok/s |
+| Live tables | one card per live session (open, seen in the last 10 min): game accent colour + icon, MAC/WEB badge, who (leader / country, else player id), scenario · difficulty · game date · turn, a **ticking session timer**, actions, APM, events and events in the last 5 min, and the last event with its icon. GTNW adds a **DEFCON 5→1 pip gauge** (the current level glows) and an **approval sparkline** of the last 12 polls with the latest value and its change. Nobody playing: "Nobody's at the table", the last session and today's totals |
+| Activity · last 60 min | Swift Charts bars, events per minute stacked by game, with a per-game legend, total and peak/min |
+| Live feed | the newest 15 (wide) / 10 / 8 (phone) events across games, newest first, animated in: per-kind icon and colour (☢ nuclear strike red, treaty green, record gold, Nova's commentary violet, new game blue …), game, a `×N` count when one tick fired a burst, age; events under 10 s old are tinted |
+| Today by game | per game: play minutes, sessions, events, best score, and a W–L ring |
+| Last 7 days | stacked bars of play minutes per day per game, with the day's session count on top |
+| Hall of fame | top 5 scores ever: medal, score, who, turns, outcome chip, date |
+| Recent sessions | game, who, score, outcome chip (LIVE / WIN / LOSS / COMPLETED / QUIT …), age |
+| Game AI · relay · DB | AI-written vs template / fallback share bar, Casting Director's AI calls today and the last call, the game LLM work on the cluster now, the relay's counters, Games DB latency (or why it is down) |
+
+**Layout.** Wide (Mac, iPad landscape, Apple TV: landscape with at least 1100 layout units) is three columns
+— live tables, activity and today on the left; the feed in the middle; the week, fame, recent sessions and
+system panel on the right — sized so the whole screen fits a 1080p TV and a 1440×900 Mac window without
+scrolling (a frame test enforces it). Narrow (iPad portrait, iPhone) is one scrolling column with the tiles in
+three columns. Nothing in the view takes focus, so on the Apple TV the wordmark stays the only focus stop.
+`GamesLayout` (pure) picks the unit and columns; `GamesBoard` is the screen for one snapshot (tests render it).
+
+**Older hubs.** Every 1.4 field is optional. A 1.3 hub still decodes: the tiles fall back (sessions today from
+`games[].today`), and each missing panel says the hub doesn't send it yet.
+
+```mermaid
+flowchart LR
+    subgraph Core3["core3"]
+        GDB[("games-pg :5433<br/>play.sessions · play.events<br/>casting.ai_calls")]
+        RL["relay :8088<br/>/healthz/relay/stats"]
+    end
+    subgraph Hub["nova_minion_hub (Studio :37590)"]
+        CG["collect_games() every 10 s<br/>play_reader, TLS verify-full, Keychain pw<br/>live + stats · timeline · feed · today ·<br/>week · fame · ai_share (each its own try)"]
+        CACHE["_EXTRAS['games'] cache"]
+        GV["games_view()<br/>+ cluster LLM work for games"]
+        EP["GET /games?node=…<br/>X-Minion-Token (viewer)"]
+    end
+    subgraph App["Nova Cluster (Mac · iPad · iPhone · TV)"]
+        GM["GamesModel<br/>5 s poller while visible"]
+        GS["GamesStats · GameStyle ·<br/>EventStyle · Defcon (pure)"]
+        GB["GamesBoard<br/>tiles · live tables · charts ·<br/>feed · fame · system"]
+    end
+    GDB --> CG
+    RL --> CG
+    CG --> CACHE --> GV --> EP
+    EP -- JSON --> GM --> GS --> GB
+```
+
+`/games` 1.4 payload (additive to 1.3's `db`, `live`, `recent`, `games`, `events`, `ai`, `relay`, `llm`):
+
+| Key | Contents |
+|---|---|
+| `live[]` extras | `elapsed_s`, `apm`, `events_5m`, `events`, `last_event {kind, text, level, ts}`; GTNW: `defcon`, `turn`, `game_date`, `polls[]` (last 12), `difficulty` |
+| `timeline` | `{minutes: 60, series: [{game, counts[60]}]}` events per minute, oldest first |
+| `feed[]` | `{id, ts, game, kind, text, level, count}`; level is `bad`/`warn`/`good`/`gold`/`nova`/`start`/`info`; text is a human one-liner made by the hub |
+| `today[]` | per game (Burbank day): `sessions, minutes, wins, losses, other, open, best, events` |
+| `week` | `{days[7], rows: [{day, game, sessions, minutes}], wins, losses, sessions, win_rate}` |
+| `fame[]` | top 5 scores: `game, who, score, outcome, at, turns` |
+| `ai_share` | today: `ai`, `other`, `pct`, `sources: [{game, source, n}]` |
+| `partial[]` | names of the parts that failed this pass (the rest still arrive) |
 
 ### Machine drill-down and the UPS (1.1.0)
 
@@ -148,7 +213,7 @@ the moment the window is visible again. Polling continues so the menu-bar item s
 ### Kiosk mode (1.1.0)
 
 For the iPad on its stand, a Mac in full screen, or the Apple TV: the app steps
-**Cluster Map → Dashboard → Constellation** every *N* seconds (default 60, 10–600 in Settings,
+**Cluster Map → Dashboard → Constellation → Games** every *N* seconds (default 60, 10–600 in Settings,
 10–3600 by deep link).
 
 - **Pause on touch.** Any touch (iPad), real pointer movement (Mac) or remote press (TV) pauses
@@ -213,6 +278,8 @@ flowchart LR
     CM --> MAP & DASH & CON & DET
     CM --> MBS --> SIC
     CORE --> CON
+    EX -. "games extras (core3 Games DB + relay)" .-> GE["GET /games?node=…"]
+    GE -- "JSON, 5 s while the Games view is up" --> GAMES["GamesModel → GamesBoard<br/>(see the Games data flow)"]
     CORE --> SAVER["Nova Minion screensaver<br/>(Core Animation, own target)"]
     NL --> MAP & DASH
 ```
@@ -280,7 +347,7 @@ On first launch iOS may ask for Local Network access. Tap **Allow**.
 ## iPhone app (1.2.0)
 
 The iOS target (`NovaClusterPad`, bundle `net.digitalnoise.NovaClusterPad`) is universal: the same app runs on
-iPhone and iPad. The phone shows the same three views at a phone-sized layout unit (`DeviceLayout.phoneUnit`,
+iPhone and iPad. The phone shows the same views at a phone-sized layout unit (`DeviceLayout.phoneUnit`,
 0.62), in portrait or landscape:
 
 - **Map:** the header stats stack in two rows. Station labels show only the name and state badge. **Tap a
@@ -303,7 +370,7 @@ Off a phone, `DeviceLayout` returns exactly the iPad formulas (`Tests/PhoneLayou
 
 ## Apple TV app (1.1.0, Nova wish #60)
 
-The same SwiftUI views as a wall display. It **starts in kiosk mode** (map → dashboard → constellation, 60 s
+The same SwiftUI views as a wall display. It **starts in kiosk mode** (map → dashboard → constellation → games, 60 s
 each). Siri Remote: **select** on the wordmark steps the view, **left / right** step back and forth (and pause
 the kiosk for two minutes), **Play/Pause** opens Settings, and the dashboard and minion cards take focus (lift)
 so a click opens a machine's drill-down. The default viewer node is `apple-tv`, enrolled on the hub as a
@@ -330,7 +397,7 @@ Nothing network-specific is compiled in. The hub can come from any of these sour
 | Settings | Mac: ⌘, · iPad: long-press the wordmark |
 | Deep link | `novacluster://setup?hub=…&node=…&token=…` (missing fields keep their current value) |
 | Environment on launch | `NOVA_CLUSTER_HUB`, `NOVA_CLUSTER_NODE`, `NOVA_CLUSTER_TOKEN` (`DEVICECTL_CHILD_…` / `SIMCTL_CHILD_…`) |
-| View switch | `novacluster://view?mode=map\|dashboard\|constellation` |
+| View switch | `novacluster://view?mode=map\|dashboard\|constellation\|games` |
 | Kiosk | `novacluster://kiosk?on=1&interval=60` |
 | Drill-down | `novacluster://node?name=<node>` |
 | Debug | `-demoBusy YES` marks a few slots busy (prefill + generating) to check the visuals |
@@ -373,7 +440,7 @@ xcodebuild -project NovaCluster.xcodeproj -scheme NovaClusterMac -configuration 
   -destination 'platform=macOS' -derivedDataPath <dd> test
 ```
 
-There are 67 XCTest cases, organised in the house's 7 categories (Security 6, Performance 5, Retry 4, Unit 6, Integration 3, Functional 6, Frame 4 in `SecurityTests` … `FrameTests`, which `Tests/Cluster11SevenCatTests.swift` extends for 1.1.0) plus 33 feature tests (`Tests/ConstellationTests.swift`, `Tests/KioskTests.swift`, `Tests/NodeFactsTests.swift`), all of which pass in 1.1.0. The constellation tests pin the shared hash and random stream so the screensaver's sky can't shift silently. The test bundle
+There are 94 XCTest cases, all passing in 1.4.0. They are organised in the house's 7 categories in `SecurityTests` … `FrameTests` (`Tests/NodeLinesTests.swift`), which `Tests/Cluster11SevenCatTests.swift` extends for 1.1.0 and `Tests/Games14SevenCatTests.swift` extends for the 1.4.0 Games screen (18 cases: Security 2, Performance 2, Retry 2, Unit 3, Integration 2, Functional 3, Frame 4), plus feature tests (`Tests/ConstellationTests.swift`, `Tests/KioskTests.swift`, `Tests/NodeFactsTests.swift`, `Tests/GamesTests.swift`, `Tests/PhoneLayoutTests.swift`). The constellation tests pin the shared hash and random stream so the screensaver's sky can't shift silently. The test bundle
 is not hosted in the app: it has no window, no live hub, and no real UserDefaults or Keychain. The
 sources under test are compiled straight into the bundle. The network is stubbed with a `URLProtocol`.
 
@@ -386,14 +453,23 @@ sources under test are compiled straight into the bundle. The network is stubbed
 | Integration | all ten nodes carry both lines · the cache goes only to the injected suite |
 | Functional | hub job text is shown verbatim · an older hub never gets an invented job · detail has everything |
 | Frame | height is fixed whatever the text · a narrow width still shows two lines |
+| Games 1.4 | old (1.3) and new payloads decode · hostile text is cleaned, only mac/web become a badge · decode + derive is fast · timeline/week/totals/DEFCON/sparkline helpers · the model polls the new payload · the wide board fits a 1920×1080 TV, its 1740×960 safe area, a 1440×900 Mac window and an 1180×820 iPad without scrolling · iPhone and iPad portrait never overflow sideways |
+
+Screenshots of the Games board: run the tests with `TEST_RUNNER_NOVA_SHOTS_DIR=<dir>` (and optionally
+`TEST_RUNNER_NOVA_GAMES_JSON=<a saved /games payload>`); `testGames14Screenshots` writes Mac, TV, iPad
+(landscape + portrait), iPhone, empty and old-hub PNGs.
 
 ## Release
 
 1. Bump `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` in `project.yml`, then run `xcodegen generate`.
 2. `xcodebuild archive` for both schemes, then `-exportArchive` with `method = debugging` (team `QRRCB8HB3W`).
-3. Export to `/Volumes/Data/xcode/Binaries/YYYYMMDD-NovaCluster-vX.Y.Z/`, which holds `Nova Cluster.app`,
-   `iPad/NovaCluster.ipa` + `iPad/NovaCluster.app`, and `NovaCluster-vX.Y.Z-buildN.dmg` (drag to Applications).
-4. Copy the folder to `/Volumes/NAS/binaries/`. Wrap every NAS command in `timeout`.
+3. Export to `/Volumes/Data/xcode/binaries/YYYYMMDD-NovaCluster-vX.Y.Z/`, which holds `Nova Cluster.app`,
+   `iPad/NovaCluster.ipa` + `iPad/NovaCluster.app`, `TV/NovaCluster.app`, and `NovaCluster-vX.Y.Z-buildN.dmg`
+   (drag to Applications).
+4. Copy the folder to `/Volumes/nas/binaries/` (lowercase; the volume is case-sensitive). Wrap every NAS command
+   in `timeout`.
+5. Install the Mac app in `/Applications` here and on office-2 (move the old one to `~/.Trash/` first), relaunch it
+   if it was running, and `codesign --verify` it.
 
 ## Performance
 
@@ -415,16 +491,21 @@ Ultra at 1440×900 with live traffic, the app uses about 24–28 % of one core.
 | `NovaCluster/NodeLines.swift` | per-machine LLM-job + purpose lines (text, cleaning, fixed-height view) |
 | `NovaCluster/Views.swift` | root view (view switch), wordmark, header + odometer hero, side panel, footer, iPad settings sheet |
 | `NovaCluster/DashboardView.swift` | Minion-style dashboard: machine hues, traffic starfield, machine cards, lesson, totals |
+| `NovaCluster/GamesModel.swift` | `/games` payload (1.3 + 1.4, all optional), 5 s poller, `GameNames`, `GameStyle`, `EventStyle`, `OutcomeStyle`, `Defcon`, `GamesStats` |
+| `NovaCluster/GamesView.swift` | the Games screen: `GamesLayout`, `GamesBoard`, tiles, live table cards (timer, DEFCON gauge, approval sparkline), activity + 7-day charts, feed, today, fame, recent, system panel |
 | `NovaCluster/PhoneLayout.swift` | iPhone layout: `DeviceLayout` unit, card columns, strip padding, `phoneScroll` |
 | `NovaCluster/Palette.swift` | palette, model-family hues, number and age formatting, dust layer |
 | `NovaClusterMac/MacSettings.swift` | macOS Settings window |
 | `NovaCluster/Assets.xcassets`, `NovaClusterMac/Assets.xcassets` | iPad and macOS app icons |
 | `Tests/NodeLinesTests.swift` | XCTest suite covering all 7 categories |
+| `Tests/GamesTests.swift`, `Tests/Games14SevenCatTests.swift` | Games payload, helpers, layout and rendered-board frame tests (+ optional screenshots) |
 
 ## Version history
 
 | Version | Date | Notes |
 |---|---|---|
+| 1.4.0 (7) | 2026-11-11 | Games redesign: header tiles, live table cards (timer, APM, last event, GTNW DEFCON gauge + approval sparkline), 60-min activity chart, animated live feed, today per game, 7-day chart, hall of fame, AI/relay/DB panel; fits a 1080p TV; hub `/games` 1.4; 94/94 tests pass |
+| 1.3.0 (6) | 2026-11-10 | Games view: Games DB health, live and recent sessions, Casting Director AI calls, relay counters, game LLM jobs (hub `/games`) |
 | 1.2.0 (5) | 2026-11-06 | iPhone: universal iOS target, phone layout for all three views, `iphone` viewer node; 71/71 tests pass |
 | 1.0.1 (2) | 2026-10-17 | Every machine shows its LLM job and core purpose in both views; release build is clean; 17/17 tests pass; DMG |
 | 1.0.0 (1) | 2026-10-16 | First release: live Mac + iPad view of the whole cluster's LLM traffic |

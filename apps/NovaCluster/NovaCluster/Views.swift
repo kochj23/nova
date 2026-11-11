@@ -81,7 +81,8 @@ struct ContentView: View {
                     ConstellationScreen(cluster: cluster, stations: map.stations, paused: !isLive) { u in mark(u: u) }
                         .transition(.opacity)
                 case .games:
-                    GamesScreen(model: games, paused: !isLive) { u in mark(u: u) }
+                    GamesScreen(model: games, paused: !isLive, alertStrip: AlertText.headline(snap?.alerts) != nil,
+                                publishedStrip: snap?.published?.isEmpty == false) { u in mark(u: u) }
                         .transition(.opacity)
                 case .map:
                     mapScreen.transition(.opacity)
@@ -913,7 +914,7 @@ struct KioskSettingsSection: View {
             .disabled(!on)
             #endif
         } header: { Text("Kiosk") } footer: {
-            Text("Cycles Cluster Map → Dashboard → Constellation. A touch pauses it for two minutes. Also novacluster://kiosk?on=1&interval=60.")
+            Text("Cycles Cluster Map → Dashboard → Constellation → Games. A touch pauses it for two minutes. Also novacluster://kiosk?on=1&interval=60.")
         }
     }
 }

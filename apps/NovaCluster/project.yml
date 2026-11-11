@@ -8,8 +8,8 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "1.3.0"
-    CURRENT_PROJECT_VERSION: "6"
+    MARKETING_VERSION: "1.4.0"
+    CURRENT_PROJECT_VERSION: "7"
     SWIFT_VERSION: "5.0"
 
 targets:
@@ -187,6 +187,7 @@ targets:
       - path: NovaCluster/NodeFacts.swift
       - path: NovaCluster/PhoneLayout.swift
       - path: NovaCluster/GamesModel.swift
+      - path: NovaCluster/GamesView.swift
       - path: NovaClusterMac/MenuBarHealth.swift
       - path: ../Shared/NovaConstellationCore.swift
     settings:
