@@ -18,7 +18,11 @@ Usage:
     # Full pool status
     status = get_pool_status()  # list of all nodes with health/latency info
 
-Also runs standalone as a daemon that writes pool state to PG every 10s.
+    # Model-aware (nova_rosetta): every node/runtime with a canonical model LOADED, best first
+    cands = candidates_shared("qwen3-8b", structured=True)   # [{name, ip, protocol, port, accelerator, runtime_model, tok_s}]
+
+Also runs standalone as a daemon that writes pool state to PG every 10s — including which models each runtime has
+resident (ollama /api/ps, mlx_lm --model, llama-server's GGUF), so ROCm, Metal and MLX nodes are one pool per model.
 """
 
 import json
@@ -28,6 +32,7 @@ import socket
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.request
 from collections import deque
 from dataclasses import dataclass, field
@@ -48,16 +53,19 @@ NODES = [
     # ollama CHAT pool — nodes that actually serve chat (2026-09-18 rebuild): .6 ollama is
     # wedged on /api/chat (answers /api/tags but hangs on chat), nova-core5/.10 is
     # embeddings-only, and .190 is a dead soundbar IP — all removed from the ollama pool.
+    # "accel": the accelerator behind each protocol (rocm = AMD Radeon iGPU via Ollama's bundled ROCm, metal = Apple
+    # GPU via ggml, mlx = Apple MLX; cuda/vulkan/sycl/cpu when such nodes join) — nova_rosetta ranks on it.
     {"name": "nova-core2", "ip": "192.168.1.86", "port": 37470, "gpu": False,
-     "protocols": {"ollama": 11434}},
+     "protocols": {"ollama": 11434}, "accel": {"ollama": "rocm"}},
     {"name": "nova-core7", "ip": "192.168.1.150", "port": 37470, "gpu": True,
-     "protocols": {"ollama": 11434}},
+     "protocols": {"ollama": 11434}, "accel": {"ollama": "rocm"}},
     {"name": "nova-core10", "ip": "192.168.1.77", "port": 37470, "gpu": True,
-     "protocols": {"ollama": 11434, "mlx": 5050}},
+     "protocols": {"ollama": 11434, "mlx": 5050}, "accel": {"ollama": "metal", "mlx": "mlx"}},
     {"name": "tv-movies-mini", "ip": "192.168.1.7", "port": 37470, "gpu": True,
-     "protocols": {"ollama": 11434, "mlx": 5050}},
+     "protocols": {"ollama": 11434, "mlx": 5050}, "accel": {"ollama": "metal", "mlx": "mlx"}},
     {"name": "mac-studio", "ip": "192.168.1.6", "port": 37470, "gpu": True,
-     "protocols": {"ollama": 11434, "mlx": 5050, "llamacpp": 11435}},   # ollama re-added 2026-10-04: /api/chat answers in ~1.3 s again (qwen3:30b-a3b loaded)
+     "protocols": {"ollama": 11434, "mlx": 5050, "llamacpp": 11435},
+     "accel": {"ollama": "metal", "mlx": "mlx", "llamacpp": "metal"}},   # ollama re-added 2026-10-04: /api/chat answers in ~1.3 s again (qwen3:30b-a3b loaded)
 ]
 
 # ── Pool State ────────────────────────────────────────────────────────────────
@@ -69,6 +77,11 @@ class NodeState:
     port: int
     gpu: bool
     protocols: dict = field(default_factory=dict)   # {"ollama": 11434, "mlx": 5050, ...}
+    accel: dict = field(default_factory=dict)       # {"ollama": "rocm", ...}
+    resident: dict = field(default_factory=dict)    # {"ollama": ["qwen3:8b", ...]} — models LOADED right now
+    joined: bool = False             # not in NODES: a `nova_rosetta.py --join` machine or a lent minion
+    source: str = "static"           # static | join | minion
+    expires_at: float = 0.0          # epoch when a --for loan ends (0 = open-ended)
     status: str = "unknown"          # up, down, draining, ramping
     latencies: deque = field(default_factory=lambda: deque(maxlen=WINDOW_SIZE))
     consecutive_failures: int = 0
@@ -118,6 +131,10 @@ class NodeState:
             "active_connections": self.active_connections,
             "max_connections": self.max_connections,
             "total_connections": self.total_connections,
+            "accel": self.accel,
+            "resident": self.resident,
+            "source": self.source,
+            "expires_at": self.expires_at or None,
         }
 
 
@@ -129,10 +146,81 @@ _sticky_lock = threading.Lock()
 def _init_pool():
     global _pool
     _pool = [NodeState(name=n["name"], ip=n["ip"], port=n["port"], gpu=n["gpu"],
-                        protocols=n.get("protocols", {}),
+                        protocols=n.get("protocols", {}), accel=n.get("accel", {}),
                         max_connections=n.get("max_connections", 8)) for n in NODES]
 
 _init_pool()
+
+_JOIN_DSN = "dbname=nova_ops user=kochj host=localhost"
+
+
+MINION_FRESH_S = 90   # a minion whose heartbeat is older than this is not lent to anyone
+
+
+def _minion_accel(info: dict) -> str:
+    if info.get("accel"):
+        return str(info["accel"])
+    return "metal" if str(info.get("os", "")).lower() == "darwin" else "gpu"
+
+
+def _sync_joined(dsn: str = _JOIN_DSN) -> None:
+    """Bring borrowed machines into the pool and let them go again. Two ways in:
+      join   — `nova_rosetta.py --join <ip> [--for 8h]` (PG rosetta_nodes): in until it leaves or its loan expires.
+      minion — any enrolled minion (nova_minion_hub minion_nodes) whose heartbeat is fresh and whose state is
+               idle/dedicated: lent while the screensaver is up, out the moment someone sits down ('away').
+    Static NODES are never touched (by name or IP); a machine keeps its probe history across syncs."""
+    try:
+        import psycopg2
+        conn = psycopg2.connect(dsn, connect_timeout=3)
+        cur = conn.cursor()
+        try:
+            cur.execute("""SELECT name, ip, protocols, accel, gpu, max_connections,
+                                  coalesce(extract(epoch from expires_at), 0)
+                           FROM rosetta_nodes WHERE enabled AND (expires_at IS NULL OR expires_at > now())""")
+            joins = cur.fetchall()
+        except Exception:
+            conn.rollback()
+            joins = []
+        try:
+            cur.execute("""SELECT node, ip, ollama_url, info FROM minion_nodes
+                           WHERE coalesce(role, 'minion') = 'minion' AND state IN ('idle', 'dedicated')
+                             AND last_seen > now() - %s * interval '1 second' AND coalesce(ollama_url, '') <> ''""",
+                        (MINION_FRESH_S,))
+            minions = cur.fetchall()
+        except Exception:
+            minions = []
+        conn.close()
+    except Exception:
+        return   # PG down: keep whatever borrowed machines we already have
+    load = lambda v: json.loads(v) if isinstance(v, str) else (v or {})
+    taken_names = {n["name"] for n in NODES}
+    taken_ips = {n["ip"] for n in NODES}
+    want = {}
+    for name, ip, protocols, accel, gpu, max_conn, expires in joins:
+        if name in taken_names or ip in taken_ips:
+            continue
+        want[name] = dict(ip=ip, protocols={k: int(v) for k, v in load(protocols).items()}, accel=load(accel),
+                          gpu=bool(gpu), max_connections=max_conn or 2, source="join", expires_at=float(expires))
+        taken_ips.add(ip)
+    for node, ip, url, info in minions:
+        u = urllib.parse.urlparse(url)
+        host = ip if u.hostname in ("127.0.0.1", "localhost", None) else u.hostname
+        if not host or node in taken_names or node in want or host in taken_ips:
+            continue
+        accel = _minion_accel(load(info))
+        want[node] = dict(ip=host, protocols={"ollama": u.port or 11434}, accel={"ollama": accel},
+                          gpu=accel != "cpu", max_connections=2, source="minion", expires_at=0.0)
+        taken_ips.add(host)
+    with _pool_lock:
+        _pool[:] = [n for n in _pool if not n.joined or n.name in want]
+        have = {n.name: n for n in _pool}
+        for name, cfg in want.items():
+            n = have.get(name)
+            if n:
+                for k, v in cfg.items():
+                    setattr(n, k, v)
+            else:
+                _pool.append(NodeState(name=name, port=0, joined=True, **cfg))
 
 
 # ── Pool Draining (F5-style: stop new work, let in-flight finish) ──────────────
@@ -185,14 +273,20 @@ def mark_done(name: str) -> None:
 
 def _probe_node(node: NodeState) -> tuple[bool, float]:
     """Probe a node's health endpoint. Returns (healthy, latency_ms)."""
-    url = f"http://{node.ip}:{node.port}/health"
+    # Joined machines (laptops) have no 37470 sidecar: their runtime answering IS their health.
+    if node.port:
+        url, ok = f"http://{node.ip}:{node.port}/health", lambda d: d.get("status") == "ok"
+    else:
+        proto, rport = next(iter(node.protocols.items()), ("ollama", 11434))
+        url = f"http://{node.ip}:{rport}" + ("/api/version" if proto == "ollama" else "/v1/models")
+        ok = lambda d: isinstance(d, dict)
     start = time.perf_counter()
     try:
         req = urllib.request.Request(url)
         resp = urllib.request.urlopen(req, timeout=PROBE_TIMEOUT)
         data = json.loads(resp.read())
         elapsed_ms = (time.perf_counter() - start) * 1000
-        if data.get("status") == "ok":
+        if ok(data):
             return True, elapsed_ms
         return False, elapsed_ms
     except Exception:
@@ -228,11 +322,42 @@ def _probe_all():
                     node.status = "down"
 
 
+def _discover_resident(node: NodeState) -> dict:
+    """Which models each runtime on `node` has LOADED (not merely on disk) — routing anywhere else is a cold load.
+    ollama: /api/ps. mlx_lm.server: its --model is the path-style id in /v1/models (hub ids there are just cache).
+    llama-server: its one model. A runtime that doesn't answer keeps its previous list until the probe recovers."""
+    out = dict(node.resident)
+    for proto, port in node.protocols.items():
+        try:
+            if proto == "ollama":
+                d = json.loads(urllib.request.urlopen(f"http://{node.ip}:{port}/api/ps", timeout=PROBE_TIMEOUT).read())
+                out[proto] = [m["name"] for m in d.get("models", [])]
+            else:
+                d = json.loads(urllib.request.urlopen(f"http://{node.ip}:{port}/v1/models", timeout=PROBE_TIMEOUT).read())
+                ids = [m.get("id") or m.get("name") for m in (d.get("data") or d.get("models") or [])]
+                paths = [i for i in ids if i and i.startswith("/")]
+                out[proto] = paths if proto == "mlx" and paths else [i for i in ids if i]
+        except Exception:
+            continue
+    return out
+
+
+def _discover_all():
+    """Refresh every healthy node's resident models (HTTP outside the pool lock)."""
+    with _pool_lock:
+        nodes = [n for n in _pool if n.is_healthy or n.status == "draining"]
+    found = {n.name: _discover_resident(n) for n in nodes}
+    with _pool_lock:
+        for n in _pool:
+            if n.name in found:
+                n.resident = found[n.name]
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def pick_node(require_gpu: bool = False, exclude: list[str] = None,
                strategy: str = "latency", session_id: str = None,
-               respect_capacity: bool = True, protocol: str = None) -> dict | None:
+               respect_capacity: bool = True, protocol: str = None, include_joined: bool = False) -> dict | None:
     """Pick a node for new work. F5-style strategies:
 
     protocol: if set (e.g. "ollama", "mlx"), only nodes that actually serve that
@@ -270,6 +395,7 @@ def pick_node(require_gpu: bool = False, exclude: list[str] = None,
             and n.name not in exclude
             and (not require_gpu or n.gpu)
             and (not protocol or protocol in n.protocols)
+            and (include_joined or not n.joined)     # laptops get canonical-model work via candidates(), never DNS
         ]
 
         # Sticky sessions: reuse the same node if it still qualifies.
@@ -374,6 +500,95 @@ def pick_node_shared(require_gpu: bool = False, exclude: list[str] = None,
             "active_connections": best["active_connections"], "sticky": False}
 
 
+# ── Model-aware picking (nova_rosetta: one canonical model, whichever runtime/accelerator has it loaded) ──
+
+def rank_candidates(rows: list[dict], model: str, *, exclude: list[str] = None, runtimes: list[str] = None,
+                    structured: bool = False, strategy: str = "speed", perf: dict = None) -> list[dict]:
+    """Every (node, runtime) that has canonical `model` RESIDENT, best first.
+
+    rows: {name, ip, status, p50_ms, active_connections, protocols, accel, resident}.
+    Ranking: runtimes that can constrain decoding first when `structured`; then measured tok/s for this model on
+    that node/runtime (perf {(node, runtime): tok_s}, from rosetta_perf) or the accelerator's prior; then p50.
+    strategy="least_conn" puts active connections ahead of speed.
+    """
+    import nova_rosetta as R
+    exclude, perf = set(exclude or []), perf or {}
+    out = []
+    for r in rows:
+        if r.get("status") not in ("up", "ramping") or r["name"] in exclude:
+            continue
+        if r.get("expires_at") and r["expires_at"] < time.time():     # a loan that just ended
+            continue
+        for proto, port in (r.get("protocols") or {}).items():
+            if runtimes and proto not in runtimes:
+                continue
+            served = R.resolve(model, proto, (r.get("resident") or {}).get(proto, []))
+            if not served:
+                continue
+            accel = (r.get("accel") or {}).get(proto, "cpu")
+            tps = perf.get((r["name"], proto)) or R.ACCEL_PRIOR_TPS.get(accel, 5.0)
+            p50 = r.get("p50_ms")
+            out.append({"name": r["name"], "ip": r["ip"], "protocol": proto, "port": port, "accelerator": accel,
+                        "runtime_model": served, "tok_s": round(tps, 1),
+                        "latency_ms": None if p50 is None or p50 == float("inf") else round(p50, 1),
+                        "active_connections": r.get("active_connections") or 0})
+    def key(c):
+        lat = c["latency_ms"] if c["latency_ms"] is not None else float("inf")
+        unconstrained = structured and c["protocol"] not in R.CONSTRAINED
+        if strategy == "least_conn":
+            return (unconstrained, c["active_connections"], -c["tok_s"], lat)
+        return (unconstrained, -c["tok_s"], lat)
+    return sorted(out, key=key)
+
+
+def candidates(model: str, **kw) -> list[dict]:
+    """rank_candidates() over this process's own probe state (the daemon, or tests)."""
+    with _pool_lock:
+        rows = [{"name": n.name, "ip": n.ip, "status": n.status, "p50_ms": n.p50_ms,
+                 "active_connections": n.active_connections, "protocols": n.protocols, "accel": n.accel,
+                 "resident": n.resident, "expires_at": n.expires_at} for n in _pool]
+    return rank_candidates(rows, model, **kw)
+
+
+def candidates_shared(model: str, max_staleness_s: float = 60.0,
+                      dsn: str = "dbname=nova_ops user=kochj host=localhost", **kw) -> list[dict]:
+    """rank_candidates() from the daemon's lb_pool_status + rosetta_perf in PG (any process). [] when PG is
+    unreachable or the daemon is stale — callers keep their own fallback."""
+    import psycopg2
+    try:
+        conn = psycopg2.connect(dsn, connect_timeout=3)
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT node_name, status, p50_ms, active_connections, resident,
+                   extract(epoch from (now() - updated_at)) as age_s, node_info
+            FROM lb_pool_status
+        """)
+        rows = cur.fetchall()
+        perf = {}
+        try:
+            cur.execute("SELECT node_name, runtime, tok_s FROM rosetta_perf WHERE model = %s", (model,))
+            perf = {(n, rt): t for n, rt, t in cur.fetchall()}
+        except Exception:
+            pass   # table not created yet — priors only
+        conn.close()
+    except Exception:
+        return []
+    live = []
+    for node_name, status, p50_ms, active_conn, resident, age_s, node_info in rows:
+        if isinstance(node_info, str):
+            node_info = json.loads(node_info)
+        cfg = _NODE_BY_NAME.get(node_name) or node_info     # joined laptops are only known through node_info
+        if not cfg or age_s is None or age_s > max_staleness_s:
+            continue
+        if isinstance(resident, str):
+            resident = json.loads(resident)
+        live.append({"name": node_name, "ip": cfg["ip"], "status": status, "p50_ms": p50_ms,
+                     "active_connections": active_conn or 0, "protocols": cfg.get("protocols", {}),
+                     "accel": cfg.get("accel", {}), "resident": resident or {},
+                     "expires_at": (node_info or {}).get("expires_at")})
+    return rank_candidates(live, model, perf=perf, **kw)
+
+
 # ── PG Reporting ──────────────────────────────────────────────────────────────
 
 def _report_to_pg():
@@ -401,12 +616,14 @@ def _report_to_pg():
         nova_pg_schema.safe_ddl(cur, "ALTER TABLE lb_pool_status ADD COLUMN IF NOT EXISTS active_connections INT DEFAULT 0")
         nova_pg_schema.safe_ddl(cur, "ALTER TABLE lb_pool_status ADD COLUMN IF NOT EXISTS max_connections INT DEFAULT 0")
         nova_pg_schema.safe_ddl(cur, "ALTER TABLE lb_pool_status ADD COLUMN IF NOT EXISTS total_connections INT DEFAULT 0")
+        nova_pg_schema.safe_ddl(cur, "ALTER TABLE lb_pool_status ADD COLUMN IF NOT EXISTS resident JSONB")
+        nova_pg_schema.safe_ddl(cur, "ALTER TABLE lb_pool_status ADD COLUMN IF NOT EXISTS node_info JSONB")
 
         for node in _pool:
             cur.execute("""
                 INSERT INTO lb_pool_status (node_name, status, p50_ms, avg_ms, consecutive_failures, last_healthy,
-                                             active_connections, max_connections, total_connections, updated_at)
-                VALUES (%s, %s, %s, %s, %s, to_timestamp(%s), %s, %s, %s, now())
+                                             active_connections, max_connections, total_connections, resident, node_info, updated_at)
+                VALUES (%s, %s, %s, %s, %s, to_timestamp(%s), %s, %s, %s, %s, %s, now())
                 ON CONFLICT (node_name) DO UPDATE SET
                     status = EXCLUDED.status,
                     p50_ms = EXCLUDED.p50_ms,
@@ -415,6 +632,8 @@ def _report_to_pg():
                     active_connections = EXCLUDED.active_connections,
                     max_connections = EXCLUDED.max_connections,
                     total_connections = EXCLUDED.total_connections,
+                    resident = EXCLUDED.resident,
+                    node_info = EXCLUDED.node_info,
                     last_healthy = EXCLUDED.last_healthy,
                     updated_at = now()
             """, (
@@ -424,7 +643,12 @@ def _report_to_pg():
                 node.consecutive_failures,
                 node.last_healthy if node.last_healthy > 0 else None,
                 node.active_connections, node.max_connections, node.total_connections,
+                json.dumps(node.resident),
+                json.dumps({"ip": node.ip, "protocols": node.protocols, "accel": node.accel, "joined": node.joined,
+                            "source": node.source, "expires_at": node.expires_at or None}),
             ))
+        # a node that left the pool must not linger as a live row
+        cur.execute("DELETE FROM lb_pool_status WHERE node_name <> ALL(%s)", ([n.name for n in _pool],))
 
         conn.close()
     except Exception as e:
@@ -486,8 +710,13 @@ _running = True
 
 def _probe_loop():
     """Main probe loop — run probes and report to PG every interval."""
+    cycle = 0
     while _running:
+        if cycle % 3 == 0:          # borrowed machines come and go within 30 s
+            _sync_joined()
+        cycle += 1
         _probe_all()
+        _discover_all()
         _report_to_pg()
         _report_to_dns()
         time.sleep(PROBE_INTERVAL)
@@ -507,7 +736,9 @@ def main():
     signal.signal(signal.SIGINT, _shutdown)
 
     # Initial probe
+    _sync_joined()
     _probe_all()
+    _discover_all()
     _report_to_dns()
     status = get_pool_status()
     for s in status:

@@ -37,6 +37,7 @@ Author: Jordan Koch
 import argparse
 import hashlib
 import json
+import os
 import sys
 import urllib.request
 import urllib.error
@@ -96,8 +97,9 @@ def _cache_set(intent: str, prompt: str, result: dict) -> None:
 
 class LocalModel:
     """A local model available via Ollama."""
-    def __init__(self, name: str, desc: str, ctx: int = 32768, speed: str = "medium"):
+    def __init__(self, name: str, desc: str, ctx: int = 32768, speed: str = "medium", canonical: str = ""):
         self.name = name       # Ollama model name
+        self.canonical = canonical  # nova_rosetta catalog id — set = routable across the whole fleet
         self.desc = desc       # Human description
         self.ctx = ctx         # Context window
         self.speed = speed     # "fast", "medium", "slow"
@@ -111,12 +113,12 @@ MODELS = {
     #   OpenWebUI (port 3000)— RAG pipeline, document grounding, web search
     # 2026-10-04: qwen3-next:80b was never installed on any node (dead pointer since April); qwen3:30b-a3b is the
     # 30B MoE actually loaded on the Studio and the mini, and what the inference fabric's "conversation" pool serves.
-    "conversation": LocalModel("qwen3:30b-a3b",      "30B MoE (3B active), Q4_K_M — high-quality conversation, Nova's voice", ctx=32768, speed="fast"),
-    "mlx_general":  LocalModel("mlx:qwen2.5-32b",   "32B params, 4-bit MLX — fast general via Apple Neural Engine", ctx=32768,  speed="fast"),
-    "coder":        LocalModel("qwen3-coder:30b",    "30B params, Q4_K_M — code review, generation, debugging",     ctx=32768,  speed="fast"),
-    "reasoner":     LocalModel("deepseek-r1:8b",     "8B params, Q4_K_M — chain-of-thought, logic, architecture",   ctx=32768,  speed="medium"),
-    "vision":       LocalModel("qwen3-vl:4b",        "4B params, Q4_K_M — image/video understanding",               ctx=8192,   speed="fast"),
-    "quick":        LocalModel("qwen3-coder:30b",    "30B via Ollama — fast for classification, tagging, quick tasks", ctx=32768, speed="fast"),
+    "conversation": LocalModel("qwen3:30b-a3b",      "30B MoE (3B active), Q4_K_M — high-quality conversation, Nova's voice", ctx=32768, speed="fast", canonical="qwen3-30b-a3b"),
+    "mlx_general":  LocalModel("mlx:qwen2.5-32b",   "32B params, 4-bit MLX — fast general via Apple Neural Engine", ctx=32768,  speed="fast", canonical="qwen2.5-32b"),
+    "coder":        LocalModel("qwen3-coder:30b",    "30B params, Q4_K_M — code review, generation, debugging",     ctx=32768,  speed="fast", canonical="qwen3-coder-30b"),
+    "reasoner":     LocalModel("deepseek-r1:8b",     "8B params, Q4_K_M — chain-of-thought, logic, architecture",   ctx=32768,  speed="medium", canonical="deepseek-r1-8b"),
+    "vision":       LocalModel("qwen3-vl:4b",        "4B params, Q4_K_M — image/video understanding",               ctx=8192,   speed="fast", canonical="qwen3-vl-4b"),
+    "quick":        LocalModel("qwen3-coder:30b",    "30B via Ollama — fast for classification, tagging, quick tasks", ctx=32768, speed="fast", canonical="qwen3-coder-30b"),
     "rag":          LocalModel("openwebui:rag",      "OpenWebUI RAG — document grounding, search, retrieval",        ctx=32768,  speed="medium"),
 }
 
@@ -130,6 +132,11 @@ OPENROUTER_URL            = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL          = "qwen/qwen3-next-80b-a3b-instruct:free"
 OPENROUTER_MODEL_FALLBACK = "qwen/qwen3-235b-a22b-2507"
 LOCAL_TIMEOUT             = 600   # 120B model can be slow on first load
+# 2026-11-10: models with a `canonical` id go through nova_rosetta, which sends them to whichever node nova_lb ranks
+# best among those with the model RESIDENT — ROCm Ollama on the AMD boxes, Metal Ollama / MLX / llama.cpp on the
+# Macs — and translates the request/response per runtime. Everything stays on the LAN (privacy rules unchanged).
+# NOVA_FLEET_ROUTING=0 restores the old single-host paths, which are also the fallback when the fleet has nothing.
+FLEET_ROUTING             = os.environ.get("NOVA_FLEET_ROUTING", "1") != "0"
 CLOUD_TIMEOUT             = 90
 
 _openrouter_key_cache: Optional[str] = None
@@ -365,6 +372,13 @@ def query_local(
     if not model_info:
         return {"success": False, "error": f"Unknown model key: {model_key}", "source": "local"}
 
+    if FLEET_ROUTING and model_info.canonical:
+        fleet = _query_fleet(prompt, model_info, intent, system, options, model_key)
+        if fleet.get("success"):
+            return fleet
+        print(f"[intent_router] fleet routing for {model_info.canonical} failed ({fleet.get('error')}); "
+              "falling back to the direct backend", file=sys.stderr)
+
     # MLX models → MLX server (port 5050, Apple Neural Engine)
     if model_info.name.startswith("mlx:"):
         return _query_mlx(prompt, model_info, intent, system, options)
@@ -375,6 +389,39 @@ def query_local(
         return _query_openwebui_rag(prompt, model_info, intent, system, options)
     # Everything else → Ollama (port 11434)
     return _query_ollama(prompt, model_info, intent, system, options, model_key=model_key)
+
+
+def _query_fleet(prompt, model_info, intent="", system=None, options=None, model_key="") -> dict:
+    """Any runtime, any node, via nova_rosetta + nova_lb. options: temperature, max_tokens, schema, think."""
+    try:
+        import nova_rosetta
+    except Exception as e:
+        return {"success": False, "error": f"nova_rosetta unavailable: {e}", "source": "local"}
+    options = options or {}
+    temperature = options.get("temperature", INTENT_TEMPERATURE.get(intent, DEFAULT_TEMPERATURE))
+    messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
+    r = nova_rosetta.chat(model_info.canonical, messages, temperature=temperature,
+                          max_tokens=options.get("max_tokens"), schema=options.get("schema"),
+                          think=options.get("think"), timeout=LOCAL_TIMEOUT)
+    if not r.get("success"):
+        return {"success": False, "error": r.get("error"), "source": "local"}
+    out = {
+        "success": True,
+        "response": r["text"],
+        "backend": r["runtime"],
+        "model": r["runtime_model"],
+        "model_key": model_key,
+        "canonical": r["model"],
+        "node": r["node"],
+        "accelerator": r["accelerator"],
+        "temperature": temperature,
+        "tokens": r["tokens_out"],
+        "tokens_per_second": r["tok_s"],
+        "source": "local",
+    }
+    if "json" in r:
+        out["json"] = r["json"]
+    return out
 
 
 def _query_mlx(prompt, model_info, intent="", system=None, options=None) -> dict:

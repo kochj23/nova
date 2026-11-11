@@ -70,7 +70,7 @@ class TestSecurity(_Base):
 
     def test_sql_is_parameterized(self):
         self.assertNotRegex(SRC, r'execute\(\s*f"')
-        self.assertIn("VALUES (%s, %s, %s, %s, %s, to_timestamp(%s), %s, %s, %s, now())", SRC)
+        self.assertIn("VALUES (%s, %s, %s, %s, %s, to_timestamp(%s), %s, %s, %s, %s, %s, now())", SRC)
 
     def test_dns_update_never_prints_the_secret(self):
         _set_all("up")
@@ -252,9 +252,10 @@ class TestFunctional(_Base):
         LB._running = True
         def _stop(_): LB._running = False
         with mock.patch.object(LB, "_probe_all") as pa, mock.patch.object(LB, "_report_to_pg") as rp, \
+             mock.patch.object(LB, "_discover_all") as da, mock.patch.object(LB, "_sync_joined") as sj, \
              mock.patch.object(LB, "_report_to_dns") as rd, mock.patch.object(LB.time, "sleep", side_effect=_stop) as sl:
             LB._probe_loop()
-        self.assertEqual((pa.call_count, rp.call_count, rd.call_count), (1, 1, 1))
+        self.assertEqual((sj.call_count, pa.call_count, da.call_count, rp.call_count, rd.call_count), (1, 1, 1, 1, 1))
         sl.assert_called_once_with(LB.PROBE_INTERVAL)
         LB._running = True
 
@@ -265,6 +266,140 @@ class TestFunctional(_Base):
         self.assertTrue(all(n.status == "down" for n in LB._pool))
         self.assertIsNone(LB.pick_node())
         sp.assert_not_called()
+
+
+class TestModelAware(_Base):
+    """Resident-model discovery + rank_candidates (the nova_rosetta side of the balancer)."""
+    def test_discover_resident_per_runtime(self):
+        n = _node("mac-studio")
+        n.resident = {"llamacpp": ["kept"]}
+        def uo(url, timeout):
+            if url.endswith(":11434/api/ps"):
+                return _Resp({"models": [{"name": "qwen3:8b"}, {"name": "qwen3-coder:30b"}]})
+            if url.endswith(":5050/v1/models"):
+                return _Resp({"data": [{"id": "Qwen/Qwen3-8B"}, {"id": "/Volumes/Data/mlx-models/qwen2.5-32b-4bit"}]})
+            raise OSError("llama-server down")
+        with mock.patch.object(LB.urllib.request, "urlopen", side_effect=uo):
+            got = LB._discover_resident(n)
+        self.assertEqual(got["ollama"], ["qwen3:8b", "qwen3-coder:30b"])
+        self.assertEqual(got["mlx"], ["/Volumes/Data/mlx-models/qwen2.5-32b-4bit"])   # hub ids are just cache
+        self.assertEqual(got["llamacpp"], ["kept"])                                  # unreachable keeps last list
+
+    def test_rank_prefers_measured_speed_then_constrained_for_json(self):
+        _set_all("up")
+        _node("nova-core7").resident = {"ollama": ["qwen3:8b"]}
+        _node("tv-movies-mini").resident = {"ollama": ["qwen3:8b"], "mlx": ["/Users/Shared/mlx-models/Qwen3-8B-4bit"]}
+        _node("mac-studio").resident = {"ollama": ["qwen3:30b-a3b"]}
+        c = LB.candidates("qwen3-8b")
+        self.assertEqual([(x["name"], x["protocol"]) for x in c],
+                         [("tv-movies-mini", "mlx"), ("tv-movies-mini", "ollama"), ("nova-core7", "ollama")])
+        self.assertEqual(c[-1]["accelerator"], "rocm")
+        self.assertEqual(LB.candidates("qwen3-8b", structured=True)[0]["protocol"], "ollama")
+        fast_rocm = LB.rank_candidates(
+            [dict(name=n.name, ip=n.ip, status=n.status, p50_ms=n.p50_ms, active_connections=0, protocols=n.protocols,
+                  accel=n.accel, resident=n.resident) for n in LB._pool],
+            "qwen3-8b", perf={("nova-core7", "ollama"): 99.0})
+        self.assertEqual(fast_rocm[0]["name"], "nova-core7")
+        self.assertEqual(LB.candidates("qwen3-8b", runtimes=["mlx"])[0]["runtime_model"],
+                         "/Users/Shared/mlx-models/Qwen3-8B-4bit")
+        self.assertEqual(LB.candidates("qwen3-8b", exclude=["tv-movies-mini", "nova-core7"]), [])
+
+    def test_down_nodes_never_candidates(self):
+        _set_all("down")
+        _node("nova-core7").resident = {"ollama": ["qwen3:8b"]}
+        self.assertEqual(LB.candidates("qwen3-8b"), [])
+
+    def test_candidates_shared_from_pg(self):
+        rows = [("nova-core7", "up", 9.0, 0, {"ollama": ["qwen3:8b"]}, 3.0),
+                ("nova-core2", "up", 1.0, 0, '{"ollama": ["qwen3:8b"]}', 500.0),     # stale
+                ("tv-movies-mini", "up", 20.0, 0, '{"ollama": ["qwen3:8b"]}', 3.0)]
+        rows = [r + (None,) for r in rows]
+        cur = mock.MagicMock(); cur.fetchall.side_effect = [rows, [("tv-movies-mini", "ollama", 61.0)]]
+        conn = mock.MagicMock(); conn.cursor.return_value = cur
+        with mock.patch("psycopg2.connect", return_value=conn):
+            c = LB.candidates_shared("qwen3-8b")
+        self.assertEqual([(x["name"], x["tok_s"]) for x in c], [("tv-movies-mini", 61.0), ("nova-core7", 18.0)])
+        self.assertEqual(cur.execute.call_args_list[1].args[1], ("qwen3-8b",))
+        with mock.patch("psycopg2.connect", side_effect=OSError("down")):
+            self.assertEqual(LB.candidates_shared("qwen3-8b"), [])
+
+    def test_joined_laptop_enters_pool_health_checked_via_runtime_and_never_dns(self):
+        rows = [("gpu-laptop", "192.168.1.42", '{"ollama": 11434}', '{"ollama": "cuda"}', True, 2, 0),
+                ("mac-studio", "192.168.1.99", "{}", "{}", True, 9, 0)]       # static names can't be hijacked
+        cur = mock.MagicMock(); cur.fetchall.side_effect = [rows, []]
+        conn = mock.MagicMock(); conn.cursor.return_value = cur
+        with mock.patch("psycopg2.connect", return_value=conn):
+            LB._sync_joined()
+        lap = _node("gpu-laptop")
+        self.assertEqual((lap.joined, lap.port, lap.accel), (True, 0, {"ollama": "cuda"}))
+        self.assertEqual(_node("mac-studio").ip, "192.168.1.6")
+        seen = []
+        def uo(req, timeout):
+            seen.append(req.full_url)
+            return _Resp({"version": "0.40.13"})
+        with mock.patch.object(LB.urllib.request, "urlopen", side_effect=uo):
+            self.assertTrue(LB._probe_node(lap)[0])
+        self.assertEqual(seen, ["http://192.168.1.42:11434/api/version"])
+        _set_all("up")
+        lap.latencies.clear(); lap.latencies.append(0.1)                     # fastest node in the house…
+        lap.resident = {"ollama": ["qwen3:8b"]}
+        self.assertNotEqual(LB.pick_node(require_gpu=True)["name"], "gpu-laptop")   # …but never DNS/gateway
+        self.assertEqual(LB.pick_node(include_joined=True)["name"], "gpu-laptop")
+        self.assertEqual(LB.candidates("qwen3-8b")[0]["name"], "gpu-laptop")       # cuda prior 90 tok/s
+        cur.fetchall.side_effect = [[], []]                                      # it leaves
+        with mock.patch("psycopg2.connect", return_value=conn):
+            LB._sync_joined()
+        self.assertNotIn("gpu-laptop", [n.name for n in LB._pool])
+        with mock.patch("psycopg2.connect", side_effect=OSError("pg down")):
+            LB._sync_joined()                                                    # swallowed
+
+    def test_candidates_shared_knows_joined_nodes_from_node_info(self):
+        rows = [("gpu-laptop", "up", 4.0, 0, {"ollama": ["qwen3:8b"]}, 2.0,
+                 {"ip": "192.168.1.42", "protocols": {"ollama": 11434}, "accel": {"ollama": "cuda"}, "joined": True})]
+        cur = mock.MagicMock(); cur.fetchall.side_effect = [rows, []]
+        conn = mock.MagicMock(); conn.cursor.return_value = cur
+        with mock.patch("psycopg2.connect", return_value=conn):
+            c = LB.candidates_shared("qwen3-8b")
+        self.assertEqual((c[0]["ip"], c[0]["accelerator"]), ("192.168.1.42", "cuda"))
+
+    def _sync(self, joins, minions):
+        cur = mock.MagicMock(); cur.fetchall.side_effect = [joins, minions]
+        conn = mock.MagicMock(); conn.cursor.return_value = cur
+        with mock.patch("psycopg2.connect", return_value=conn):
+            LB._sync_joined()
+        return cur
+
+    def test_idle_minions_are_lent_and_away_ones_leave(self):
+        minions = [("office-2", "192.168.1.99", "http://192.168.1.99:11434", {"os": "Darwin"}),
+                   ("nova-core7", "192.168.1.150", "http://127.0.0.1:11434", {"os": "Linux"}),  # static already
+                   ("nova-core9", "192.168.1.7", "http://192.168.1.7:11434", {"os": "Darwin"}),  # = tv-movies-mini
+                   ("lab-box", "192.168.1.60", "http://127.0.0.1:11434", {"os": "Linux", "accel": "cuda"})]
+        cur = self._sync([], minions)
+        q = cur.execute.call_args_list[1].args
+        self.assertIn("state IN ('idle', 'dedicated')", q[0])
+        self.assertEqual(q[1], (LB.MINION_FRESH_S,))
+        lent = {n.name: n for n in LB._pool if n.joined}
+        self.assertEqual(set(lent), {"office-2", "lab-box"})
+        self.assertEqual((lent["office-2"].accel, lent["office-2"].source), ({"ollama": "metal"}, "minion"))
+        self.assertEqual((lent["lab-box"].ip, lent["lab-box"].accel["ollama"]), ("192.168.1.60", "cuda"))
+        lent["office-2"].latencies.append(5.0)
+        self._sync([], minions[3:])                                  # office-2: someone sat down
+        self.assertNotIn("office-2", [n.name for n in LB._pool])
+
+    def test_loans_expire(self):
+        joins = [("loaner", "192.168.1.61", '{"ollama": 11434}', '{"ollama": "rocm"}', True, 2, time.time() + 3600)]
+        self._sync(joins, [])
+        n = _node("loaner")
+        self.assertEqual(n.source, "join")
+        _set_all("up")
+        n.resident = {"ollama": ["qwen3:8b"]}
+        self.assertIn("loaner", [c["name"] for c in LB.candidates("qwen3-8b")])
+        n.expires_at = time.time() - 1                               # loan ended between syncs
+        self.assertNotIn("loaner", [c["name"] for c in LB.candidates("qwen3-8b")])
+
+    def test_every_protocol_has_an_accelerator(self):
+        for n in LB.NODES:
+            self.assertEqual(set(n["protocols"]), set(n.get("accel", {})), n["name"])
 
 
 class TestFrame(unittest.TestCase):

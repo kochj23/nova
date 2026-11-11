@@ -142,6 +142,32 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 
 ## Infrastructure & Security (June–October 2026)
 
+### Rosetta — Bring Whatever You've Got, It Gets AI (2026-11-10)
+
+Jordan's pitch to his boss, made real: all those idle laptops — Mac, AMD, NVIDIA, whatever — should just *be* a cluster. `scripts/nova_rosetta.py` is the translation layer between inference runtimes: callers ask for a **canonical model** (`qwen3-8b`, `qwen3-coder-30b`, …) with OpenAI-style messages, an optional JSON schema and a temperature, and Rosetta sends it to whichever node has that model **resident**, in that runtime's dialect:
+
+| Runtime | Accelerators | Model name it wants | Structured output | Reasoning |
+|---|---|---|---|---|
+| Ollama `/api/chat` | ROCm (AMD Radeon iGPUs .86/.150/.5), Metal (Macs), CUDA, Vulkan, CPU | `qwen3:8b` | `format` = schema (constrained) | split from `message.thinking`; `think:false` never sent (leaks untagged reasoning on 0.40) |
+| mlx_lm.server | Apple MLX | the `--model` path (`/…/Qwen3-8B-4bit`) | none → schema in the prompt, extract, validate, retry once with the error | `<think>` stripped; `/no_think` soft switch |
+| llama-server | Metal here; CUDA/ROCm/Vulkan anywhere | the GGUF it loaded (Ollama's own blob on the Studio) | `response_format` json_schema (constrained) | `<think>` stripped |
+| any OpenAI-compatible (vLLM, LM Studio) | CUDA/ROCm/… | `/v1/models` id | `response_format` | `<think>` stripped |
+
+Every answer comes back in one shape (text, thinking, tokens in/out, tok/s, finish, node, runtime, accelerator); Gemini-style `"OBJECT"/"STRING"` schemas are normalized; `num_ctx` is never sent (a different context = a reload).
+
+```mermaid
+flowchart LR
+  IR[nova_intent_router<br/>query_local] --> RO[nova_rosetta.chat<br/>canonical model]
+  RO --> LB[nova_lb.candidates_shared<br/>resident + accel + measured tok/s]
+  LB --> PG[(lb_pool_status<br/>rosetta_perf<br/>rosetta_nodes<br/>minion_nodes)]
+  RO -->|/api/chat + format| OL[Ollama<br/>ROCm · Metal · CUDA]
+  RO -->|/v1 + response_format| LC[llama-server]
+  RO -->|/v1 + prompt/validate/retry| MX[mlx_lm.server]
+  RO -->|tok/s EWMA, failure ×0.3| PG
+```
+
+**nova_lb** now discovers what each runtime has *loaded* (Ollama `/api/ps`, mlx_lm's `--model` path, llama-server's GGUF) every probe and publishes it with each node's accelerator; `candidates_shared(model)` ranks every node/runtime holding it — constrained runtimes first for JSON, then measured tok/s (`rosetta_perf`, EWMA; a failure cuts a node to 30%, so a crashing server sinks after one try), then latency. **Borrowed machines** come and go on their own: `nova_rosetta.py --join <ip|minion> [--for 8h]` (any LAN box running a runtime — accelerator detected over ssh, or from VRAM use, or `--accel`), and every **minion** whose heartbeat says idle/dedicated is lent automatically and leaves the moment someone sits down (`away`). Borrowed machines take canonical-model work only — never the `ollama.digitalnoise.net` DNS or the gateway's legacy picks. `deploy/nova-node-join.sh` turns a bare laptop into a node in one command (installs Ollama, sizes a model to its memory, binds the LAN, pins it resident). **nova_intent_router** routes every model with a `canonical` id through Rosetta (`NOVA_FLEET_ROUTING=0` restores single-host); privacy rules are unchanged — nothing leaves the LAN, and `--join` refuses non-private IPs. Tests: `tests/test_nova_rosetta.py`, `test_nova_lb.py`, `test_nova_intent_router.py` (103, all seven categories).
+
 ### She Grows From What She Reads — the Growth Loop, Honest Beliefs (2026-10-16)
 
 Jordan: "I want her to be constantly learning from the lessons, constantly fine-tuning herself, being a better person." The work reader drew ~1,260 lessons a day, but 95% of its "what this means for me" links ended in "I already do this — this confirms it", it filed **0** proposals that day, and the belief ledger had filled with noise.

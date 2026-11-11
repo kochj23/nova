@@ -63,7 +63,8 @@ class _Base(unittest.TestCase):
     def setUp(self):
         boom = MagicMock(side_effect=AssertionError("unmocked outbound"))
         for p in (patch.object(ir.urllib.request, "urlopen", boom), patch("subprocess.run", boom),
-                  patch.object(ir, "REDIS_AVAILABLE", False), patch.object(ir, "_openrouter_key_cache", "k-test")):
+                  patch.object(ir, "REDIS_AVAILABLE", False), patch.object(ir, "_openrouter_key_cache", "k-test"),
+                  patch.object(ir, "FLEET_ROUTING", False)):   # fleet path has its own tests below
             p.start()
             self.addCleanup(p.stop)
 
@@ -204,6 +205,50 @@ class TestFrame(unittest.TestCase):
     def test_import_never_runs_main(self):
         self.assertIn('if __name__ == "__main__":', SRC)
         self.assertFalse(ir.REDIS_AVAILABLE)
+
+
+class TestFleetRouting(_Base):
+    """query_local -> nova_rosetta across the fleet, falling back to the direct backend."""
+    def setUp(self):
+        super().setUp()
+        p = patch.object(ir, "FLEET_ROUTING", True)
+        p.start()
+        self.addCleanup(p.stop)
+        import nova_rosetta
+        self.rosetta = nova_rosetta
+
+    def test_canonical_models_go_through_rosetta(self):
+        ok = {"success": True, "text": "hi", "runtime": "ollama", "runtime_model": "qwen3-coder:30b",
+              "model": "qwen3-coder-30b", "node": "mac-studio", "accelerator": "metal", "tokens_out": 4, "tok_s": 70.0}
+        with patch.object(self.rosetta, "chat", return_value=ok) as chat:
+            r = ir.query_local("p", "coder", intent="code_review", system="sys", options={"max_tokens": 9})
+        self.assertEqual(chat.call_args.args[0], "qwen3-coder-30b")
+        self.assertEqual(chat.call_args.args[1][0], {"role": "system", "content": "sys"})
+        self.assertEqual((chat.call_args.kwargs["temperature"], chat.call_args.kwargs["max_tokens"]), (0.30, 9))
+        self.assertEqual((r["response"], r["node"], r["accelerator"], r["tokens_per_second"]),
+                         ("hi", "mac-studio", "metal", 70.0))
+
+    def test_fleet_failure_falls_back_to_direct_backend(self):
+        with patch.object(self.rosetta, "chat", return_value={"success": False, "error": "nothing resident"}), \
+                patch.object(ir.urllib.request, "urlopen", return_value=_ollama("direct")), \
+                redirect_stderr(io.StringIO()) as err:
+            r = ir.query_local("p", "coder")
+        self.assertEqual((r["response"], r["backend"]), ("direct", "ollama"))
+        self.assertIn("falling back", err.getvalue())
+
+    def test_rag_is_never_fleet_routed(self):
+        self.assertEqual(ir.MODELS["rag"].canonical, "")
+        for k, m in ir.MODELS.items():
+            if m.canonical:
+                self.assertIn(m.canonical, self.rosetta.CATALOG, k)
+
+    def test_private_intent_still_never_touches_cloud(self):
+        with patch.object(self.rosetta, "chat", return_value={"success": False, "error": "x"}), \
+                patch.object(ir.urllib.request, "urlopen", side_effect=urllib.error.URLError("down")), \
+                patch.object(ir, "query_cloud") as cloud, redirect_stderr(io.StringIO()):
+            r = ir.route(sorted(ir.PRIVATE_INTENTS)[0], "my bank balance")
+        cloud.assert_not_called()
+        self.assertFalse(r["success"])
 
 
 if __name__ == "__main__":
