@@ -144,7 +144,7 @@ class TestUnit(_Base):
         self.assertEqual(R.canonical("qwen3:30b-a3b"), "qwen3-30b-a3b")
         self.assertEqual(R.canonical("mlx-community/Qwen3-8B-4bit"), "qwen3-8b")
         self.assertEqual(R.canonical("/Volumes/Data/mlx-models/qwen2.5-32b-4bit"), "qwen2.5-32b")
-        self.assertEqual(R.canonical("/Users/kochj/.ollama/models/blobs/sha256-1194192cf2a187eb02722edcc3f7"),
+        self.assertEqual(R.canonical("/var/models/blobs/sha256-1194192cf2a187eb02722edcc3f7"),
                          "qwen3-coder-30b")
         self.assertEqual(R.canonical("nova"), "nova")
         self.assertIsNone(R.canonical("gpt-4o"))
