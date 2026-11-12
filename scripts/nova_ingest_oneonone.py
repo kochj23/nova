@@ -6,15 +6,19 @@ Source label: "oneonone"
 Author: Jordan Koch / kochj23
 """
 
-import json, urllib.request, urllib.parse, time
+import json, sys, urllib.request, urllib.parse, time
+from pathlib import Path
 
-ONEONONE = "http://127.0.0.1:37400/api/oneonone"
+sys.path.insert(0, str(Path(__file__).parent if "__file__" in globals() else Path.home() / ".openclaw/scripts"))
+import nova_config  # noqa: E402  (NovaControl URL + bearer auth)
+
+ONEONONE = "http://127.0.0.1:37400/api/oneonone"   # NovaControl, loopback only; auth: nova_config.novacontrol_headers()
 MEMORY   = "http://memory-server.digitalnoise.net:18790/remember"
 SOURCE   = "oneonone"
 
 
 def get(path):
-    with urllib.request.urlopen(f"{ONEONONE}{path}", timeout=10) as r:
+    with urllib.request.urlopen(urllib.request.Request(f"{ONEONONE}{path}", headers=nova_config.novacontrol_headers()), timeout=10) as r:
         return json.loads(r.read())
 
 

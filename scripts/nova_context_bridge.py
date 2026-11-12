@@ -112,9 +112,9 @@ def gather_today_signals():
     # Meeting topics from OneOnOne
     try:
         r = subprocess.run(
-            ["curl", "-s", "--connect-timeout", "2",
+            ["curl", "-s", "--connect-timeout", "2", "-K", "-",
              "http://127.0.0.1:37400/api/oneonone/meetings?limit=5"],
-            capture_output=True, text=True, timeout=5
+            input=nova_config.novacontrol_curl_config(), capture_output=True, text=True, timeout=5
         )
         if r.returncode == 0 and r.stdout.strip():
             data = json.loads(r.stdout)

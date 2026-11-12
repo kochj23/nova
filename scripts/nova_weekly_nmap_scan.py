@@ -6,17 +6,24 @@ Reports to Slack with threat summary
 """
 
 import subprocess
+import sys
 import requests
 import json
 from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import nova_config
 
 def run_nmap_scan():
     """Trigger network scan via NovaControl unified API (port 37400)"""
     try:
+        headers = nova_config.novacontrol_headers()   # NovaControl bearer auth (Keychain)
         # Trigger scan of local subnet
         response = requests.post(
             "http://127.0.0.1:37400/api/nmap/scan",
             json={"ip": "192.168.1.0/24"},
+            headers=headers,
             timeout=300
         )
 
@@ -24,11 +31,11 @@ def run_nmap_scan():
             return {"error": f"Scan trigger returned {response.status_code}"}
 
         # Get devices
-        devices_resp = requests.get("http://127.0.0.1:37400/api/nmap/devices", timeout=30)
+        devices_resp = requests.get("http://127.0.0.1:37400/api/nmap/devices", headers=headers, timeout=30)
         devices = devices_resp.json() if devices_resp.status_code == 200 else []
 
         # Get threats
-        threats_resp = requests.get("http://127.0.0.1:37400/api/nmap/threats", timeout=30)
+        threats_resp = requests.get("http://127.0.0.1:37400/api/nmap/threats", headers=headers, timeout=30)
         threats = threats_resp.json() if threats_resp.status_code == 200 else []
 
         return {

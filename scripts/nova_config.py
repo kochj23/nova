@@ -119,17 +119,77 @@ try:
     from nova_resolve import resolve_url as _resolve_url
     VECTOR_URL    = _resolve_url("memory_server", "/remember")
     MEMORY_URL    = _resolve_url("memory_server")
-    NOVACONTROL   = _resolve_url("novacontrol")
 except Exception:
     VECTOR_URL    = f"http://{NOVA_HOST}:18790/remember"
     MEMORY_URL    = f"http://{NOVA_HOST}:18790"
-    NOVACONTROL   = f"http://{NOVA_HOST}:37400"
 
 SCRIPTS_DIR   = str(__import__('pathlib').Path.home() / ".openclaw/scripts")
 
 # ── NovaControl unified API (port 37400) ─────────────────────────────────────
 # Single app serves data for all of Jordan's apps so Nova never needs multiple
 # processes running. Use these constants instead of hardcoding port numbers.
+#
+# NovaControl binds 127.0.0.1 ONLY (it is never reachable at the LAN IP, by design) and,
+# since v1.5.0, every route needs `Authorization: Bearer <token>` (401 otherwise; it also
+# rejects any Host header that is not 127.0.0.1/localhost). The token lives only in the
+# login Keychain (service nova-novacontrol-api-token, account nova); the app's LaunchAgent
+# exports it to the app as NOVACONTROL_API_TOKEN. Callers on another host cannot reach it.
+# Use novacontrol_api() / novacontrol_request() — never hardcode the URL or the header.
+NOVACONTROL   = "http://127.0.0.1:37400"
+NOVACONTROL_TOKEN_SERVICE = "nova-novacontrol-api-token"
+_novacontrol_token_cache = ""
+
+
+def novacontrol_token() -> str:
+    """NovaControl API bearer token: $NOVACONTROL_API_TOKEN, else the Keychain. "" if unavailable.
+    Never logged; cached per process once found."""
+    global _novacontrol_token_cache
+    import os
+    env_v = os.environ.get("NOVACONTROL_API_TOKEN", "").strip()
+    if env_v:
+        return env_v
+    if not _novacontrol_token_cache:
+        try:
+            r = subprocess.run(["security", "find-generic-password", "-a", "nova",
+                                "-s", NOVACONTROL_TOKEN_SERVICE, "-w"],
+                               capture_output=True, text=True, timeout=10)
+            if r.returncode == 0:
+                _novacontrol_token_cache = r.stdout.strip()
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass  # Linux node / locked Keychain: no token (NovaControl isn't local there anyway)
+    return _novacontrol_token_cache
+
+
+def novacontrol_headers(extra: dict | None = None) -> dict:
+    """Request headers for NovaControl: the bearer auth header (when a token exists) plus `extra`."""
+    h = dict(extra or {})
+    tok = novacontrol_token()
+    if tok:
+        h["Authorization"] = f"Bearer {tok}"
+    return h
+
+
+def novacontrol_api() -> tuple[str, dict]:
+    """(base URL, auth headers) for NovaControl, e.g. requests.get(base + "/api/status", headers=h)."""
+    return NOVACONTROL, novacontrol_headers()
+
+
+def novacontrol_curl_config() -> str:
+    """curl config text carrying the auth header. Feed it on stdin with `curl -K -` so the token
+    never appears in argv (ps): subprocess.run(["curl", "-K", "-", url], input=novacontrol_curl_config()).
+    Shell: python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import nova_config as c;
+    sys.stdout.write(c.novacontrol_curl_config())' "$SCRIPTS_DIR" | curl -K - ..."""
+    tok = novacontrol_token()
+    return f'header = "Authorization: Bearer {tok}"\n' if tok else ""
+
+
+def novacontrol_request(path: str, data: bytes | None = None, method: str | None = None,
+                        headers: dict | None = None):
+    """urllib Request for a NovaControl path ("/api/status") or full NovaControl URL, with auth."""
+    import urllib.request
+    url = path if path.startswith("http") else NOVACONTROL + path
+    return urllib.request.Request(url, data=data, method=method, headers=novacontrol_headers(headers))
+
 
 # App data endpoints
 NC_ONEONONE   = f"{NOVACONTROL}/api/oneonone"      # meetings, people, action items, goals

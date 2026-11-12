@@ -23,13 +23,17 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timedelta, timezone
 
-ONEONONE_API = "http://127.0.0.1:37400"
+from pathlib import Path as _Path
+sys.path.insert(0, str(_Path(__file__).parent))
+import nova_config  # noqa: E402  (NovaControl URL + bearer auth)
+
+ONEONONE_API = "http://127.0.0.1:37400/api/oneonone"   # NovaControl, loopback only; auth: nova_config.novacontrol_headers()
 MEMORY_API = "http://memory-server.digitalnoise.net:18790"
 SOURCE = "oneonone_meetings"
 
 
 def fetch_json(url):
-    req = urllib.request.Request(url)
+    req = urllib.request.Request(url, headers=nova_config.novacontrol_headers())
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read().decode())
 
@@ -42,7 +46,7 @@ def post_json(url, data):
 
 
 def fetch_people():
-    people = fetch_json(f"{ONEONONE_API}/api/people")
+    people = fetch_json(f"{ONEONONE_API}/people")
     return {p["id"]: p for p in people}
 
 
@@ -133,7 +137,7 @@ def main():
     print(f"  Found {len(people_map)} people")
 
     print(f"Fetching meetings from OneOnOne...")
-    meetings = fetch_json(f"{ONEONONE_API}/api/meetings")
+    meetings = fetch_json(f"{ONEONONE_API}/meetings")
     print(f"  Found {len(meetings)} meetings")
 
     if args.since:

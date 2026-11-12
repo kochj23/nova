@@ -29,7 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path.home() / ".openclaw/scripts"))
 import nova_config
 
-ONEONONE_URL = "http://127.0.0.1:37400/api"
+ONEONONE_URL = "http://127.0.0.1:37400/api/oneonone"   # NovaControl, loopback only; the bare /api/people 404s
 MEMORY_URL   = "http://memory-server.digitalnoise.net:18790"
 SLACK_TOKEN  = nova_config.slack_bot_token()
 SLACK_CHAN    = nova_config.SLACK_EMAIL
@@ -51,7 +51,10 @@ HERD_THRESHOLD = timedelta(days=14)
 
 def get(url, timeout=10):
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as r:
+        # NovaControl's bearer token only to NovaControl
+        headers = nova_config.novacontrol_headers() if url.startswith(ONEONONE_URL) else {}
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read())
     except Exception as e:
         print(f"[tracker] GET {url} failed: {e}", file=sys.stderr)

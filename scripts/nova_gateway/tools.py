@@ -899,9 +899,12 @@ async def _tool_homekit_scene(ctx: GatewayContext, params: dict) -> str:
         return await _guard_refuse("homekit_scene", action, "a guard blocked this scene this week.", "physical")
 
     try:
+        import nova_config  # NovaControl: loopback URL + bearer auth (Keychain)
+        nc_headers = await asyncio.to_thread(nova_config.novacontrol_headers)
         resp = await ctx.http.post(
-            "http://127.0.0.1:37400/api/homekit/scenes/execute",
+            f"{nova_config.NC_HOMEKIT}/scenes/execute",
             json={"name": scene},
+            headers=nc_headers,
             timeout=10,
         )
         if resp.status_code == 200:
@@ -1039,8 +1042,11 @@ async def _tool_plex_control(ctx: GatewayContext, params: dict) -> str:
         return "[error: no action specified]"
 
     try:
+        import nova_config  # NovaControl: loopback URL + bearer auth (Keychain)
+        nc_headers = await asyncio.to_thread(nova_config.novacontrol_headers)
         resp = await ctx.http.get(
-            f"http://127.0.0.1:37400/plex/{action}",
+            f"{nova_config.NOVACONTROL}/plex/{action}",
+            headers=nc_headers,
             timeout=10,
         )
         if resp.status_code == 200:

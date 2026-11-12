@@ -312,8 +312,11 @@ def _port_alive(port, host="127.0.0.1"):
 
 def _check_health(url):
     import urllib.request
+    import nova_config
     try:
-        with urllib.request.urlopen(url, timeout=10) as resp:
+        # NovaControl needs its bearer token (401 without); never send it anywhere else.
+        headers = nova_config.novacontrol_headers() if url.startswith("http://127.0.0.1:37400/") else {}
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=10) as resp:
             return resp.status == 200
     except Exception:
         return False
@@ -412,7 +415,7 @@ def seed_patterns():
             "pattern_name": "novacontrol_restart",
             "trigger_condition": {"service_down": "novacontrol", "port": 37400},
             "fix_action": {"type": "restart", "service": "net.digitalnoise.NovaControl",
-                          "health_check_url": "http://127.0.0.1:37400/"},
+                          "health_check_url": "http://127.0.0.1:37400/api/status"},
             "confidence": 0.9,
             "created_by": "claude",
         },

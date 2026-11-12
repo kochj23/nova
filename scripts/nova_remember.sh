@@ -17,7 +17,9 @@ json_payload="{
 # Determine the appropriate curl command based on the type tag
 if [ "$type_tag" = "meeting" ]; then
   # Use the NovaControl workflow for meeting summaries
-curl -s -X POST http://127.0.0.1:37400/api/workflows/action-item-to-slack/run \
+# NovaControl (loopback only) needs its bearer token: fed to curl as config on a pipe, never argv.
+python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import nova_config as c; sys.stdout.write(c.novacontrol_curl_config())' "$(dirname "$0")" 2>/dev/null | \
+curl -s -K - -X POST http://127.0.0.1:37400/api/workflows/action-item-to-slack/run \
   -H "Content-Type: application/json" \
   -d "{ \"title\": \"$summary\", \"assignee\": \"Jordan\", \"trigger\": \"meeting\" }"
 

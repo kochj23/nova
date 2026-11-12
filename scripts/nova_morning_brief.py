@@ -165,7 +165,7 @@ def get_email_priorities():
 def get_calendar():
     """Fetch today's calendar via NovaControl API."""
     try:
-        req = urllib.request.Request("http://127.0.0.1:37400/api/calendar/today")
+        req = urllib.request.Request("http://127.0.0.1:37400/api/calendar/today", headers=nova_config.novacontrol_headers())
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read())
         events = data.get("today", [])
@@ -189,7 +189,7 @@ def get_calendar():
 def get_calendar_events():
     """Return calendar as a list of formatted event strings for the brief."""
     try:
-        req = urllib.request.Request("http://127.0.0.1:37400/api/calendar/today")
+        req = urllib.request.Request("http://127.0.0.1:37400/api/calendar/today", headers=nova_config.novacontrol_headers())
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read())
         events = data.get("today", [])
@@ -216,8 +216,8 @@ def get_meetings_oneonone():
     """Fallback: get meetings from OneOnOne app."""
     try:
         r = subprocess.run(
-            ["curl", "-s", "--connect-timeout", "2", "http://127.0.0.1:37400/api/oneonone/meetings?limit=5"],
-            capture_output=True, text=True, timeout=5
+            ["curl", "-s", "--connect-timeout", "2", "-K", "-", "http://127.0.0.1:37400/api/oneonone/meetings?limit=5"],
+            input=nova_config.novacontrol_curl_config(), capture_output=True, text=True, timeout=5
         )
         if r.returncode != 0 or not r.stdout.strip():
             return []
@@ -281,7 +281,7 @@ def get_system_health():
 
     for port, name in [(37400, "NovaControl")]:
         try:
-            urllib.request.urlopen(f"http://127.0.0.1:{port}/api/status", timeout=2)
+            urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{port}/api/status", headers=nova_config.novacontrol_headers()), timeout=2)
         except Exception:
             issues.append(f"{name} app is not running")
 

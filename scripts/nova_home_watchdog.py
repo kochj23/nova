@@ -105,8 +105,8 @@ def get_accessories():
     # Try HomekitControl API first (faster, no Shortcuts overhead)
     try:
         result = subprocess.run(
-            ["curl", "-s", "--connect-timeout", "3", "http://127.0.0.1:37400/api/homekit/accessories"],
-            capture_output=True, text=True, timeout=15
+            ["curl", "-s", "--connect-timeout", "3", "-K", "-", "http://127.0.0.1:37400/api/homekit/accessories"],
+            input=nova_config.novacontrol_curl_config(), capture_output=True, text=True, timeout=15
         )
         if result.returncode == 0 and result.stdout.strip():
             data = json.loads(result.stdout.strip())

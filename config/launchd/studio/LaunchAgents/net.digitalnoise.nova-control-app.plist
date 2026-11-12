@@ -4,9 +4,15 @@
 <dict>
     <key>Label</key>
     <string>net.digitalnoise.nova-control-app</string>
+    <!-- NovaControl >= 1.5.0 requires a bearer token on every API route (fails closed without one).
+         The token lives ONLY in the login Keychain (service nova-novacontrol-api-token, account nova);
+         this wrapper exports it as NOVACONTROL_API_TOKEN and execs the app. Never put it in this file.
+         Callers get it via nova_config.novacontrol_api() / novacontrol_headers(). -->
     <key>ProgramArguments</key>
     <array>
-        <string>/Applications/NovaControl.app/Contents/MacOS/NovaControl</string>
+        <string>/bin/sh</string>
+        <string>-c</string>
+        <string>NOVACONTROL_API_TOKEN="$(/usr/bin/security find-generic-password -a nova -s nova-novacontrol-api-token -w 2>/dev/null)"; [ -n "$NOVACONTROL_API_TOKEN" ] || echo "nova-control-app: Keychain token nova-novacontrol-api-token unavailable; API will reject all requests" >&amp;2; export NOVACONTROL_API_TOKEN; exec /Applications/NovaControl.app/Contents/MacOS/NovaControl</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

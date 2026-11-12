@@ -49,7 +49,14 @@ def _load_module():
         r.__exit__ = MagicMock(return_value=False)
         return r
 
-    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+    # The script imports nova_config (NovaControl URL + auth). Other test modules in this suite
+    # replace sys.modules["nova_config"] with a MagicMock; load the real one for this module.
+    _cfg_spec = _ilu.spec_from_file_location("nova_config", _SCRIPT.parent / "nova_config.py")
+    _cfg = _ilu.module_from_spec(_cfg_spec)
+    _cfg_spec.loader.exec_module(_cfg)
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen), \
+            patch.dict(sys.modules, {"nova_config": _cfg}), \
+            patch.dict("os.environ", {"NOVACONTROL_API_TOKEN": "test-token"}):
         spec = _ilu.spec_from_file_location("nova_ingest_oneonone", _SCRIPT)
         mod = _ilu.module_from_spec(spec)
         spec.loader.exec_module(mod)

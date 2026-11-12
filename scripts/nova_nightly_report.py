@@ -385,7 +385,9 @@ def nova_memory_log():
         for port in [37400, 37422]:  # 37400=NovaControl, 37422=MLXCode
             try:
                 r = subprocess.run(
-                    ["curl", "-s", "--connect-timeout", "0.5", f"http://127.0.0.1:{port}/api/status"],
+                    ["curl", "-s", "--connect-timeout", "0.5", "-K", "-", f"http://127.0.0.1:{port}/api/status"],
+                    # NovaControl's bearer token only to NovaControl, via stdin (not argv)
+                    input=nova_config.novacontrol_curl_config() if port == 37400 else "",
                     capture_output=True, text=True, timeout=2
                 )
                 if r.returncode == 0 and r.stdout.strip():
@@ -560,8 +562,8 @@ def homekit_status():
     try:
         # Check if HomekitControl is running
         r = subprocess.run(
-            ["curl", "-s", "--connect-timeout", "2", "http://127.0.0.1:37400/api/status"],
-            capture_output=True, text=True, timeout=5
+            ["curl", "-s", "--connect-timeout", "2", "-K", "-", "http://127.0.0.1:37400/api/status"],
+            input=nova_config.novacontrol_curl_config(), capture_output=True, text=True, timeout=5
         )
 
         if r.returncode != 0 or not r.stdout.strip():
@@ -573,8 +575,8 @@ def homekit_status():
 
         # Get accessories
         r2 = subprocess.run(
-            ["curl", "-s", "--connect-timeout", "5", "http://127.0.0.1:37400/api/homekit/accessories"],
-            capture_output=True, text=True, timeout=15
+            ["curl", "-s", "--connect-timeout", "5", "-K", "-", "http://127.0.0.1:37400/api/homekit/accessories"],
+            input=nova_config.novacontrol_curl_config(), capture_output=True, text=True, timeout=15
         )
         raw_acc = json.loads(r2.stdout) if r2.returncode == 0 and r2.stdout.strip() else {}
 
@@ -931,9 +933,9 @@ def meeting_notes():
     log("Meeting notes...")
     try:
         r = subprocess.run(
-            ["curl", "-s", "--connect-timeout", "2",
+            ["curl", "-s", "--connect-timeout", "2", "-K", "-",
              "http://127.0.0.1:37400/api/oneonone/meetings?limit=20"],
-            capture_output=True, text=True, timeout=5
+            input=nova_config.novacontrol_curl_config(), capture_output=True, text=True, timeout=5
         )
         if r.returncode != 0 or not r.stdout.strip():
             return ""  # App not running — skip silently

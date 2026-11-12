@@ -60,7 +60,8 @@ ALLOWED_OUTBOUND_HOSTS = {
 }
 
 NMAP_RESULTS = Path.home() / "Library/Containers/com.digitalnoise.nmapscanner.macos"
-NOVACONTROL_API = "http://127.0.0.1:37400"
+import nova_config  # noqa: E402
+NOVACONTROL_API = "http://127.0.0.1:37400"   # loopback only (nova_config.NOVACONTROL); auth: nova_config.novacontrol_headers()
 
 
 class SecuritySentinel(SubAgent):
@@ -218,13 +219,13 @@ class SecuritySentinel(SubAgent):
         if not devices and not threats:
             # Try fetching from NovaControl API
             try:
-                resp = urllib.request.urlopen(f"{NOVACONTROL_API}/api/nmap/devices", timeout=10)
+                resp = urllib.request.urlopen(urllib.request.Request(f"{NOVACONTROL_API}/api/nmap/devices", headers=nova_config.novacontrol_headers()), timeout=10)
                 data = json.loads(resp.read())
                 devices = data.get("devices", [])
             except Exception:
                 pass
             try:
-                resp = urllib.request.urlopen(f"{NOVACONTROL_API}/api/nmap/threats", timeout=10)
+                resp = urllib.request.urlopen(urllib.request.Request(f"{NOVACONTROL_API}/api/nmap/threats", headers=nova_config.novacontrol_headers()), timeout=10)
                 data = json.loads(resp.read())
                 threats = data.get("threats", [])
             except Exception:

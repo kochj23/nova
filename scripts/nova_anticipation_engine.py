@@ -48,7 +48,7 @@ def log(msg):
 # ── Configuration ────────────────────────────────────────────────────────────
 
 PRESENCE_URL = "http://127.0.0.1:37465/occupancy"
-CALENDAR_URL = "http://127.0.0.1:37400/api/oneonone/meetings"
+CALENDAR_URL = "http://127.0.0.1:37400/api/oneonone/meetings"   # NovaControl, loopback only; auth via novacontrol_curl_config
 MEMORY_URL = "http://memory-server.digitalnoise.net:18790"
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 PG_DSN = _nova_dsn.pg_url("nova_ops")
@@ -148,8 +148,8 @@ def get_activity_state() -> str:
     # Check for active meetings via calendar
     try:
         r = subprocess.run(
-            ["curl", "-s", "--connect-timeout", "2", CALENDAR_URL + "?limit=5"],
-            capture_output=True, text=True, timeout=5
+            ["curl", "-s", "--connect-timeout", "2", "-K", "-", CALENDAR_URL + "?limit=5"],
+            input=nova_config.novacontrol_curl_config(), capture_output=True, text=True, timeout=5
         )
         if r.returncode == 0 and r.stdout.strip():
             meetings = json.loads(r.stdout)

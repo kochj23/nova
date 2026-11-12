@@ -11,7 +11,12 @@
 set -euo pipefail
 
 SCENE_NAME="${1:-}"
-API_URL="http://127.0.0.1:37400"
+API_URL="http://127.0.0.1:37400"   # NovaControl binds loopback only (nova_config.NOVACONTROL)
+
+# NovaControl's bearer token as curl config on a pipe (never in argv); empty if unavailable.
+nc_auth() {
+    "$(command -v python3 || echo /opt/homebrew/bin/python3)" -c 'import sys; sys.path.insert(0, sys.argv[1]); import nova_config as c; sys.stdout.write(c.novacontrol_curl_config())' "$(dirname "$0")" 2>/dev/null || true
+}
 
 # Log a successful scene activation to Postgres. Guarded so a psql failure
 # (network, auth, etc.) can never break scene execution — only log on success.
@@ -32,7 +37,7 @@ fi
 
 # List scenes
 if [ "$SCENE_NAME" = "--list" ]; then
-    result=$(curl -s --connect-timeout 3 "$API_URL/api/homekit/scenes" 2>/dev/null) || true
+    result=$(nc_auth | curl -s --connect-timeout 3 -K - "$API_URL/api/homekit/scenes" 2>/dev/null) || true
     if [ -n "$result" ]; then
         echo "$result"
     else
@@ -61,7 +66,7 @@ SCENE_JSON="${SCENE_NAME//\\/\\\\}"
 SCENE_JSON="${SCENE_JSON//\"/\\\"}"
 
 # Execute scene — try API first (2 retries with backoff on connection failure)
-result=$(curl -s --connect-timeout 3 --retry 2 --retry-delay 1 --retry-connrefused -X POST \
+result=$(nc_auth | curl -s --connect-timeout 3 --retry 2 --retry-delay 1 --retry-connrefused -K - -X POST \
     -H "Content-Type: application/json" \
     -d "{\"name\": \"$SCENE_JSON\"}" \
     "$API_URL/api/homekit/scenes/execute" 2>/dev/null) || true

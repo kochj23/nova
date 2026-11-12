@@ -21,7 +21,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from nova_subagent import SubAgent
 from nova_logger import log, LOG_INFO, LOG_ERROR
 
-NOVACONTROL_API = "http://127.0.0.1:37400"
+import nova_config  # noqa: E402
+NOVACONTROL_API = "http://127.0.0.1:37400"   # loopback only (nova_config.NOVACONTROL); auth: nova_config.novacontrol_request()
 MEMORY_URL = "http://memory-server.digitalnoise.net:18790"
 
 SYSTEM_PROMPT = """You are Briefer, Nova's daily intelligence analyst for Jordan Koch.
@@ -150,8 +151,8 @@ class ProactiveBriefer(SubAgent):
 
     async def _get_action_items(self) -> str:
         try:
-            resp = urllib.request.urlopen(
-                f"{NOVACONTROL_API}/api/oneonone/actionitems?completed=false", timeout=10
+            resp = urllib.request.urlopen(nova_config.novacontrol_request(
+                f"{NOVACONTROL_API}/api/oneonone/actionitems?completed=false"), timeout=10
             )
             data = json.loads(resp.read())
             items = data.get("actionItems", data.get("items", []))
@@ -166,7 +167,7 @@ class ProactiveBriefer(SubAgent):
 
     async def _get_system_health(self) -> str:
         try:
-            resp = urllib.request.urlopen(f"{NOVACONTROL_API}/api/health", timeout=10)
+            resp = urllib.request.urlopen(nova_config.novacontrol_request(f"{NOVACONTROL_API}/api/health"), timeout=10)
             data = json.loads(resp.read())
             status = data.get("status", "unknown")
             services = data.get("services", {})

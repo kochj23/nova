@@ -17,6 +17,7 @@ Written by Jordan Koch.
 """
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -104,7 +105,9 @@ def check_port(port, timeout=3):
     start = time.time()
     try:
         url = f"http://127.0.0.1:{port}/api/status"
-        req = urllib.request.Request(url)
+        # NovaControl (37400) answers 401 without its bearer token, and HTTPError is a URLError —
+        # without the header a healthy app reads as "connection refused" and gets restarted.
+        req = urllib.request.Request(url, headers=nova_config.novacontrol_headers() if port == 37400 else {})
         with urllib.request.urlopen(req, timeout=timeout) as r:
             data = json.loads(r.read())
             version = data.get("version", data.get("app", "ok"))
@@ -184,11 +187,17 @@ def capture_diagnostics(port, app_name):
 
 
 def restart_app(app_name, bundle_name):
-    """Attempt to restart a macOS app via `open -a`."""
+    """Attempt to restart a macOS app via `open -a` (NovaControl: via its LaunchAgent)."""
     try:
-        log(f"Attempting restart: open -a '{bundle_name}'")
+        if bundle_name == "NovaControl":
+            # NovaControl must start from its LaunchAgent, which exports the API token from the
+            # Keychain; an `open -a` instance would have no token and answer 401 to everything.
+            cmd = ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/net.digitalnoise.nova-control-app"]
+        else:
+            cmd = ["open", "-a", bundle_name]
+        log(f"Attempting restart: {' '.join(cmd)}")
         result = subprocess.run(
-            ["open", "-a", bundle_name],
+            cmd,
             capture_output=True, text=True, timeout=10
         )
         if result.returncode == 0:

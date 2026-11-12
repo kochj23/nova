@@ -37,7 +37,7 @@ def _load():
 aw = _load()
 aw.STATE_FILE = TMP / "state.json"
 aw.notify = MagicMock(return_value=True)
-aw.nova_config = types.SimpleNamespace(post_both=MagicMock(), SLACK_NOTIFY="C_TEST")
+aw.nova_config = types.SimpleNamespace(post_both=MagicMock(), SLACK_NOTIFY="C_TEST", novacontrol_headers=lambda: {})
 aw.vector_remember = MagicMock()
 
 

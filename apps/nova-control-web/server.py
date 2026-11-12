@@ -31,7 +31,11 @@ SESSIONS_JSON = SESSIONS_JSON_ARCHIVED if SESSIONS_JSON_ARCHIVED.exists() else S
 PG_DB = "nova_memories"
 BACKUP_LOG = Path.home() / ".openclaw" / "logs" / "nova_pg_backup.log"
 PROTECT_STATE = Path.home() / ".openclaw" / "workspace" / "state" / "protect_monitor_state.json"
-HOMEKIT_API = "http://127.0.0.1:37400"
+# NovaControl (loopback only, bearer auth since v1.5.0): URL + header come from nova_config.
+import sys as _sys  # noqa: E402
+_sys.path.insert(0, str(Path.home() / ".openclaw" / "scripts"))
+import nova_config as _nova_config  # noqa: E402
+HOMEKIT_API = _nova_config.NOVACONTROL
 MLX_MODELS_URL = "http://192.168.1.6:5050/v1/models"
 
 AGENTS = ["analyst", "sentinel", "coder", "lookout", "librarian"]
@@ -3245,6 +3249,7 @@ async def collect_homekit(session: aiohttp.ClientSession) -> dict:
         if not scenes and not accessories:
             try:
                 async with session.get(f"{HOMEKIT_API}/api/homekit/scenes",
+                                       headers=_nova_config.novacontrol_headers(),
                                        timeout=aiohttp.ClientTimeout(total=5)) as resp:
                     scenes_resp = await resp.json()
                     scenes = scenes_resp.get("scenes", []) if isinstance(scenes_resp, dict) else scenes_resp
@@ -3253,6 +3258,7 @@ async def collect_homekit(session: aiohttp.ClientSession) -> dict:
                 pass
             try:
                 async with session.get(f"{HOMEKIT_API}/api/homekit/accessories",
+                                       headers=_nova_config.novacontrol_headers(),
                                        timeout=aiohttp.ClientTimeout(total=5)) as resp:
                     acc_resp = await resp.json()
                     accessories = acc_resp.get("accessories", []) if isinstance(acc_resp, dict) else acc_resp
@@ -3295,7 +3301,7 @@ async def collect_app_watchdog() -> dict:
         nc_status_map = {}  # port -> {"status": str, "summary": str}
         try:
             import urllib.request as _ur
-            with _ur.urlopen("http://127.0.0.1:37400/api/status", timeout=2) as _r:
+            with _ur.urlopen(_nova_config.novacontrol_request("/api/status"), timeout=2) as _r:
                 nc_data = _json.loads(_r.read())
             for svc in nc_data.get("services", []):
                 old_port = str(svc.get("oldPort", ""))
@@ -4468,7 +4474,7 @@ async def collect_nmap_summary() -> dict:
     """Get NMAP data from NovaControl status API."""
     try:
         import urllib.request as _ur
-        with _ur.urlopen("http://127.0.0.1:37400/api/status", timeout=2) as _r:
+        with _ur.urlopen(_nova_config.novacontrol_request("/api/status"), timeout=2) as _r:
             nc_data = _json.loads(_r.read())
         for svc in nc_data.get("services", []):
             if svc.get("id") == "nmap":

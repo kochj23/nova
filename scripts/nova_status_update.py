@@ -10,9 +10,13 @@ Written by Jordan Koch.
 
 import json
 import subprocess
+import sys
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import nova_config  # noqa: E402
 
 WORKSPACE = Path.home() / ".openclaw/workspace"
 STATUS_FILE = WORKSPACE / "STATUS.md"
@@ -20,7 +24,9 @@ STATUS_FILE = WORKSPACE / "STATUS.md"
 
 def check(url: str, timeout: int = 3) -> dict:
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as r:
+        # NovaControl needs its bearer token; never send it to any other service.
+        headers = nova_config.novacontrol_headers() if url.startswith("http://127.0.0.1:37400/") else {}
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as r:
             return json.loads(r.read())
     except Exception:
         return {}
@@ -28,7 +34,7 @@ def check(url: str, timeout: int = 3) -> dict:
 
 def app_status(port: int, name: str) -> str:
     d = check(f"http://127.0.0.1:{port}/api/status")
-    if d.get("status") == "running" or d.get("app"):
+    if d.get("status") == "running" or d.get("app") or d.get("novacontrol") == "online":  # NovaControl 1.5 shape
         return f"✅ {name} running (port {port})"
     return f"❌ {name} not running (port {port})"
 

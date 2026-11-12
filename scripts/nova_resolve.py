@@ -45,7 +45,7 @@ _STATIC_MAP = {
     "gateway":          ("192.168.1.2", 18792),
     "scheduler":        ("192.168.1.6", 37460),
     "big_brother":      ("192.168.1.6", 37461),
-    "novacontrol":      ("192.168.1.6", 37400),
+    "novacontrol":      ("127.0.0.1", 37400),     # binds loopback only; bearer auth (nova_config.novacontrol_api)
     "novacontrol_web":  ("192.168.1.6", 37450),
     "syslog":           ("192.168.1.2", 37462),
     "snmp_poller":      ("192.168.1.2", 37463),   # 2026-10-03: systemd poller on nova-core; .6 LaunchAgent retired (was double-polling)

@@ -111,7 +111,9 @@ def check_app(port, timeout=3):
     """Check if an app is running. Returns (alive, status_data)."""
     try:
         url = f"http://127.0.0.1:{port}/api/status"
-        with urllib.request.urlopen(url, timeout=timeout) as r:
+        # NovaControl (37400) needs its bearer token; never send it to any other port.
+        headers = nova_config.novacontrol_headers() if port == 37400 else {}
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as r:
             return True, json.loads(r.read())
     except Exception:
         return False, {}
@@ -123,7 +125,8 @@ def get_app_data(port, endpoint, timeout=5):
         return None
     try:
         url = f"http://127.0.0.1:{port}{endpoint}"
-        with urllib.request.urlopen(url, timeout=timeout) as r:
+        headers = nova_config.novacontrol_headers() if port == 37400 else {}
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as r:
             return json.loads(r.read())
     except Exception:
         return None

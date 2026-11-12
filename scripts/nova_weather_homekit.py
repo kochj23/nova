@@ -34,7 +34,7 @@ NOW = datetime.now()
 HOUR = NOW.hour
 TODAY = date.today().isoformat()
 STATE_FILE = Path.home() / ".openclaw/workspace/state/nova_weather_homekit_state.json"
-HOMEKIT_URL = "http://127.0.0.1:37400"
+HOMEKIT_URL = "http://127.0.0.1:37400/api/homekit"   # NovaControl, loopback only; auth: nova_config.novacontrol_headers()
 
 # ── Weather thresholds ───────────────────────────────────────────────────────
 
@@ -221,8 +221,8 @@ def execute_scene(scene_name):
     try:
         data = json.dumps({"name": scene_name}).encode()
         req = urllib.request.Request(
-            f"{HOMEKIT_URL}/api/scenes/execute", data=data,
-            headers={"Content-Type": "application/json"}, method="POST"
+            f"{HOMEKIT_URL}/scenes/execute", data=data,
+            headers={"Content-Type": "application/json", **nova_config.novacontrol_headers()}, method="POST"
         )
         with urllib.request.urlopen(req, timeout=10) as r:
             result = json.loads(r.read())
@@ -243,7 +243,7 @@ def execute_scene(scene_name):
 def check_open_contacts():
     """Check HomeKit for open doors/windows (relevant for rain alerts)."""
     try:
-        with urllib.request.urlopen(f"{HOMEKIT_URL}/api/accessories", timeout=5) as r:
+        with urllib.request.urlopen(urllib.request.Request(f"{HOMEKIT_URL}/accessories", headers=nova_config.novacontrol_headers()), timeout=5) as r:
             accessories = json.loads(r.read())
             if isinstance(accessories, dict):
                 accessories = accessories.get("accessories", [])
