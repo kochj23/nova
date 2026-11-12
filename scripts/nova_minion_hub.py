@@ -27,6 +27,13 @@ screensaver draws: what this Mac is reading now, what it has learned for Nova to
                             losses, other, open, best, events — Burbank day), week {days[7], rows[{day,game,sessions,
                             minutes}], wins, losses, win_rate}, fame (top 5 scores), ai_share {ai, other, pct, sources}
                             (today's events that carry `source`), and partial[] naming any extra that failed.
+                            1.5 (2026-11-11, Nova Cluster 1.5.0), additive: chess {games, counted, record{wins,draws,
+                            losses}, accuracy{you,them}, rivals[{key, name, kind, games, wins, draws, losses,
+                            streak{result,n}, longest{wins,losses}, accuracy{you,them,n}, last}], recent[{id, ended,
+                            mode, white/black{name,kind,accuracy}, lm, lm_result, result, termination, opening, moves,
+                            plies, level}], review{url,title,at}} — GTNW Chess, Little Mister's head-to-head vs each
+                            human and vs Nova. Privacy: a human opponent is "Challenger" unless play.consent says
+                            name_in_reviews for that account (then only its display_name); no other names leave the hub.
                             Every node carries llm_job {state running|idle|none|silent, text, jobs[], model?, last?}
                             and purpose / alias / display_name / ip (minion_nodes columns, seeded from agent_docs).
   GET  /health
@@ -756,11 +763,17 @@ def _games_password() -> str | None:
     return _GAMES_PW["pw"]
 
 
-def _session_view(r) -> dict:
+def _session_view(r, consent: dict | None = None) -> dict:
     sid, game, client, player, started, seen, ended, outcome, score, actions, summ = r
-    summ = summ or {}
+    summ = summ if isinstance(summ, dict) else {}
     who = summ.get("leader") or summ.get("country_name") or ""
     what = summ.get("book") or summ.get("scenario") or ""
+    if game == CHESS:                       # never the summary's names: roles only (see chess_side_name)
+        names = {sd: chess_side_name(summ, player, sd, consent or {})["name"] for sd in ("white", "black")}
+        who = f"{names['white']} vs {names['black']}"
+        op = summ.get("opening") if isinstance(summ.get("opening"), dict) else {}
+        what = op.get("name") or CHESS_MODES.get(summ.get("mode"), "")
+        player = "default" if player == "default" else "challenger"
     return {"id": str(sid), "game": game, "client": client, "player": player, "started": iso(started),
             "last_seen": iso(seen), "ended": iso(ended) if ended else None, "outcome": outcome, "score": score,
             "actions": actions, "who": str(who)[:80], "what": str(what)[:120]}
@@ -795,8 +808,8 @@ SQL_TIMELINE = (f"SELECT s.game, floor(extract(epoch FROM now() - e.ts) / 60)::i
 SQL_FEED = (f"SELECT e.session_id::text, e.seq, e.ts, s.game, e.kind, e.detail {_JOIN} "
             f"ORDER BY e.ts DESC, e.seq DESC LIMIT {FEED_N * 3}")
 SQL_TODAY = (f"SELECT game, count(*), coalesce(sum(extract(epoch FROM last_seen_at - greatest(started_at, {_TODAY}))), 0) "
-             "/ 60, count(*) FILTER (WHERE outcome = 'victory'), count(*) FILTER (WHERE outcome = 'defeat'), "
-             "count(*) FILTER (WHERE ended_at IS NOT NULL AND coalesce(outcome, '') NOT IN ('victory', 'defeat')), "
+             "/ 60, count(*) FILTER (WHERE outcome IN ('victory', 'win')), count(*) FILTER (WHERE outcome IN ('defeat', 'loss')), "
+             "count(*) FILTER (WHERE ended_at IS NOT NULL AND coalesce(outcome, '') NOT IN ('victory', 'defeat', 'win', 'loss')), "
              "count(*) FILTER (WHERE ended_at IS NULL), max(score) FILTER (WHERE score > 0) "
              f"FROM play.sessions WHERE last_seen_at >= {_TODAY} GROUP BY 1")
 SQL_TODAY_EVENTS = f"SELECT s.game, count(*) {_JOIN} WHERE e.ts >= {_TODAY} GROUP BY 1"
@@ -805,10 +818,10 @@ SQL_WEEK = (f"SELECT to_char(started_at AT TIME ZONE '{GAMES_TZ}', 'YYYY-MM-DD')
             f"WHERE started_at >= {_TODAY} - interval '{WEEK_DAYS - 1} days' GROUP BY 1, 2 ORDER BY 1")
 SQL_WEEK_DAYS = (f"SELECT to_char((now() AT TIME ZONE '{GAMES_TZ}')::date - i, 'YYYY-MM-DD') "
                  f"FROM generate_series({WEEK_DAYS - 1}, 0, -1) i")
-SQL_WEEK_WL = ("SELECT count(*) FILTER (WHERE outcome = 'victory'), count(*) FILTER (WHERE outcome = 'defeat'), count(*) "
+SQL_WEEK_WL = ("SELECT count(*) FILTER (WHERE outcome IN ('victory', 'win')), count(*) FILTER (WHERE outcome IN ('defeat', 'loss')), count(*) "
                f"FROM play.sessions WHERE coalesce(ended_at, last_seen_at) >= {_TODAY} - interval '{WEEK_DAYS - 1} days'")
 SQL_FAME = ("SELECT game, player, summary, score, outcome, coalesce(ended_at, last_seen_at) FROM play.sessions "
-            f"WHERE score IS NOT NULL AND score > 0 ORDER BY score DESC LIMIT {FAME_N}")
+            f"WHERE score IS NOT NULL AND score > 0 AND game <> 'gtnwchess' ORDER BY score DESC LIMIT {FAME_N}")
 SQL_AI_SHARE = (f"SELECT s.game, lower(e.detail->>'source'), count(*) {_JOIN} "
                 f"WHERE e.ts >= {_TODAY} AND e.detail ? 'source' GROUP BY 1, 2")
 
@@ -842,13 +855,280 @@ def human_kind(kind: str) -> str:
     return (kind or "event").replace("_", " ").replace("-", " ").capitalize()
 
 
+# ── GTNW Chess (2026-11-11, Nova Cluster 1.5.0: "the rivalry on the dashboard") ──────────────────────────────────
+# Sessions: game 'gtnwchess', player 'default' (Little Mister's Macs) or a site account (Amy's Mac); one game = one
+# session (LAN: only the host writes). Contract: GTNW Chess PLAY_CONTRACT.md (summary.players/you/winner/analysis).
+# Privacy (the reporter's rule): a human opponent shows as "Challenger" unless play.consent says name_in_reviews for
+# that account, then only its display_name. Summary names are never passed through (except the fixed "Little Mister").
+CHESS = "gtnwchess"
+CHESS_MAX = 500                          # sessions read for the head-to-head (newest first)
+CHESS_RECENT_N = 6
+LM = "Little Mister"
+CHALLENGER = "Challenger"
+REVIEW_SITE = "https://nova.digitalnoise.net/"
+CHESS_MODES = {"vs_nova": "vs Nova", "lan": "LAN", "hotseat": "hot seat"}
+CHESS_TERM = {"checkmate": "checkmate", "resignation": "resignation", "stalemate": "stalemate", "fifty_move": "50-move rule",
+              "threefold": "threefold repetition", "insufficient_material": "insufficient material",
+              "agreement": "draw agreed", "timeout": "time", "abandoned": "abandoned"}
+SQL_CHESS = ("SELECT id::text, player, coalesce(ended_at, last_seen_at), outcome, "
+             "summary - 'pgn' - 'material_graph' - 'notable' FROM play.sessions "
+             f"WHERE game = '{CHESS}' AND ended_at IS NOT NULL ORDER BY ended_at DESC LIMIT {CHESS_MAX}")
+SQL_CONSENT_EXISTS = "SELECT to_regclass('play.consent') IS NOT NULL"
+SQL_CONSENT = ("SELECT account, name_in_reviews, display_name FROM play.consent WHERE game = %s "
+               "ORDER BY updated_at NULLS FIRST")
+SQL_CHESS_REVIEW = ("SELECT e.key, e.value FROM service_config c, jsonb_each(c.value) e "
+                    "WHERE c.service = 'nova_game_report' AND c.key = 'reported' AND e.value->>'game' = %s "
+                    "AND e.value->>'status' IN ('live', 'published') AND e.value->>'url' LIKE %s "
+                    "ORDER BY coalesce(e.value->>'published_at', e.value->>'at') DESC NULLS LAST LIMIT 1")
+_SIDES = ("white", "black")
+_URL_OK = re.compile(r"^https://nova\.digitalnoise\.net/[A-Za-z0-9._~/%-]*$")
+
+
+def _other(side: str) -> str:
+    return "black" if side == "white" else "white"
+
+
+def _chess_text(k: str, d: dict) -> str | None:
+    """GTNW Chess events (None = not a chess event). Never a player name: sides and roles only."""
+    g = d.get
+    if k == "move" and g("san"):
+        mn = g("move_number")
+        t = (f"{mn}{'.' if g('side') != 'black' else '…'} " if mn is not None else "") + str(g("san"))
+        cl = g("classification")
+        if g("mate"):
+            t += " — checkmate"
+        elif cl in ("inaccuracy", "mistake", "blunder"):
+            t += f" — {cl}" + (f" (best {g('best_san')})" if g("best_san") else "")
+        if g("capture") and not g("mate"):
+            t += f" · takes {g('capture')}"
+        return t
+    if k == "draw_offer":
+        return f"Draw offered by {str(g('by') or '?').capitalize()} — {'accepted' if g('accepted') else 'declined'}"
+    if k == "resign":
+        return f"{str(g('by') or '?').capitalize()} resigns"
+    if k == "game_over" and ("termination" in d or "white_accuracy" in d):
+        bits = [str(g("result") or "game over"), CHESS_TERM.get(g("termination"), str(g("termination") or "").replace("_", " "))]
+        op = g("opening") if isinstance(g("opening"), dict) else {}
+        if op.get("name"):
+            bits.append(str(op["name"]))
+        if isinstance(g("white_accuracy"), (int, float)) and isinstance(g("black_accuracy"), (int, float)):
+            bits.append(f"accuracy {round(g('white_accuracy'))}/{round(g('black_accuracy'))}")
+        return "Chess: " + " · ".join(b for b in bits if b)
+    if k == "game_start" and ("white_kind" in d or "black_kind" in d):
+        mode = g("mode")
+        if mode == "vs_nova":
+            return "New chess game vs Nova" + (f" · level {g('level')}" if g("level") is not None else "")
+        return "New chess game · " + CHESS_MODES.get(mode, "two players")
+    return None
+
+
+def _chess_level(k: str, d: dict) -> str | None:
+    if k == "move" and d.get("san"):
+        if d.get("mate"):
+            return "gold"
+        return {"blunder": "bad", "mistake": "warn"}.get(d.get("classification"), "info")
+    if k == "draw_offer":
+        return "good" if d.get("accepted") else "info"
+    if k == "resign":
+        return "warn"
+    if k == "game_over" and ("termination" in d or "white_accuracy" in d):
+        return "gold" if d.get("winner") in _SIDES else "good"
+    return None
+
+
+def _players(summ: dict) -> dict:
+    pl = summ.get("players") if isinstance(summ.get("players"), dict) else {}
+    return {sd: (pl.get(sd) if isinstance(pl.get(sd), dict) else {}) for sd in _SIDES}
+
+
+def chess_lm_side(player, summ: dict) -> str | None:
+    """Which side Little Mister played: the side whose account is 'default', else the local side of a 'default'
+    session, else (a LAN game Amy hosted) the remote human side; a hot seat on his Mac by the side named
+    "Little Mister". None when he wasn't in the game (Amy vs Nova on her Mac) or it can't be told."""
+    sides = _players(summ)
+    acct = {sd: sides[sd].get("account") for sd in _SIDES}
+    lm = [sd for sd in _SIDES if acct[sd] == "default"]
+    if len(lm) == 1:
+        return lm[0]
+    if len(lm) == 2:
+        return None                                   # both sides his: not a rivalry game
+    you = summ.get("you")
+    if player == "default":
+        if you in _SIDES:
+            return you
+        named = [sd for sd in _SIDES if str(sides[sd].get("name") or "").strip().lower() == LM.lower()]
+        return named[0] if len(named) == 1 else None
+    if player and summ.get("mode") == "lan" and you in _SIDES:
+        o = _other(you)
+        if sides[o].get("kind", "human") != "nova" and acct[o] in (None, "default"):
+            return o
+    return None
+
+
+def chess_side_name(summ: dict, player, side: str, consent: dict, lm: str | None = "?") -> dict:
+    """{"name", "kind", "account"} for one side, by role: Little Mister / Nova / a consented display name / Challenger."""
+    sides = _players(summ)
+    s = sides.get(side, {})
+    if lm == "?":
+        lm = chess_lm_side(player, summ)
+    if s.get("kind") == "nova":
+        return {"name": "Nova", "kind": "nova", "account": None}
+    if side == lm:
+        return {"name": LM, "kind": "human", "account": "default"}
+    acct = s.get("account")
+    if not acct and player and player != "default" and summ.get("you") == side:
+        acct = player                                   # the local side of a session written from that account
+    if acct == "default":
+        return {"name": LM, "kind": "human", "account": "default"}
+    name = consent.get(acct) if acct else None
+    return {"name": name or CHALLENGER, "kind": "human", "account": acct or None}
+
+
+def chess_lm_result(lm: str, summ: dict, outcome, player) -> str | None:
+    """win | loss | draw from Little Mister's side; None for abandoned / unfinished games."""
+    if summ.get("termination") == "abandoned" or summ.get("result") == "*" or outcome == "abandoned":
+        return None
+    w, r = summ.get("winner"), summ.get("result")
+    if w in _SIDES:
+        return "win" if w == lm else "loss"
+    if r == "1/2-1/2":
+        return "draw"
+    if r in ("1-0", "0-1"):
+        return "win" if (r == "1-0") == (lm == "white") else "loss"
+    if outcome in ("win", "loss", "draw") and player == "default" and summ.get("you") == lm:
+        return outcome
+    return None
+
+
+def _accuracy(summ: dict, side: str):
+    a = summ.get("analysis") if isinstance(summ.get("analysis"), dict) else {}
+    v = (a.get(side) or {}).get("accuracy") if isinstance(a.get(side), dict) else None
+    return round(float(v), 1) if isinstance(v, (int, float)) and 0 <= v <= 100 else None
+
+
+def _rival_key(kind: str, acct) -> str:
+    if kind == "nova":
+        return "nova"
+    return "h-" + hashlib.sha256(str(acct).encode()).hexdigest()[:10] if acct else "challenger"
+
+
+def _consent(cur) -> dict:
+    """{account: display_name} for accounts that opted in to being named (play.consent, game gtnwchess). A missing
+    table, row or grant is "no consent": the opponent stays "Challenger"."""
+    try:
+        cur.execute(SQL_CONSENT_EXISTS)
+        row = cur.fetchone()
+        if not row or not row[0]:
+            return {}
+        cur.execute(SQL_CONSENT, (CHESS,))
+        rows = cur.fetchall()
+    except Exception as e:  # noqa: BLE001
+        log(f"games consent unreadable (treated as no consent): {str(e).splitlines()[0][:120] if str(e) else type(e).__name__}")
+        return {}
+    out: dict = {}
+    for acct, ok, name in rows:
+        if not acct or acct == "default":
+            continue
+        nm = clean_text(name, 32) if ok is True and name else ""
+        if nm and nm.lower() not in (LM.lower(), "nova"):
+            out[str(acct)] = nm
+        else:
+            out.pop(str(acct), None)                  # a later "no" wins
+    return out
+
+
+def _avg(xs: list):
+    return round(sum(xs) / len(xs), 1) if xs else None
+
+
+def chess_view(rows: list, consent: dict) -> dict:
+    """Recent games + Little Mister's head-to-head vs each opponent (newest-first rows in)."""
+    recent, games = [], []
+    for sid, player, at, outcome, summ in rows:
+        summ = summ if isinstance(summ, dict) else {}
+        lm = chess_lm_side(player, summ)
+        names = {sd: chess_side_name(summ, player, sd, consent, lm) for sd in _SIDES}
+        res = chess_lm_result(lm, summ, outcome, player) if lm else None
+        sides = _players(summ)
+        if len(recent) < CHESS_RECENT_N:
+            op = summ.get("opening") if isinstance(summ.get("opening"), dict) else {}
+            opening = " ".join(str(x) for x in (op.get("eco"), op.get("name")) if x)
+            nova = next((sides[sd] for sd in _SIDES if sides[sd].get("kind") == "nova"), {})
+            recent.append({"id": str(sid), "ended": iso(at), "mode": CHESS_MODES.get(summ.get("mode"), None),
+                           "white": {"name": names["white"]["name"], "kind": names["white"]["kind"], "accuracy": _accuracy(summ, "white")},
+                           "black": {"name": names["black"]["name"], "kind": names["black"]["kind"], "accuracy": _accuracy(summ, "black")},
+                           "lm": lm, "lm_result": res, "result": clean_text(summ.get("result") or "", 8) or None,
+                           "termination": CHESS_TERM.get(summ.get("termination")) if summ.get("termination") else None,
+                           "opening": clean_text(opening, 60) or None,
+                           "moves": summ.get("moves") if isinstance(summ.get("moves"), int) else None,
+                           "plies": summ.get("plies") if isinstance(summ.get("plies"), int) else None,
+                           "level": clean_text(nova.get("level_name"), 20) if nova.get("level_name") else None})
+        if lm and res:
+            opp = names[_other(lm)]
+            games.append((at, _rival_key(opp["kind"], opp["account"]), opp, res,
+                          _accuracy(summ, lm), _accuracy(summ, _other(lm))))
+    rivals: dict = {}
+    for at, key, opp, res, a_you, a_them in reversed(games):         # oldest first, for the streaks
+        r = rivals.setdefault(key, {"key": key, "name": "Nova" if opp["kind"] == "nova" else opp["name"], "kind": opp["kind"],
+                                    "games": 0, "wins": 0, "draws": 0, "losses": 0, "streak": None,
+                                    "longest": {"wins": 0, "losses": 0}, "_you": [], "_them": [], "_run": {"win": 0, "loss": 0},
+                                    "last": None})
+        r["games"] += 1
+        r[{"win": "wins", "draw": "draws", "loss": "losses"}[res]] += 1
+        st = r["streak"]
+        r["streak"] = {"result": res, "n": st["n"] + 1 if st and st["result"] == res else 1}
+        for k, plural in (("win", "wins"), ("loss", "losses")):
+            r["_run"][k] = r["_run"][k] + 1 if res == k else 0
+            r["longest"][plural] = max(r["longest"][plural], r["_run"][k])
+        if a_you is not None and a_them is not None:
+            r["_you"].append(a_you); r["_them"].append(a_them)
+        r["last"] = iso(at)
+    out_rivals, all_you, all_them = [], [], []
+    for r in rivals.values():
+        all_you += r["_you"]; all_them += r["_them"]
+        r["accuracy"] = {"you": _avg(r["_you"]), "them": _avg(r["_them"]), "n": len(r["_you"])}
+        for k in ("_you", "_them", "_run"):
+            del r[k]
+        out_rivals.append(r)
+    out_rivals.sort(key=lambda r: (r["kind"] == "nova", -r["games"]))     # humans first, then Nova
+    return {"games": len(rows), "counted": len(games),
+            "record": {k: sum(r[k] for r in out_rivals) for k in ("wins", "draws", "losses")},
+            "accuracy": {"you": _avg(all_you), "them": _avg(all_them)},
+            "rivals": out_rivals, "recent": recent, "review": None}
+
+
+def _chess(cur, consent: dict) -> dict:
+    cur.execute(SQL_CHESS)
+    return chess_view(cur.fetchall(), consent)
+
+
+def chess_review(ops_cur) -> dict | None:
+    """Nova's newest published GTNW Chess review (nova_game_report's reported map in nova_ops), only on her own site."""
+    if ops_cur is None:
+        return None
+    ops_cur.execute(SQL_CHESS_REVIEW, (CHESS, REVIEW_SITE + "%"))
+    row = ops_cur.fetchone()
+    if not row:
+        return None
+    _sid, v = row
+    v = v if isinstance(v, dict) else {}
+    url = str(v.get("url") or "")
+    if not _URL_OK.match(url):
+        return None
+    return {"url": url, "title": clean_text(v.get("title") or "Nova's review", 120),
+            "at": clean_text(v.get("published_at") or v.get("at") or "", 40) or None}
+
+
 def event_text(kind: str, d) -> str:
     """One human line for a play event (GTNW, Blompie, CarTest, Stunt Driver …)."""
     d = d if isinstance(d, dict) else {}
     g = d.get
     k = kind or ""
     try:
-        if k in ("ticker", "nova_commentary") and g("text"):
+        chess = _chess_text(k, d)
+        if chess is not None:
+            t = chess
+        elif k in ("ticker", "nova_commentary") and g("text"):
             t = g("text")
         elif k == "game_over":
             t = ("Victory" if g("won") else "Game over") + (f" after {g('turns')} turns" if g("turns") is not None else "")
@@ -910,6 +1190,9 @@ def event_level(kind: str, d) -> str:
     """bad | warn | good | gold | nova | start | info — the app maps these to colours."""
     d = d if isinstance(d, dict) else {}
     k = kind or ""
+    chess = _chess_level(k, d)
+    if chess is not None:
+        return chess
     if k in ("nuclear_strike", "world_war", "world_atrocity", "war_powers_violation", "territory_lost", "wmd_program_started"):
         return "bad"
     if k == "defcon_change":
@@ -1070,15 +1353,16 @@ def collect_games(_cur=None) -> dict:
             cur = conn.cursor()
             cur.execute("SELECT 1")
             out["db"] = {"up": True, "ms": round((time.time() - t0) * 1000), "host": "core3 :5433"}
+            consent = _consent(cur)                     # never raises: unreadable = nobody consented
             cur.execute(SQL_LIVE)
             rows = cur.fetchall()
-            out["live"] = [_session_view(r[:-1]) for r in rows]
+            out["live"] = [_session_view(r[:-1], consent) for r in rows]
             raw = {str(r[0]): {"started": r[4], "summary": r[10] or {}} for r in rows}
             db_now = rows[0][-1] if rows else datetime.now(timezone.utc)
             part("live_stats", lambda: _live_extras(cur, out["live"], raw, db_now))
             out.pop("live_stats", None)                 # _live_extras enriches out["live"] in place
             cur.execute(SQL_RECENT)
-            out["recent"] = [_session_view(r) for r in cur.fetchall()]
+            out["recent"] = [_session_view(r, consent) for r in cur.fetchall()]
             cur.execute("SELECT game, count(*), count(*) FILTER (WHERE started_at::date = current_date), max(last_seen_at) "
                         "FROM play.sessions GROUP BY game ORDER BY 4 DESC")
             out["games"] = [{"game": g, "sessions": n, "today": d, "last": iso(m)} for g, n, d, m in cur.fetchall()]
@@ -1092,6 +1376,13 @@ def collect_games(_cur=None) -> dict:
             part("week", lambda: _week(cur))
             part("fame", lambda: _fame(cur))
             part("ai_share", lambda: _ai_share(cur))
+            part("chess", lambda: _chess(cur, consent))
+            if "chess" in out:
+                try:
+                    out["chess"]["review"] = chess_review(_cur)
+                except Exception as e:  # noqa: BLE001  (nova_ops down: the rivalry still shows)
+                    out.setdefault("partial", []).append("chess_review")
+                    log(f"games chess_review failed: {str(e).splitlines()[0][:160] if str(e) else type(e).__name__}")
             try:
                 cur.execute("SELECT t, role, backend, model, ok, ms, tokens_out FROM casting.ai_calls ORDER BY t DESC LIMIT 15")
                 calls = [{"t": iso(t), "game": "casting", "role": ro, "backend": b, "model": m, "ok": ok, "ms": ms,
@@ -1380,6 +1671,11 @@ def selftest() -> int:
     assert event_text("ticker", {"text": "a\u202eb\nc"}) == "a b c" and event_level("nuclear_strike", {}) == "bad"
     assert event_text("weird_kind", None) == "Weird kind" and event_text("game_over", "x") == "Game over"
     assert event_level("record_set", {}) == "gold" and event_level("treaty_answered", {"accepted": True}) == "good"
+    # GTNW Chess (2026-11-11): moves / resign / game over read as chess; opponents by role only
+    assert event_text("move", {"move_number": 12, "side": "black", "san": "Qxf2+", "classification": "blunder", "best_san": "Qd8"}) \
+        == "12… Qxf2+ — blunder (best Qd8)" and event_level("move", {"san": "e4", "classification": "blunder"}) == "bad"
+    assert event_text("resign", {"by": "white"}) == "White resigns" and event_level("game_over", {"termination": "agreement"}) == "good"
+    assert chess_side_name({"players": {"white": {"name": "Amy", "kind": "human"}}, "you": "black"}, "default", "white", {})["name"] == CHALLENGER
     assert clean_hb({"state": "idle", "ollama_url": "http://10.0.0.5:11434/", "models": ["qwen3:30b-a3b", 5],
                      "info": {"ac": True, "x": {"no": 1}}}) == {
         "state": "idle", "ollama_url": "http://10.0.0.5:11434", "models": ["qwen3:30b-a3b"], "info": {"ac": True}}
