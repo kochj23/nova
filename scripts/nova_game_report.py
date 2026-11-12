@@ -39,6 +39,14 @@ only affects future columns. To redact a past one: in the journal repo (~/nova-j
 "his opponent" (title, description, body), then `git add <those files> && git commit -m "nova: redact name" &&
 git pull --rebase && git push` (GitHub Pages redeploys; the old text stays in git history unless rewritten).
 
+AI VS AI (watch contract v2, 2026-11-12): spectator ("Watch AI play") sessions are recorded with player "AI vs AI",
+summary.spectator = true and summary.matchup = {"sides": [{side, kind, backend, model, label}]}. Every finished one
+gets an "AI vs AI" entry that names the models from the matchup (spectator_facts / build_spectator_prompt), capped at
+`spectator_daily_cap` (3) per game per Pacific day; the rest are marked skipped and logged, so auto-replay can't
+flood the journal. Spectator rows never count as his record: fetch_history and the rivalry exclude them (SQL
+NOT_SPECTATOR), and the watcher's account (summary.watcher) never reaches the sheet. Take-overs end the watch row
+'taken_over'; what he played after that is his own session, written up as usual.
+
 Usage:
   nova_game_report.py               # the scheduled run
   nova_game_report.py --list        # candidate sessions and their state, no writes
@@ -102,7 +110,12 @@ DEFAULTS = {
         {"kind": "ollama", "url": "http://127.0.0.1:11434", "model": "qwen3:30b-a3b", "timeout": 420},
     ],
     "live_check_hours": 6,       # how long to keep checking a published URL before alerting
+    "spectator_daily_cap": 3,    # AI vs AI entries per game per Pacific day; the rest are skipped and logged
+    "spectator_min_minutes": 0.0,  # autoplay can be fast: only min_actions applies to AI vs AI sessions
 }
+SPECTATOR_PLAYER = "AI vs AI"
+# SQL: rows that are a human's own game (every human record, history and rivalry uses this)
+NOT_SPECTATOR = "COALESCE(summary->>'spectator', '') <> 'true'"
 
 # (game, client) -> display name, and game -> what it is (for the prompt and the image).
 GAME_NAMES = {
@@ -194,10 +207,16 @@ def duration_minutes(s: dict) -> float:
     return max(0.0, (b - a).total_seconds() / 60.0)
 
 
+def is_spectator(s: dict) -> bool:
+    summ = s.get("summary") if isinstance(s.get("summary"), dict) else {}
+    return summ.get("spectator") is True or s.get("player") == SPECTATOR_PLAYER
+
+
 def trivial_reason(s: dict, cfg: dict) -> str | None:
     """Why a finished session is too small to write about, or None."""
     mins = duration_minutes(s)
-    if mins < float(cfg["min_minutes"]):
+    min_minutes = cfg.get("spectator_min_minutes", 0.0) if is_spectator(s) else cfg["min_minutes"]
+    if mins < float(min_minutes):
         return f"trivial: {mins:.1f} min < {cfg['min_minutes']} min"
     if int(s.get("actions") or 0) < int(cfg["min_actions"]):
         return f"trivial: {s.get('actions') or 0} actions < {cfg['min_actions']}"
@@ -361,7 +380,7 @@ def fetch_candidates(gcur, cfg: dict, only: str | None = None) -> list[dict]:
             f"SELECT {cols} FROM play.sessions "
             "WHERE (ended_at IS NOT NULL OR last_seen_at < now() - make_interval(mins => %s)) "
             "AND COALESCE(ended_at, last_seen_at) > now() - make_interval(days => %s) "
-            "AND (player = ANY(%s) OR game || ':' || player = ANY(%s)) "
+            "AND (player = ANY(%s) OR game || ':' || player = ANY(%s) OR summary->>'spectator' = 'true') "
             "ORDER BY COALESCE(ended_at, last_seen_at) LIMIT 200",
             (int(cfg["idle_minutes"]), int(cfg["lookback_days"]), list(cfg["players"]), game_player_keys(cfg)))
     return [dict(zip(SESSION_COLS, r)) for r in gcur.fetchall()]
@@ -391,7 +410,7 @@ def fetch_history(gcur, s: dict, limit: int = 50, cfg: dict | None = None) -> li
         limit = max(limit, 1000)
     gcur.execute(
         "SELECT id, client, started_at, last_seen_at, ended_at, outcome, score, actions, summary FROM play.sessions "
-        "WHERE game = %s AND player = ANY(%s) AND id <> %s AND COALESCE(ended_at, last_seen_at) < %s "
+        "WHERE game = %s AND player = ANY(%s) AND id <> %s AND COALESCE(ended_at, last_seen_at) < %s AND " + NOT_SPECTATOR + " "
         "ORDER BY COALESCE(ended_at, last_seen_at) DESC LIMIT %s",
         (s["game"], players, str(s["id"]), s.get("ended_at") or s.get("last_seen_at"), limit))
     cols = ("id", "client", "started_at", "last_seen_at", "ended_at", "outcome", "score", "actions", "summary")
@@ -1065,6 +1084,126 @@ def build_facts(s: dict, events: list[dict], history: list[dict], cfg: dict, con
     return out
 
 
+# ── AI vs AI (spectator) entries ──────────────────────────────────────────────────────────────────────────────
+
+def matchup_sides(s: dict) -> list[dict]:
+    """summary.matchup sides as the sheet shows them: who, kind, model, provider. Never anything else."""
+    m = (s.get("summary") or {}).get("matchup") if isinstance(s.get("summary"), dict) else None
+    sides = m.get("sides") if isinstance(m, dict) else None
+    out = []
+    for x in (sides if isinstance(sides, list) else [])[:8]:
+        if not isinstance(x, dict):
+            continue
+        who = str(x.get("label") or x.get("model") or "the built-in AI")[:64]
+        out.append({k: v for k, v in {"side": str(x.get("side") or "")[:32] or None, "who": who,
+                                      "kind": {"engine": "built-in game engine", "model": "AI model",
+                                               "npc": "NPC"}.get(x.get("kind"), x.get("kind")),
+                                      "model": x.get("model"), "provider": x.get("backend")}.items() if v})
+    return out
+
+
+def matchup_title(sides: list[dict]) -> str:
+    return " vs ".join(x["who"] for x in sides) or "AI vs AI"
+
+
+_SPECT_PRIVATE = {"watcher", "matchup", "spectator", "players", "pgn", "material_graph", "you"}
+
+
+def spectator_facts(s: dict, events: list[dict], cfg: dict) -> dict:
+    """The fact sheet for an AI vs AI game: no human, no history, the watcher's account never on it."""
+    red = [w.lower() for w in cfg["redline"]]
+    sides = matchup_sides(s)
+    raw = s.get("summary") if isinstance(s.get("summary"), dict) else {}
+    summ = {k: v for k, v in raw.items() if k not in _SPECT_PRIVATE and k != "fallbacks"}
+    mins = duration_minutes(s)
+    ended = _parse(s.get("ended_at") or s.get("last_seen_at")) or _now()
+    facts = {
+        "report": "ai_vs_ai",
+        "game": game_name(s["game"], s["client"]),
+        "what_the_game_is": GAME_ABOUT.get(s["game"], ""),
+        "platform": platform_name(s["client"]),
+        "date_played": str(ended.astimezone(ZoneInfo("America/Los_Angeles")).date()),
+        "matchup": sides or [{"who": "the game's built-in AI on every side"}],
+        "matchup_title": matchup_title(sides),
+        "session_minutes": round(mins, 1),
+        "session_minutes_rounded": int(round(mins)),
+        "actions": int(s.get("actions") or 0),
+        "outcome": s.get("outcome") or ("abandoned (no activity for a while; never formally ended)"
+                                        if not s.get("ended_at") else "ended"),
+        "taken_over": s.get("outcome") == "taken_over",
+        "score": _num(s.get("score")),
+    }
+    fb = raw.get("fallbacks")
+    if isinstance(fb, dict) and fb:
+        facts["fallbacks"] = {str(k)[:32]: int(v) for k, v in list(fb.items())[:8]
+                              if isinstance(v, (int, float)) and not isinstance(v, bool)}
+    if s.get("game") == CHESS:
+        pl = _players(raw)
+        by_side = {x.get("side"): x["who"] for x in sides}
+        labels = {sd: by_side.get(sd) or OPPONENT for sd in SIDES}
+        names = {str(pl[sd].get("name") or "").strip().lower(): labels[sd] for sd in SIDES
+                 if len(str(pl[sd].get("name") or "").strip()) >= 2}
+        rn = renamer(names)
+        dn = {**s, "summary": rn({k: v for k, v in raw.items() if k not in ("material_graph", "pgn")})}
+        block = chess_block(dn, [{**e, "detail": rn(e.get("detail") or {})} for e in events],
+                            {"lm": "white", "opp": "black", "labels": labels, "opponent_kind": "nova"})
+        for k in ("little_mister_played", "result_for_little_mister", "opponent", "opponent_is"):
+            block.pop(k, None)
+        facts["chess"] = sanitize(block, red)
+        events = [e for e in events if e["kind"] not in ("move",) + CHESS_LIVE_KINDS]
+    facts["summary"] = sanitize(summ, red)
+    clean = [e for e in ({"kind": ev["kind"], **(sanitize({k: v for k, v in (ev.get("detail") or {}).items()
+                                                            if k not in _SPECT_PRIVATE}, red) or {})}
+                         for ev in events) if len(e) > 1]
+    facts["events"] = _trim_events(clean)
+    return facts
+
+
+def spectator_table(facts: dict) -> str:
+    rows = [("Game", facts["game"]), ("Platform", facts["platform"]), ("Matchup", facts["matchup_title"]),
+            ("Result", facts["outcome"])]
+    rows += [(f"{x.get('side', 'Side').capitalize()}", " / ".join(str(v) for v in (x["who"], x.get("model"),
+                                                                                     x.get("provider")) if v))
+             for x in facts["matchup"] if x.get("side")]
+    if facts.get("score") is not None:
+        rows.append(("Score", _fmt(facts["score"])))
+    rows += [("Length", f"{facts['session_minutes_rounded']} min"), ("Moves / turns", _fmt(facts["actions"]))]
+    for side, n in (facts.get("fallbacks") or {}).items():
+        rows.append((f"Fallbacks ({side})", _fmt(n)))
+    clean = [(a, str(b).replace("|", "/").replace("\n", " ")) for a, b in rows]
+    return "| | |\n|---|---|\n" + "\n".join(f"| {a} | {b} |" for a, b in clean)
+
+
+def build_spectator_prompt(facts: dict) -> tuple[str, str]:
+    ctx = (
+        "Write a short AI VS AI column for Nova's journal about a game the machines played among themselves on the "
+        "Nova Games tables. Nobody human played it. You are Nova, calling it like a sports commentator.\n"
+        "HARD RULES:\n"
+        "- GROUNDED ONLY: every fact, move, name and number comes from the FACT SHEET; no new arithmetic.\n"
+        "- NAME THE MODELS: use each side's `who` from `matchup` (and its model/provider when given) in the title "
+        "and early in the body. Never invent a model, version or provider.\n"
+        "- If `fallbacks` is present, say how many times a model's move was invalid and the built-in AI stepped in.\n"
+        "- If `taken_over` is true, a human took the seat mid-game: say the machines' game ended there, nothing more.\n"
+        "- No people: no names, no household, no times of day, no locations. Never mention who was watching.\n"
+        "- If the sheet has a `chess` block, cite moves exactly as written there.\n"
+        "- Don't talk about the plumbing (sheet, log, data). A numbers table is appended automatically.\n"
+        "Shape: 300-600 words, markdown, no H1.\n\n"
+        "OUTPUT EXACTLY THIS SHAPE:\nTITLE: <a punchy title that names the matchup>\n<blank line>\n<the body>")
+    import nova_voice
+    return nova_voice.system_prompt(ctx, section=SECTION), \
+        f"--- FACT SHEET (the only source) ---\n{facts_text(facts)}\n\nWrite the column."
+
+
+def spectator_cap_hit(state: dict, s: dict, cfg: dict) -> str | None:
+    """'cap' reason when this game already has `spectator_daily_cap` AI vs AI entries (published or in flight)
+    on this Pacific day, else None."""
+    day = str((_parse(s.get("ended_at") or s.get("last_seen_at")) or _now()).astimezone(ZoneInfo("America/Los_Angeles")).date())
+    cap = int(cfg.get("spectator_daily_cap", 3))
+    n = sum(1 for k, r in state.items() if k != str(s["id"]) and isinstance(r, dict) and r.get("spectator")
+            and r.get("game") == s["game"] and r.get("day") == day and r.get("status") in ("published", "live", "claimed"))
+    return f"spectator cap: {cap} AI vs AI entries for {s['game']} on {day}" if n >= cap else None
+
+
 def facts_text(facts: dict, limit: int = 24000) -> str:
     txt = json.dumps({k: v for k, v in facts.items() if not str(k).startswith("_")}, indent=1, ensure_ascii=False,
                      default=str)
@@ -1278,7 +1417,8 @@ def call_writer(w: dict, system: str, user: str) -> str | None:
 
 def write_column(s: dict | None, facts: dict, cfg: dict) -> tuple[str, str, str] | None:
     """(title, body, writer) from the first writer in the chain that gives a grounded draft."""
-    system, user0 = build_rivalry_prompt(facts) if facts.get("report") == "rivalry" else build_prompt(facts)
+    system, user0 = build_rivalry_prompt(facts) if facts.get("report") == "rivalry" else \
+        build_spectator_prompt(facts) if facts.get("report") == "ai_vs_ai" else build_prompt(facts)
     sources = facts_text(facts)
     for w in cfg["writer_chain"]:
         name = f"{w.get('kind')}:{w.get('model')}"
@@ -1296,11 +1436,11 @@ def write_column(s: dict | None, facts: dict, cfg: dict) -> tuple[str, str, str]
             body, invented = strip_invented(body, sources)
             if invented:
                 log(f"writer {name}: cut sentences with numbers not in the fact sheet: {invented[:12]}")
-            if facts.get("chess") or facts.get("report") == "rivalry":
+            if facts.get("chess") or facts.get("report") == "rivalry":  # (AI vs AI chess too)
                 body, moves = strip_unknown_moves(body, sources)
                 if moves:
                     log(f"writer {name}: cut sentences citing moves not in the fact sheet: {moves[:12]}")
-            if len(body.split()) >= 250:
+            if len(body.split()) >= (150 if facts.get("report") == "ai_vs_ai" else 250):
                 log(f"column written by {name}")
                 return (title or f"{facts['game']}: the column", body, name)
             user = user0 + "\n\nYour last draft was too short or used numbers not in the fact sheet. " \
@@ -1330,7 +1470,8 @@ def public_text(text: str, facts: dict) -> str:
 
 def compose_body(body: str, facts: dict, s: dict, ref: str | None = None) -> str:
     body = public_text(body, facts)
-    table = rivalry_table(facts) if facts.get("report") == "rivalry" else stats_table(facts, s["game"])
+    table = rivalry_table(facts) if facts.get("report") == "rivalry" else \
+        spectator_table(facts) if facts.get("report") == "ai_vs_ai" else stats_table(facts, s["game"])
     ref = ref or f"Session ref: {session_ref(s['id'])}"
     return (body.rstrip() + "\n\n## The numbers\n\n" + table + f"\n\n*From the Nova Games play log. {ref}.*\n")
 
@@ -1351,8 +1492,12 @@ def publish(s: dict, title: str, body: str, facts: dict, ref: str | None = None)
     tag = {"blompie-mac": "blompie"}.get(s["game"], s["game"])
     tags = ["games", tag, "opinion"] if s["game"] != CHESS else \
         ["games", tag, "chess", "rivalry" if ref else "opinion"] + (["opinion"] if ref else [])
+    spect = facts.get("report") == "ai_vs_ai"
+    if spect:
+        tags.append("ai-vs-ai")
     title = public_text(title, facts)
     desc = public_text(f"Nova's take on Little Mister's {facts['game']} week: the rivalry report." if ref else
+                       f"AI vs AI in {facts['game']}: {facts['matchup_title']}, {facts['outcome']}." if spect else
                        f"Nova's take on Little Mister's {facts['game']} session: {facts['outcome']}.", facts)
     full = compose_body(body, facts, s, ref=ref)
     allow = tuple((facts.get("_private") or {}).get("allow") or ())
@@ -1370,8 +1515,8 @@ def publish(s: dict, title: str, body: str, facts: dict, ref: str | None = None)
         return None
     url = url_for(new[0])
     try:
-        nj.notify_slack(SECTION, f"🎮 {title}", f"Nova's column on Little Mister's {facts['game']} "
-                                               f"{'week' if ref else 'session'}. {url}")
+        nj.notify_slack(SECTION, f"🎮 {title}", f"Nova's AI vs AI column ({facts['game']}). {url}" if spect else
+                        f"Nova's column on Little Mister's {facts['game']} {'week' if ref else 'session'}. {url}")
     except Exception:  # noqa: BLE001
         pass
     return url
@@ -1435,7 +1580,7 @@ def fetch_rivalry_sessions(gcur, cfg: dict, wk: dict) -> list[dict]:
     """Every finished GTNW Chess session (his Macs and Amy's) up to the end of the week: the week + the history."""
     cols = ", ".join(SESSION_COLS)
     gcur.execute(
-        f"SELECT {cols} FROM play.sessions WHERE game = %s AND player = ANY(%s) "
+        f"SELECT {cols} FROM play.sessions WHERE game = %s AND player = ANY(%s) AND " + NOT_SPECTATOR + " "
         "AND (ended_at IS NOT NULL OR last_seen_at < now() - make_interval(mins => %s)) "
         "AND COALESCE(ended_at, last_seen_at) < %s ORDER BY COALESCE(ended_at, last_seen_at) LIMIT 2000",
         (CHESS, players_for(CHESS, cfg), int(cfg["idle_minutes"]), wk["end"]))
@@ -1641,17 +1786,20 @@ def run_fixture(path: str, cfg: dict | None = None, week: str | None = None) -> 
             return 0
     else:
         s, ref = _fixture_session(data["session"]), None
-        why = trivial_reason(s, cfg) or (s.get("game") == CHESS and chess_lm_side(s) is None and "not his game")
+        why = trivial_reason(s, cfg) or (s.get("game") == CHESS and not is_spectator(s) and chess_lm_side(s) is None
+                                         and "not his game")
         if why:
             print(f"[fixture] would be skipped: {why}")
             return 0
-        facts = build_facts(s, data.get("events") or [], [_fixture_session(h) for h in data.get("history") or []],
-                            cfg, consent=data.get("consent"))
+        facts = spectator_facts(s, data.get("events") or [], cfg) if is_spectator(s) else \
+            build_facts(s, data.get("events") or [], [_fixture_session(h) for h in data.get("history") or []],
+                        cfg, consent=data.get("consent"))
     print("[fixture dry run: no database, no state, no publish]")
     print(facts_text(facts))
     col = write_column(s if ref is None else None, facts, cfg)
     if not col:
-        system, _ = build_rivalry_prompt(facts) if ref else build_prompt(facts)
+        system, _ = build_rivalry_prompt(facts) if ref else build_spectator_prompt(facts) if is_spectator(s) else \
+            build_prompt(facts)
         print("\n[no writer produced a grounded draft; the system prompt follows]\n" + system)
         return 1
     title, body, writer = col
@@ -1665,26 +1813,34 @@ def process(s: dict, gcur, cur, state: dict, cfg: dict, dry_run: bool = False) -
     """Handle one finished session. Returns the resulting status."""
     import nova_journal as nj
     sid = str(s["id"])
+    spect = is_spectator(s)
+    tag = {"spectator": True, "day": str((_parse(s.get("ended_at") or s.get("last_seen_at")) or _now())
+                                         .astimezone(ZoneInfo("America/Los_Angeles")).date())} if spect else {}
     why = trivial_reason(s, cfg)
-    if not why and s.get("game") == CHESS and chess_lm_side(s) is None:
+    if not why and not spect and s.get("game") == CHESS and chess_lm_side(s) is None:
         why = "Little Mister did not play in this game"
+    if not why and spect:
+        why = spectator_cap_hit(state, s, cfg)
     if why:
         if not dry_run:
-            mark(cur, state, sid, "skipped", reason=why, game=s["game"])
+            mark(cur, state, sid, "skipped", reason=why, game=s["game"], **tag)
         log(f"{sid[:8]} {s['game']}: skipped ({why})")
         return "skipped"
     existing = find_existing_article(sid, nj.HUGO_ROOT / "content" / SECTION)
     if existing:  # a previous run published it and died before marking
         if not dry_run:
-            mark(cur, state, sid, "published", url=url_for(existing), recovered=True, game=s["game"])
+            mark(cur, state, sid, "published", url=url_for(existing), recovered=True, game=s["game"], **tag)
         return "published"
     events = fetch_events(gcur, sid, skip_kinds=CHESS_LIVE_KINDS if s.get("game") == CHESS else ())
-    history = fetch_history(gcur, s, cfg=cfg)
-    consent = chess_consent(gcur, cfg) if s.get("game") == CHESS else None   # read now: OFF affects future columns
-    facts = build_facts(s, events, history, cfg, consent=consent)
+    if spect:   # AI vs AI: no human, so no history, rivalry or consent
+        facts = spectator_facts(s, events, cfg)
+    else:
+        history = fetch_history(gcur, s, cfg=cfg)
+        consent = chess_consent(gcur, cfg) if s.get("game") == CHESS else None   # read now: OFF affects future columns
+        facts = build_facts(s, events, history, cfg, consent=consent)
     attempts = int((state.get(sid) or {}).get("attempts", 0)) + 1
     if not dry_run:
-        mark(cur, state, sid, "claimed", attempts=attempts, game=s["game"])
+        mark(cur, state, sid, "claimed", attempts=attempts, game=s["game"], **tag)
     col = write_column(s, facts, cfg)
     if not col:
         if not dry_run:

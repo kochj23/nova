@@ -842,5 +842,138 @@ class TestCaseFile(unittest.TestCase):
         self.assertEqual(len(f["case_file"]["orders_over_advisor_objections"]), 8)
 
 
+# ── AI vs AI (watch contract v2): spectator sessions get their own capped entries, never his record ────────────
+MATCHUP = {"sides": [{"side": "white", "kind": "model", "backend": "anthropic", "model": "claude-sonnet-5-5",
+                      "label": "Claude Sonnet 5.5"},
+                     {"side": "black", "kind": "model", "backend": "xai", "model": "grok-5", "label": "Grok 5"}]}
+
+
+def spect_session(i=0, **kw):
+    now = NOW()
+    s = session(id=f"aaaaaaaa-0000-4000-8000-{i:012d}", game="gtnw", client="web", player="AI vs AI",
+                started_at=now - timedelta(minutes=3), outcome="defeat", actions=40,
+                summary={"spectator": True, "watcher": "kochj23", "matchup": MATCHUP, "turns": 40,
+                         "fallbacks": {"black": 2}, "president": "Autopilot"})
+    s.update(kw)
+    return s
+
+
+SPECT_DRAFT = ("TITLE: Claude Sonnet 5.5 vs Grok 5: Nobody Wins a Nuclear War\n\n"
+               "Claude Sonnet 5.5 took the Oval Office against Grok 5 and the world ended in defeat after 40 turns. "
+               "Grok 5 fumbled 2 moves and the built-in AI stepped in. " + "The machines traded crises like cards. " * 40)
+
+
+class TestSpectator(unittest.TestCase):
+    """Security / Performance / Retry / Unit / Integration / Functional / Frame for AI vs AI entries."""
+
+    def setUp(self):
+        p = patch.object(gr, "ollama_chat", side_effect=AssertionError("no local calls in these tests"))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _process(self, nj, ops, sessions, state):
+        with patch.dict(sys.modules, {"nova_journal": nj, "nova_voice": types.SimpleNamespace(
+                system_prompt=lambda ctx, section="": "VOICE\n" + ctx)}):
+            return [gr.process(s, FakeGamesCursor(sessions, events=[{"seq": 0, "kind": "turn",
+                                                                      "detail": {"turn": 1, "watcher": "kochj23"}}]),
+                               ops, state, dict(gr.DEFAULTS)) for s in sessions]
+
+    # Unit
+    def test_is_spectator_and_matchup_sides(self):
+        self.assertTrue(gr.is_spectator(spect_session()))
+        self.assertFalse(gr.is_spectator(session()))
+        sides = gr.matchup_sides(spect_session())
+        self.assertEqual([x["who"] for x in sides], ["Claude Sonnet 5.5", "Grok 5"])
+        self.assertEqual(sides[1], {"side": "black", "who": "Grok 5", "kind": "AI model", "model": "grok-5",
+                                    "provider": "xai"})
+        self.assertEqual(gr.matchup_title(sides), "Claude Sonnet 5.5 vs Grok 5")
+        self.assertEqual(gr.matchup_sides(session()), [])
+
+    def test_fast_autoplay_is_not_trivial_but_empty_is(self):
+        now = NOW()
+        cfg = dict(gr.DEFAULTS)
+        self.assertIsNone(gr.trivial_reason(spect_session(started_at=now - timedelta(seconds=20)), cfg))
+        self.assertTrue(gr.trivial_reason(spect_session(actions=0), cfg))
+
+    # Security
+    def test_watcher_account_and_player_names_never_on_the_sheet(self):
+        f = gr.spectator_facts(spect_session(), [{"seq": 0, "kind": "turn", "detail": {"watcher": "kochj23", "x": 1}}],
+                               dict(gr.DEFAULTS))
+        txt = gr.facts_text(f)
+        self.assertNotIn("kochj23", txt)
+        self.assertNotIn("Little Mister", txt)
+        self.assertEqual(f["fallbacks"], {"black": 2})
+        c = spect_session(game="gtnwchess", client="mac", summary={**chess_summary(
+            white={"name": "Claude Sonnet 5.5", "kind": "model"}, black={"name": HH, "kind": "model"}),
+            "spectator": True, "matchup": MATCHUP})
+        f = gr.spectator_facts(c, chess_events(white="Claude Sonnet 5.5", black=HH), dict(gr.DEFAULTS))
+        txt = gr.facts_text(f)
+        self.assertNotIn(HH, txt)
+        self.assertIn("9. Nxe5", f["chess"]["move_list"])
+        self.assertEqual(f["chess"]["players"], {"white": "Claude Sonnet 5.5", "black": "Grok 5"})
+        self.assertNotIn("little_mister_played", f["chess"])
+
+    def test_history_and_rivalry_sql_exclude_spectators(self):
+        g = FakeGamesCursor([])
+        gr.fetch_history(g, session())
+        gr.fetch_rivalry_sessions(g, dict(gr.DEFAULTS), gr.week_bounds("2026-W45"))
+        for sql, _ in g.sql:
+            self.assertIn(gr.NOT_SPECTATOR, sql)
+        gr.fetch_candidates(g, dict(gr.DEFAULTS))
+        self.assertIn("summary->>'spectator' = 'true'", g.sql[-1][0])
+
+    # Functional + Integration (process -> publish with the fake journal)
+    def test_ai_vs_ai_entry_names_the_models_and_marks_state(self):
+        with tempfile.TemporaryDirectory() as d:
+            nj, ops = fake_nj(Path(d), draft=SPECT_DRAFT), FakeOpsCursor()
+            state = {}
+            (res,) = self._process(nj, ops, [spect_session()], state)
+            self.assertEqual(res, "published")
+            pub = nj.published[0]
+            self.assertIn("ai-vs-ai", pub["tags"])
+            self.assertIn("Claude Sonnet 5.5", pub["title"])
+            self.assertIn("| Matchup | Claude Sonnet 5.5 vs Grok 5 |", pub["body"])
+            self.assertIn("| Fallbacks (black) | 2 |", pub["body"])
+            self.assertNotIn("kochj23", pub["body"] + pub["sources"])
+            self.assertNotIn("Earlier sessions", pub["body"])
+            rec = state[spect_session()["id"]]
+            self.assertEqual((rec["status"], rec["spectator"], rec["game"]), ("published", True, "gtnw"))
+            self.assertRegex(rec["day"], r"^\d{4}-\d{2}-\d{2}$")
+
+    def test_cap_three_per_game_per_day_rest_skipped_and_logged(self):
+        with tempfile.TemporaryDirectory() as d:
+            nj, ops = fake_nj(Path(d), draft=SPECT_DRAFT), FakeOpsCursor()
+            state = {}
+            sessions = [spect_session(i) for i in range(5)] + [spect_session(9, game="cartest")]
+            res = self._process(nj, ops, sessions, state)
+            self.assertEqual(res, ["published"] * 3 + ["skipped"] * 2 + ["published"])
+            self.assertIn("spectator cap", state[sessions[3]["id"]]["reason"])
+            self.assertTrue(any("spectator cap" in m for m in nj.logs))
+
+    # Retry: a failed draft doesn't eat a cap slot; a retry still publishes
+    def test_errors_do_not_count_toward_the_cap(self):
+        state = {f"x{i}": {"status": "error", "spectator": True, "game": "gtnw",
+                           "day": str(NOW().astimezone(gr.ZoneInfo("America/Los_Angeles")).date())} for i in range(5)}
+        self.assertIsNone(gr.spectator_cap_hit(state, spect_session(), dict(gr.DEFAULTS)))
+        state["y"] = {**state["x0"], "status": "claimed"}
+        state["z"] = {**state["x0"], "status": "live"}
+        state["w"] = {**state["x0"], "status": "published"}
+        self.assertTrue(gr.spectator_cap_hit(state, spect_session(), dict(gr.DEFAULTS)))
+
+    # Performance
+    def test_spectator_facts_fast_on_5k_events(self):
+        evs = [{"seq": i, "kind": "turn", "detail": {"turn": i, "text": "x" * 200}} for i in range(5000)]
+        t = time.time()
+        f = gr.spectator_facts(spect_session(), evs, dict(gr.DEFAULTS))
+        self.assertLess(time.time() - t, 2.0)
+        self.assertLessEqual(len(gr.facts_text(f)), 24000 + 100)
+
+    # Frame
+    def test_prompt_rules_and_fixture_dry_run(self):
+        system, _ = gr.build_spectator_prompt({"report": "ai_vs_ai"})
+        self.assertIn("NAME THE MODELS", system)
+        self.assertIn("Never mention who was watching", system)
+
+
 if __name__ == "__main__":
     unittest.main()
