@@ -261,6 +261,11 @@ class TestPerformance(unittest.TestCase):
         self.assertIn(("games", hub.collect_games, 10), hub.COLLECTORS)
 
 
+    def test_end_of_game_move_burst_stays_out_of_feed_and_timeline(self):
+        for sql in (hub.SQL_FEED, hub.SQL_TIMELINE):
+            self.assertIn("NOT (s.game = 'gtnwchess' AND e.kind = 'move')", sql)
+        self.assertNotIn("gtnwchess", hub.SQL_TODAY_EVENTS, "the day's event count still includes them")
+
     def test_chess_reads_a_bounded_slice_without_pgn(self):
         self.assertIn(f"LIMIT {hub.CHESS_MAX}", hub.SQL_CHESS)
         self.assertIn("- 'pgn' - 'material_graph'", hub.SQL_CHESS)
@@ -378,6 +383,17 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(hub.event_text("game_start", {"mode": "lan", "white": "Amy", "white_kind": "human"}), "New chess game · LAN")
         # GTNW's game_over is untouched
         self.assertEqual(hub.event_level("game_over", {"won": False}), "bad")
+
+    def test_live_ply_and_takeback_lines(self):
+        self.assertEqual(hub.event_text("ply", {"ply": 3, "move_number": 2, "side": "white", "san": "Nf3", "capture": None,
+                                                "check": False}), "2. ♘ Nf3")
+        self.assertEqual(hub.event_text("ply", {"move_number": 7, "side": "black", "san": "exd4", "capture": "pawn"}),
+                         "7… ♙ exd4 · takes pawn")
+        self.assertEqual(hub.event_text("ply", {"move_number": 5, "side": "white", "san": "O-O"}), "5. ♔ O-O")
+        self.assertEqual(hub.event_level("ply", {"san": "Bb5+", "check": True}), "warn")
+        self.assertEqual(hub.event_level("ply", {"san": "e4"}), "info")
+        self.assertEqual(hub.event_text("takeback", {"from_ply": 12, "to_ply": 10}), "Takeback: ply 12 → 10")
+        self.assertEqual(hub.event_level("takeback", {}), "warn")
 
     def test_chess_sides_and_results(self):
         rows = {r[0]: r for r in CHESS_ROWS}

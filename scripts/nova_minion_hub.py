@@ -803,10 +803,13 @@ _JOIN = "FROM play.events e JOIN play.sessions s ON s.id = e.session_id"
 SQL_LIVE = (f"SELECT {_COLS}, now() FROM play.sessions WHERE ended_at IS NULL AND "
             f"last_seen_at > now() - interval '{LIVE_MIN} minutes' ORDER BY last_seen_at DESC LIMIT 12")
 SQL_RECENT = f"SELECT {_COLS} FROM play.sessions ORDER BY last_seen_at DESC LIMIT 12"
+# GTNW Chess writes live `ply` events while a game runs and the analysed `move` events in one burst at game end:
+# the burst is not play, so it stays out of the feed and the timeline (it is still in the day's event counts).
+_NOT_REPLAY = "NOT (s.game = 'gtnwchess' AND e.kind = 'move')"
 SQL_TIMELINE = (f"SELECT s.game, floor(extract(epoch FROM now() - e.ts) / 60)::int, count(*) {_JOIN} "
-                f"WHERE e.ts > now() - interval '{TIMELINE_MIN} minutes' GROUP BY 1, 2")
+                f"WHERE e.ts > now() - interval '{TIMELINE_MIN} minutes' AND {_NOT_REPLAY} GROUP BY 1, 2")
 SQL_FEED = (f"SELECT e.session_id::text, e.seq, e.ts, s.game, e.kind, e.detail {_JOIN} "
-            f"ORDER BY e.ts DESC, e.seq DESC LIMIT {FEED_N * 3}")
+            f"WHERE {_NOT_REPLAY} ORDER BY e.ts DESC, e.seq DESC LIMIT {FEED_N * 3}")
 SQL_TODAY = (f"SELECT game, count(*), coalesce(sum(extract(epoch FROM last_seen_at - greatest(started_at, {_TODAY}))), 0) "
              "/ 60, count(*) FILTER (WHERE outcome IN ('victory', 'win')), count(*) FILTER (WHERE outcome IN ('defeat', 'loss')), "
              "count(*) FILTER (WHERE ended_at IS NOT NULL AND coalesce(outcome, '') NOT IN ('victory', 'defeat', 'win', 'loss')), "
@@ -888,9 +891,23 @@ def _other(side: str) -> str:
     return "black" if side == "white" else "white"
 
 
+_PIECE = {"K": "♔", "Q": "♕", "R": "♖", "B": "♗", "N": "♘"}
+
+
 def _chess_text(k: str, d: dict) -> str | None:
     """GTNW Chess events (None = not a chess event). Never a player name: sides and roles only."""
     g = d.get
+    if k == "ply" and g("san"):                         # the live move line, as it is played
+        san, mn = str(g("san")), g("move_number")
+        t = (f"{mn}{'.' if g('side') != 'black' else '…'} " if mn is not None else "")
+        t += f"{_PIECE.get(san[:1], '♙') if not san.startswith('O-O') else '♔'} {san}"
+        if g("capture"):
+            t += f" · takes {g('capture')}"
+        if g("check") and not san.endswith(("+", "#")):
+            t += " · check"
+        return t
+    if k == "takeback":
+        return f"Takeback: ply {g('from_ply')} → {g('to_ply')}" if g("from_ply") is not None else "Takeback"
     if k == "move" and g("san"):
         mn = g("move_number")
         t = (f"{mn}{'.' if g('side') != 'black' else '…'} " if mn is not None else "") + str(g("san"))
@@ -923,6 +940,10 @@ def _chess_text(k: str, d: dict) -> str | None:
 
 
 def _chess_level(k: str, d: dict) -> str | None:
+    if k == "ply" and d.get("san"):
+        return "warn" if d.get("check") or str(d.get("san")).endswith("+") else "info"
+    if k == "takeback":
+        return "warn"
     if k == "move" and d.get("san"):
         if d.get("mate"):
             return "gold"
