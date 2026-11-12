@@ -92,7 +92,7 @@ class TestSecurity(unittest.TestCase):
     def test_footer_is_not_enabled_and_hook_only_reads(self):
         fn = (SCRIPTS / "nova_journal.py").read_text().split("def publish_hugo")[1].split("\ndef ")[0].splitlines()
         razor = [i for i, ln in enumerate(fn) if "razor" in ln.lower()]
-        write = [i for i, ln in enumerate(fn) if "output.write_text(front_matter + byline + scrub_home_paths(scrub_pii(body)))" in ln]
+        write = [i for i, ln in enumerate(fn) if "output.write_text(front_matter + byline + scrub_home_paths(scrub_pii(body" in ln]
         self.assertEqual(len(razor), 2)
         self.assertEqual(len(write), 1)
         self.assertTrue(fn[razor[0]].strip().startswith("_razor_draft = body"))

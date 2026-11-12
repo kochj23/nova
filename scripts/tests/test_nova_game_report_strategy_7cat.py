@@ -127,7 +127,7 @@ class TestPerformance(unittest.TestCase):
     def test_fetch_reads_enough_events_for_a_strategy_sitting(self):
         g = FakeGamesCursor([], events=cartest_events())
         gr.fetch_events(g, "x")
-        self.assertGreaterEqual(g.sql[-1][1][1], 400)
+        self.assertGreaterEqual(g.sql[-1][1][-1], 400)  # the LIMIT is the last bound value
 
 
 # ── Retry ───────────────────────────────────────────────────────────────────────────────────────────────────

@@ -167,11 +167,14 @@ def fingerprint(match: str) -> str:
 def scan_text(text: str) -> list:
     """[(line, kind, fingerprint)] — the matched text itself never leaves this function."""
     out, seen = [], set()
+    names = NJ.consented_names(text)   # a game column whose subject turned on "name me" (play.consent)
     for i, ln in enumerate(text.splitlines(), 1):
         cred = False
         for kind, det in DETECTORS:
             if kind == "high_entropy" and cred:   # the token already counted as a credential
                 continue
+            if kind == "household" and names and NJ.scrub_household(ln, names) == ln:
+                continue                     # only the consented first name on this line
             for hit in det(ln):
                 cred = cred or kind == "credential"
                 key = (kind, fingerprint(hit))

@@ -101,14 +101,23 @@ def session(**kw):
 
 
 class FakeGamesCursor:
-    def __init__(self, sessions, events=None, history=None):
+    def __init__(self, sessions, events=None, history=None, consent=None):
         self.sessions, self.events, self.history = sessions, events or [], history or []
+        self.consent = consent   # play.consent row tuple, None (no row) or "missing" (table not deployed)
         self._rows = []
+        self._one = None
         self.sql = []
+
+    def fetchone(self):
+        return self._one
 
     def execute(self, sql, params=()):
         self.sql.append((sql, params))
-        if "FROM play.events" in sql:
+        if "FROM play.consent" in sql:
+            if self.consent == "missing":
+                raise RuntimeError('relation "play.consent" does not exist')
+            self._one = self.consent
+        elif "FROM play.events" in sql:
             self._rows = [(e["seq"], e["kind"], e["detail"]) for e in self.events]
         elif "id <> %s" in sql:
             cols = ("id", "client", "started_at", "last_seen_at", "ended_at", "outcome", "score", "actions", "summary")
@@ -124,6 +133,71 @@ DRAFT = ("TITLE: Little Mister Nuked Uruguay\n\n"
          "Little Mister played the macOS app and lost in 36 turns. Approval went from 58 to 81.9 and then he "
          "pressed the button. " + "He lost the war of attrition with himself. " * 60 +
          "Jordan configured a lamp once. Casualties came to 999,999 in my imagination.")
+
+
+# ── GTNW Chess fixtures (a real, legal game: the Italian, White hangs a knight on move 9 and is mated on 14) ───
+IT = ("e4 e5 Nf3 Nc6 Bc4 Bc5 c3 Nf6 d3 d6 O-O O-O Re1 a6 Bb3 Ba7 Nxe5 Nxe5 d4 Neg4 Rf1 Nxe4 Qf3 Qh4 Bf4 Bd7 "
+      "g3 Qxh2#").split()
+IT_MARKS = {17: ("blunder", 0.2, -2.6, "Nbd2"), 21: ("mistake", -3.2, -4.6, "Bg5"), 27: ("blunder", -5.2, -20.0, "Bg3")}
+HH = "Amy"   # a household name nova_journal.scrub_household already knows
+
+
+def chess_events(white="Little Mister", black=HH, sans=IT):
+    ev = [{"seq": 0, "kind": "game_start", "detail": {"mode": "lan", "white": white, "black": black,
+                                                      "white_kind": "human", "black_kind": "human"}}]
+    for i, san in enumerate(sans):
+        ply, c = i + 1, IT_MARKS.get(i + 1)
+        ev.append({"seq": ply, "kind": "move", "detail": {
+            "ply": ply, "move_number": (ply + 1) // 2, "side": "white" if i % 2 == 0 else "black", "san": san,
+            "classification": c[0] if c else "good", "eval_before": c[1] if c else 0.1,
+            "eval_after": c[2] if c else 0.1, "best_san": c[3] if c else None, "clock_ms": 412345}})
+    ev.append({"seq": len(sans) + 1, "kind": "game_over", "detail": {"result": "0-1", "winner": "black",
+                                                                     "termination": "checkmate"}})
+    return ev
+
+
+def chess_summary(white=None, black=None, **kw):
+    s = {"mode": "lan", "you": "white", "result": "0-1", "winner": "black", "termination": "checkmate",
+         "players": {"white": white or {"name": "Little Mister", "kind": "human", "local": True, "account": "default"},
+                     "black": black or {"name": HH, "kind": "human", "local": False, "account": "amy"}},
+         "opening": {"eco": "C50", "name": "Italian Game"}, "plies": 28, "moves": 14, "duration_seconds": 860,
+         "captures": {"white": {"pawn": 1, "knight": 0}, "black": {"pawn": 2, "knight": 1}},
+         "checks": {"white": 0, "black": 1}, "material_graph": [0] * 28,
+         "pgn": f'[Event "GTNW Chess"]\n[White "Little Mister"]\n[Black "{HH}"]\n\n1. e4 e5 2. Nf3 Nc6 0-1',
+         "analysis": {"engine": "Stockfish 19", "depth": 12,
+                      "white": {"accuracy": 58.4, "acpl": 61, "blunders": 2, "mistakes": 1, "inaccuracies": 0},
+                      "black": {"accuracy": 81.2, "acpl": 38, "blunders": 0, "mistakes": 0, "inaccuracies": 0},
+                      "biggest_swing": {"ply": 27, "move_number": 14, "side": "white", "san": "g3", "eval_before": -5.2,
+                                        "eval_after": -20.0, "swing": 14.8, "best_san": "Bg3"},
+                      "decisive_moment": {"ply": 17, "move_number": 9, "side": "white", "san": "Nxe5",
+                                          "eval_before": 0.2, "eval_after": -2.6, "swing": 2.8, "best_san": "Nbd2",
+                                          "note": f"{HH}'s knight took the gift."}},
+         "notable": ["Castled kingside on move 6 (white)", f"{HH} castled kingside on move 6"]}
+    s.update(kw)
+    return s
+
+
+def chess_session(**kw):
+    s = session(id="c0ffee00-1111-4222-8333-444455556666", game="gtnwchess", outcome="loss", score=58.4, actions=28,
+                summary=chess_summary())
+    s.update(kw)
+    return s
+
+
+def chess_view_row(result, i, kind="human"):
+    return {"id": str(i), "when": NOW() - timedelta(days=1000 - i), "lm_side": "white", "opp_side": "black",
+            "result": result, "opponent_kind": kind, "lm_accuracy": 60.0, "opp_accuracy": 70.0}
+
+
+CHESS_DRAFT = ("TITLE: Amy Mates Little Mister\n\n"
+               "Little Mister lost to Amy on the macOS app, and Amy's Qxh2 finished it. 9. Nxe5 was the blunder, "
+               "answered by 9... Nxe5. The engine wanted 9. Nbd2. Then 14. g3 walked into 14... Qxh2#. " +
+               "The middlegame was a slow leak of position and patience. " * 60 +
+               "Later 15. Qxg7# would have saved him. Amy's 3... Bb4 was a masterpiece. Final word: Amy.")
+
+
+def consent(on=True, name=HH, account="amy"):
+    return {"account": account, "name_in_reviews": on, "display_name": name}
 
 
 # ── Security ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -153,6 +227,64 @@ class TestSecurity(unittest.TestCase):
         self.assertEqual(gr.guard_names("Jordan's game, Jordan Koch played"),
                          "Little Mister's game, Little Mister Little Mister played")
 
+    # GTNW Chess privacy: household names never reach the sheet or the public column without consent
+    def _publish_chess(self, s, consent_row=None, draft=CHESS_DRAFT, real_scrub=False):
+        with tempfile.TemporaryDirectory() as d:
+            nj = fake_nj(Path(d), draft=draft)
+            if real_scrub:
+                import nova_journal as real
+                nj.scrub_household = real.scrub_household
+            g = FakeGamesCursor([s], events=chess_events(), consent=consent_row)
+            with patch.dict(sys.modules, {"nova_journal": nj, "nova_voice": types.SimpleNamespace(
+                    system_prompt=lambda ctx, section="": ctx)}), patch.object(gr, "ollama_chat", return_value=None):
+                st = gr.process(s, g, FakeOpsCursor(), {}, dict(gr.DEFAULTS))
+            return st, nj
+
+    def test_chess_household_name_never_reaches_sheet_or_published_text(self):
+        """PRIVACY: 'Amy' in summary.players, the PGN headers, game_start, an analysis note and notable lines, and in
+        the model's draft (title + body): none of it reaches the fact sheet or anything published."""
+        s = chess_session()
+        f = gr.build_facts(s, chess_events(), [], dict(gr.DEFAULTS))
+        sheet = gr.facts_text(f)
+        self.assertNotRegex(sheet, r"(?i)\bamy\b")
+        self.assertNotIn("pgn", sheet.lower())
+        self.assertNotIn("clock_ms", sheet)
+        self.assertEqual(f["chess"]["players"], {"white": "Little Mister", "black": "his opponent"})
+        st, nj = self._publish_chess(s)
+        self.assertEqual(st, "published")
+        pub = nj.published[0]
+        for text in (pub["title"], pub["body"], pub["sources"], json.dumps(pub["tags"])):
+            self.assertNotRegex(text, r"(?i)\bamy\b")
+        self.assertIn("his opponent", pub["body"])
+        self.assertIsNone(pub.get("extra_front"))
+
+    def test_chess_consent_on_names_only_her_first_name(self):
+        s = chess_session(summary=chess_summary(notable=["Dylan watched from the couch", "Amy McCaine castled"]))
+        st, nj = self._publish_chess(s, consent_row=("amy", True, "Amy"),
+                                     draft=CHESS_DRAFT + " Dylan cheered.", real_scrub=True)
+        pub = nj.published[0]
+        self.assertIn("Amy", pub["body"])
+        self.assertEqual(pub["extra_front"], {"name_consent": "Amy"})
+        for text in (pub["body"], pub["sources"]):
+            self.assertNotIn("Dylan", text)       # every other household name stays redlined
+            self.assertNotIn("McCaine", text)     # her full name too: first name only
+
+    def test_chess_consent_off_or_mismatched_is_never_named(self):
+        for row in (("amy", False, "Amy"), ("amy", True, "Amelia"), ("someone", True, "Amy"), None, "missing"):
+            st, nj = self._publish_chess(chess_session(), consent_row=row)
+            self.assertNotRegex(nj.published[0]["body"] + nj.published[0]["sources"], r"(?i)\bamy\b", row)
+        # display name must match the name logged for her in THIS game
+        self.assertIsNone(gr.chess_consent_name(chess_session(), "black", consent(name="Amelia")))
+        self.assertIsNone(gr.chess_consent_name(chess_session(), "black", consent(account="other")))
+        self.assertEqual(gr.chess_consent_name(chess_session(), "black", consent()), "Amy")
+
+    def test_journal_honours_consent_only_from_front_matter(self):
+        import nova_journal as real
+        self.assertEqual(real.consented_names('---\ntitle: "x"\nname_consent: "Amy"\n---\nAmy won.'), ("Amy",))
+        self.assertEqual(real.consented_names('---\ntitle: "x"\n---\nname_consent: "Amy"\n---\n'), ())
+        self.assertEqual(real.scrub_household("Amy won. Dylan lost.", ("Amy",)), "Amy won. A household member lost.")
+        self.assertEqual(real.scrub_household("Amy McCaine won.", ("Amy",)), "A family member won.")
+
 
 # ── Performance ─────────────────────────────────────────────────────────────────────────────────────────────
 class TestPerformance(unittest.TestCase):
@@ -174,6 +306,18 @@ class TestPerformance(unittest.TestCase):
             t = time.perf_counter()
             self.assertIsNone(gr.find_existing_article("deadbeef-0000", Path(d)))
             self.assertLess(time.perf_counter() - t, 2.0)
+
+    def test_chess_block_validator_and_tally_fast(self):
+        ev = chess_events(sans=IT * 14)[:401]            # ~400 plies (legality irrelevant here)
+        sheet = gr.facts_text(gr.build_facts(chess_session(), ev, [], dict(gr.DEFAULTS)))
+        body = "He played 9. Nxe5 and then 99. Qh8 happened. " * 5000
+        views = [chess_view_row(("win", "loss", "draw")[i % 3], i) for i in range(10000)]
+        t = time.perf_counter()
+        out, cut = gr.strip_unknown_moves(body, sheet)
+        tally = gr.rivalry_tally(views, "his opponent")
+        self.assertLess(time.perf_counter() - t, 3.0)
+        self.assertEqual(len(cut), 5000)
+        self.assertEqual(tally["games"], 10000)
 
 
 # ── Retry ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -254,6 +398,27 @@ class TestRetry(unittest.TestCase):
             self.assertTrue(gr.needs_work(rec, dict(gr.DEFAULTS)))
             self.assertFalse(gr.needs_work({**rec, "attempts": 3}, dict(gr.DEFAULTS)))
 
+    def test_chess_consent_lookup_fails_open_unnamed(self):
+        # RETRY GAP: fetch_consent — one read at writing time, no retry; any failure means "not consented"
+        class Boom:
+            def execute(self, *a):
+                raise RuntimeError('relation "play.consent" does not exist')
+        self.assertIsNone(gr.fetch_consent(Boom(), "amy"))
+        self.assertIsNone(gr.chess_consent(Boom(), dict(gr.DEFAULTS)))
+
+    def test_chess_draft_citing_invented_moves_is_retried(self):
+        bad = "TITLE: X\n\n" + "Then 15. Qxg7# won it. " * 300
+        with tempfile.TemporaryDirectory() as d:
+            nj = fake_nj(Path(d))
+            nj.call_openrouter.side_effect = [bad, CHESS_DRAFT]
+            with patch.dict(sys.modules, {"nova_journal": nj, "nova_voice": types.SimpleNamespace(
+                    system_prompt=lambda ctx, section="": ctx)}):
+                col = gr.write_column(None, gr.build_facts(chess_session(), chess_events(), [], dict(gr.DEFAULTS)),
+                                      dict(gr.DEFAULTS))
+        self.assertEqual(nj.call_openrouter.call_count, 2)
+        self.assertNotIn("Qxg7", col[1])
+        self.assertTrue(any("moves not in the fact sheet" in m for m in nj.logs))
+
 
 # ── Unit ────────────────────────────────────────────────────────────────────────────────────────────────────
 class TestUnit(unittest.TestCase):
@@ -319,6 +484,67 @@ class TestUnit(unittest.TestCase):
     def test_selftest(self):
         self.assertEqual(gr.selftest(), 0)
 
+    def test_chess_san_tokens_and_normalisation(self):
+        found = [m.group(0) for m in gr.SAN_RE.finditer(
+            "1. e4 then 14... Qxh2# and O-O-O, 0-0, e8=Q+, exd5, Nbd2, R1e2 but not C50, a4-paper or Stockfish 19")]
+        self.assertEqual(found, ["1. e4", "14... Qxh2#", "O-O-O", "0-0", "e8=Q+", "exd5", "Nbd2", "R1e2"])
+        self.assertEqual(gr._norm_san("0-0+"), "O-O")
+        self.assertEqual(gr._norm_san("e8Q"), "e8=Q")
+        self.assertEqual(gr.move_label(14, "black", "Qxh2#"), "14... Qxh2#")
+
+    def test_chess_validator_cuts_only_sentences_with_unknown_moves(self):
+        sheet = '["9. Nxe5", "9... Nxe5", "14... Qxh2#", "engine_preferred": "9. Nbd2"]'
+        body = ("## Move 9\nHe played 9. Nxe5. It lost a piece. Better was 9. Nbd2. Then 15. Qxg7# came.\n"
+                "## The 10. Qh5 attack\nHe also tried 12. Nxe5 there. Black's Qxh2# ended it.")
+        out, cut = gr.strip_unknown_moves(body, sheet)
+        self.assertEqual(cut, ["15. Qxg7#", "10. Qh5", "12. Nxe5"])   # wrong move number counts as unknown
+        self.assertIn("He played 9. Nxe5.", out)
+        self.assertIn("Better was 9. Nbd2.", out)
+        self.assertIn("Black's Qxh2# ended it.", out)
+        self.assertNotIn("Qh5", out)
+
+    def test_chess_little_mister_side(self):
+        S = gr.chess_lm_side
+        self.assertEqual(S(chess_session()), "white")
+        amy_host = chess_session(player="amy", summary=chess_summary(
+            white={"name": "Amy", "kind": "human", "local": True},
+            black={"name": "Little Mister", "kind": "human", "local": False}))
+        self.assertEqual(S(amy_host), "black")
+        hot = chess_session(summary=chess_summary(white={"name": "Amy", "kind": "human", "local": True},
+                                                  black={"name": "Jordan", "kind": "human", "local": True}, you="both"))
+        self.assertEqual(S(hot), "black")
+        amy_vs_nova = chess_session(player="amy", summary=chess_summary(
+            white={"name": "Amy", "kind": "human", "local": True},
+            black={"name": "Nova", "kind": "nova", "level": 3, "local": True}))
+        self.assertIsNone(S(amy_vs_nova))
+        self.assertEqual(gr.chess_result(amy_host, "black"), "win")   # winner black = him, whatever her row says
+
+    def test_chess_rivalry_tally_streaks(self):
+        rows = [chess_view_row(r, i) for i, r in enumerate(["win", "win", "loss", "draw", "loss", "loss", "loss"])]
+        rows.append(chess_view_row("win", 99, kind="nova"))       # vs Nova: not part of the rivalry
+        t = gr.rivalry_tally(rows, "his opponent")
+        self.assertEqual((t["little_mister_wins"], t["draws"], t["opponent_wins"]), (2, 1, 4))
+        self.assertEqual(t["record_from_little_mister_side"], "2-1-4 (W-D-L)")
+        self.assertEqual(t["current_streak"], "his opponent has won 3 in a row")
+        self.assertEqual((t["longest_little_mister_win_streak"], t["longest_opponent_win_streak"]), (2, 3))
+        self.assertIsNone(gr.rivalry_tally([chess_view_row("win", 1, kind="nova")], "x"))
+
+    def test_chess_week_bounds_are_pacific(self):
+        wk = gr.week_bounds("2026-W45")
+        self.assertEqual((wk["from"], wk["to"]), ("2026-11-02", "2026-11-08"))
+        self.assertEqual(wk["start"].utcoffset(), timedelta(hours=-8))
+        # Monday 2026-11-09 00:30 PST is still "last week = W45"; UTC already says Monday 08:30
+        self.assertEqual(gr.week_bounds(now=datetime(2026, 11, 9, 8, 30, tzinfo=timezone.utc))["week"], "2026-W45")
+
+    def test_chess_pgn_fallback_and_live_events_ignored(self):
+        s = chess_session(summary=chess_summary(pgn='[White "Amy"]\n[Black "X"]\n\n1. e4 e5 2. Nf3 {ok} Nc6 1-0'))
+        live = [{"seq": 1, "kind": "ply", "detail": {"ply": 1, "san": "d4"}},
+                {"seq": 2, "kind": "takeback", "detail": {"from_ply": 2, "to_ply": 1}}]
+        f = gr.build_facts(s, live, [], dict(gr.DEFAULTS))
+        self.assertEqual(f["chess"]["move_list"], ["1. e4", "1... e5", "2. Nf3", "2... Nc6"])
+        self.assertEqual(f["chess"]["takebacks"], 1)
+        self.assertFalse(any(e["kind"] == "ply" for e in f["events"]))
+
 
 # ── Integration ─────────────────────────────────────────────────────────────────────────────────────────────
 class TestIntegration(unittest.TestCase):
@@ -352,6 +578,47 @@ class TestIntegration(unittest.TestCase):
         self.assertIn("ended_at IS NOT NULL OR last_seen_at < now() - make_interval(mins => %s)", sql)
         self.assertEqual(params[0], 30)
         self.assertEqual(params[2], ["default", "admin", "One"])
+
+    def test_chess_queries_include_her_mac_only_for_chess(self):
+        g = FakeGamesCursor([chess_session()])
+        gr.fetch_candidates(g, dict(gr.DEFAULTS))
+        sql, params = g.sql[-1]
+        self.assertIn("game || ':' || player = ANY(%s)", sql)
+        self.assertEqual(params[3], ["gtnwchess:amy"])
+        gr.fetch_history(g, chess_session(), cfg=dict(gr.DEFAULTS))
+        self.assertEqual(g.sql[-1][1][1], ["default", "admin", "One", "amy"])
+        gr.fetch_history(g, session(), cfg=dict(gr.DEFAULTS))
+        self.assertEqual(g.sql[-1][1][1], ["default"])
+        gr.fetch_events(g, "x", skip_kinds=gr.CHESS_LIVE_KINDS)
+        self.assertEqual(g.sql[-1][1][1], ["ply"])
+
+    def test_chess_facts_from_his_side_with_head_to_head_first(self):
+        earlier = chess_session(id="e1", player="amy", outcome="win", ended_at=NOW() - timedelta(days=2),
+                                summary=chess_summary(winner="white", result="1-0", white={
+                                    "name": "Amy", "kind": "human", "local": True},
+                                    black={"name": "Little Mister", "kind": "human", "local": False}))
+        f = gr.build_facts(chess_session(), chess_events(), [earlier], dict(gr.DEFAULTS))
+        keys = list(f)
+        self.assertLess(keys.index("chess"), keys.index("summary"))
+        self.assertLess(keys.index("rivalry_head_to_head"), keys.index("events"))
+        self.assertEqual(f["his_record_in_this_game_before_this_session"]["previous_outcomes"], {"loss": 1})
+        self.assertEqual(f["rivalry_head_to_head"]["record_from_little_mister_side"], "0-0-2 (W-D-L)")
+        ch = f["chess"]
+        self.assertEqual(ch["decisive_moment"]["move"], "9. Nxe5")
+        self.assertEqual(ch["decisive_moment"]["engine_preferred"], "9. Nbd2")
+        self.assertEqual(ch["key_moments"][-1]["answered_with"], "14... Qxh2# by his opponent (black)")
+        self.assertEqual(ch["accuracy_and_errors"]["black"]["captured"], {"pawn": 2, "knight": 1})
+        self.assertEqual((ch["duration_minutes"], ch["opening"]), (14, "C50 Italian Game"))
+        self.assertIn("| Head-to-head (Little Mister W-D-L) | 0-0-2 (W-D-L) |", gr.stats_table(f, "gtnwchess"))
+
+    def test_chess_prompt_rules(self):
+        with patch.dict(sys.modules, {"nova_voice": types.SimpleNamespace(system_prompt=lambda ctx, section="": ctx)}):
+            system, _ = gr.build_prompt({"chess": {}})
+            rsys, _ = gr.build_rivalry_prompt({"rivals": ["Little Mister", "his opponent"]})
+        self.assertIn("CHESS (GTNW Chess)", system)
+        self.assertIn("never the people", system)
+        self.assertIn("lean all the way into Little Mister getting beaten", system)
+        self.assertIn("roast the MOVES, never the people", rsys)
 
 
 # ── Functional ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -419,6 +686,65 @@ class TestFunctional(unittest.TestCase):
             self.assertEqual(res, "error")
             self.assertEqual(ops.rows[("nova_game_report", "reported")][session()["id"]]["status"], "error")
 
+    def test_chess_golden_path_and_not_his_game_skipped(self):
+        with tempfile.TemporaryDirectory() as d:
+            nj, ops = fake_nj(Path(d), draft=CHESS_DRAFT), FakeOpsCursor()
+            with patch.dict(sys.modules, {"nova_journal": nj, "nova_voice": types.SimpleNamespace(
+                    system_prompt=lambda ctx, section="": ctx)}):
+                st = gr.process(chess_session(), FakeGamesCursor([chess_session()], events=chess_events()), ops, {},
+                                dict(gr.DEFAULTS))
+                amy_vs_nova = chess_session(id="dd", player="amy", summary=chess_summary(
+                    white={"name": "Amy", "kind": "human", "local": True},
+                    black={"name": "Nova", "kind": "nova", "level": 2, "local": True}))
+                st2 = gr.process(amy_vs_nova, FakeGamesCursor([amy_vs_nova]), ops, {}, dict(gr.DEFAULTS))
+            self.assertEqual((st, st2), ("published", "skipped"))
+            pub = nj.published[0]
+            self.assertEqual(pub["tags"], ["games", "gtnwchess", "chess", "opinion"])
+            self.assertNotIn("Qxg7", pub["body"])     # invented move cut
+            self.assertNotIn("Bb4", pub["body"])
+            self.assertIn("9. Nxe5", pub["body"])
+            self.assertIn("| Black | his opponent |", pub["body"])
+            self.assertEqual(len(nj.published), 1)
+
+    def test_rivalry_report_once_per_week_and_skips_empty_weeks(self):
+        wk = gr.week_bounds("2026-W45")
+        game = chess_session(ended_at=wk["start"] + timedelta(days=2), last_seen_at=wk["start"] + timedelta(days=2))
+        with tempfile.TemporaryDirectory() as d:
+            nj, ops = fake_nj(Path(d), draft=CHESS_DRAFT), FakeOpsCursor()
+            with patch.dict(sys.modules, {"nova_journal": nj, "nova_voice": types.SimpleNamespace(
+                    system_prompt=lambda ctx, section="": ctx)}):
+                g = FakeGamesCursor([game], events=chess_events())
+                self.assertEqual(gr.process_rivalry(g, ops, dict(gr.DEFAULTS), wk), "published")
+                self.assertEqual(gr.process_rivalry(g, ops, dict(gr.DEFAULTS), wk), "done")
+                empty = gr.week_bounds("2026-W40")
+                self.assertEqual(gr.process_rivalry(FakeGamesCursor([]), ops, dict(gr.DEFAULTS), empty), "skipped")
+            rec = ops.rows[("nova_game_report", "rivalry_reported")]
+            self.assertEqual(rec["2026-W45"]["status"], "published")
+            self.assertEqual(rec["2026-W40"]["status"], "skipped")
+            self.assertNotIn(("nova_game_report", "reported"), ops.rows)   # per-session state untouched
+            pub = nj.published[0]
+            self.assertIn("Rivalry ref: 2026-W45", pub["body"])
+            self.assertEqual(pub["tags"], ["games", "gtnwchess", "chess", "rivalry", "opinion"])
+            self.assertNotRegex(pub["body"] + pub["sources"], r"(?i)\bamy\b")
+
+    def test_fixture_dry_run_touches_no_database_and_publishes_nothing(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d, "fx.json")
+            s = chess_session()
+            p.write_text(json.dumps({"kind": "session", "session": s, "events": chess_events(), "history": []},
+                                    default=str))
+            nj = fake_nj(Path(d), draft=CHESS_DRAFT)
+            out = []
+            with patch.dict(sys.modules, {"nova_journal": nj, "nova_voice": types.SimpleNamespace(
+                    system_prompt=lambda ctx, section="": ctx)}), \
+                    patch("psycopg2.connect", side_effect=AssertionError("no DB in a fixture run")), \
+                    patch.object(gr, "games_connect", side_effect=AssertionError("no Games DB")), \
+                    patch("builtins.print", side_effect=lambda *a, **k: out.append(" ".join(map(str, a)))):
+                self.assertEqual(gr.main(["--dry-run", "--fixture", str(p)]), 0)
+            self.assertEqual((nj.published, nj.pushed), ([], []))
+            self.assertTrue(any("no database, no state, no publish" in o for o in out))
+            self.assertNotRegex("\n".join(out), r"(?i)\bamy\b")
+
 
 # ── Frame ───────────────────────────────────────────────────────────────────────────────────────────────────
 class TestFrame(unittest.TestCase):
@@ -433,6 +759,16 @@ class TestFrame(unittest.TestCase):
         with patch.object(gr, "run") as run:
             _load()
             run.assert_not_called()
+
+    def test_fixture_flag_requires_dry_run_and_help_lists_new_flags(self):
+        env = {**os.environ, "NOVA_TEST_QUIET": "1"}
+        r = subprocess.run([sys.executable, str(SCRIPT), "--fixture", "/nonexistent.json"], capture_output=True,
+                           text=True, timeout=30, env=env)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("--fixture needs --dry-run", r.stderr)
+        h = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, timeout=30, env=env)
+        self.assertIn("--rivalry", h.stdout)
+        self.assertIn("--fixture", h.stdout)
 
 
 class TestCaseFile(unittest.TestCase):

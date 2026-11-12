@@ -197,10 +197,27 @@ _HOUSEHOLD_SUBS = [
 ]
 
 
-def scrub_household(text: str) -> str:
-    """Replace household members' names (not Jordan's) with neutral words; capitalise at sentence start."""
+_CONSENT_FRONT_RE = re.compile(r'\A---\n(?:(?!---\n).*\n)*?name_consent:\s*"([A-Za-z]{2,20})"\s*\n(?:(?!---\n).*\n)*?---\n')
+
+
+def consented_names(text: str) -> tuple:
+    """First names a post's own front matter says may be printed (`name_consent: "Amy"`), set ONLY by
+    nova_game_report.py when that household member turned on "Name me in Nova's reviews" (play.consent,
+    2026-11-11). One bare first name; a full name, any other household member and every other post stay redlined."""
+    m = _CONSENT_FRONT_RE.match(text or "")
+    return (m.group(1),) if m else ()
+
+
+def scrub_household(text: str, allow=()) -> str:
+    """Replace household members' names (not Jordan's) with neutral words; capitalise at sentence start.
+    allow: bare first names this one post has consent to print (see consented_names); a match is kept only
+    when its text, minus a possessive, IS that first name (so "Amy McCaine" is still scrubbed)."""
+    ok = {a.lower() for a in allow}
+
     def sub(rx, repl, t):
         def one(m):
+            if ok and re.sub(r"'?s$", "", m.group(0), flags=re.I).lower() in ok:
+                return m.group(0)
             before = t[:m.start()].rstrip(" *_\"'(")
             start = not before or before[-1] in ".!?:\n#"
             return repl[:1].upper() + repl[1:] if start else repl
@@ -210,13 +227,13 @@ def scrub_household(text: str) -> str:
     return text
 
 
-def scrub_pii(text: str) -> str:
-    """Remove personal identifiers from text before publishing."""
+def scrub_pii(text: str, allow=()) -> str:
+    """Remove personal identifiers from text before publishing (allow: consented first names, scrub_household)."""
     for pat in _SCRUB_PATTERNS[:-1]:
         text = pat.sub("[redacted]", text)
     text = scrub_emails(text)   # keeps Nova's own address and organisations' role mailboxes
     text = _MAC_RE.sub("[redacted-mac]", text)   # device MACs never go public
-    return scrub_household(text)
+    return scrub_household(text, allow)
 
 
 # Absolute macOS home paths (/Users/<name>/...) must never appear in public article
@@ -1623,7 +1640,7 @@ description: "{description.replace('"', "'")}"
     # /Users/<name>/... path out of the prose so the pre-commit secret-scanner
     # never rejects (and silently discards) the post. BODY only; front_matter
     # (with its site-relative /images/... cover path) is deliberately excluded.
-    output.write_text(front_matter + byline + scrub_home_paths(scrub_pii(body)))
+    output.write_text(front_matter + byline + scrub_home_paths(scrub_pii(body, consented_names(front_matter))))
     log(f"Published: {section}/{filename}")
     note_published()
     _record_publish("written", section, output.relative_to(HUGO_ROOT), title)
@@ -2007,7 +2024,7 @@ def git_push(section: str, title: str):
                 orig = p.read_text()
             except (OSError, UnicodeDecodeError):
                 continue
-            fixed = scrub_home_paths(scrub_emails(scrub_household(_MAC_RE.sub("[redacted-mac]", orig))))  # one leaky article must not wedge the queue
+            fixed = scrub_home_paths(scrub_emails(scrub_household(_MAC_RE.sub("[redacted-mac]", orig), consented_names(orig))))  # one leaky article must not wedge the queue
             if fixed != orig:
                 p.write_text(fixed)
                 subprocess.run(["git", "add", rel], cwd=HUGO_ROOT, timeout=30)
