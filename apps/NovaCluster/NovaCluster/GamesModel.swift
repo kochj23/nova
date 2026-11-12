@@ -6,6 +6,10 @@
 //  1.4.0 (2026-11-11, "pretty-up the games section … more stats about live game play"): the hub's 1.4 additions
 //  (live-session stats, GTNW DEFCON / approval, activity timeline, live feed, today, 7 days, hall of fame,
 //  AI share). Every new field is optional, so a 1.3 hub still decodes; GamesStats derives what the screen shows.
+//  1.5.0 (2026-11-11): GTNW Chess (game id gtnwchess). The hub's `chess` block — Little Mister's head-to-head vs
+//  each opponent and vs Nova, streaks, accuracy, recent games, Nova's newest review — decoded as all-optional
+//  (a 1.4 hub has no `chess`; the card then stays away). Opponent names come from the hub only, already reduced to
+//  "Challenger" unless that player consented to be named; ChessStats derives what the rivalry card shows.
 //
 
 import Foundation
@@ -76,6 +80,29 @@ struct GamesSnapshot: Codable, Equatable {
     struct Running: Codable, Equatable { var node: String; var jobs: [String]?; var model: String?; var phase: String?; var tok_s: Double? }
     struct Recent: Codable, Equatable { var node: String; var text: String; var at: String? }
     struct LLM: Codable, Equatable { var running: [Running]?; var tok_s: Double?; var recent: [Recent]? }
+    // 1.5: GTNW Chess rivalry
+    struct Record: Codable, Equatable { var wins: Int?; var draws: Int?; var losses: Int? }
+    struct Streak: Codable, Equatable { var result: String?; var n: Int? }
+    struct Longest: Codable, Equatable { var wins: Int?; var losses: Int? }
+    struct Accuracy: Codable, Equatable { var you: Double?; var them: Double?; var n: Int? }
+    struct Rival: Codable, Equatable, Identifiable {
+        var key: String; var name: String?; var kind: String?
+        var games: Int?; var wins: Int?; var draws: Int?; var losses: Int?
+        var streak: Streak?; var longest: Longest?; var accuracy: Accuracy?; var last: String?
+        var id: String { key }
+    }
+    struct ChessSide: Codable, Equatable { var name: String?; var kind: String?; var accuracy: Double? }
+    struct ChessGame: Codable, Equatable, Identifiable {
+        var id: String
+        var ended: String?; var mode: String?; var white: ChessSide?; var black: ChessSide?
+        var lm: String?; var lm_result: String?; var result: String?; var termination: String?
+        var opening: String?; var moves: Int?; var plies: Int?; var level: String?
+    }
+    struct Review: Codable, Equatable { var url: String?; var title: String?; var at: String? }
+    struct Chess: Codable, Equatable {
+        var games: Int?; var counted: Int?; var record: Record?; var accuracy: Accuracy?
+        var rivals: [Rival]?; var recent: [ChessGame]?; var review: Review?
+    }
 
     var db: DB?
     var live: [Session]?
@@ -94,6 +121,8 @@ struct GamesSnapshot: Codable, Equatable {
     var fame: [Fame]?
     var ai_share: AIShare?
     var partial: [String]?
+    // 1.5
+    var chess: Chess?
 }
 
 /// Friendly names for the platform's game ids.
@@ -101,6 +130,7 @@ enum GameNames {
     static func display(_ id: String?) -> String {
         switch id ?? "" {
         case "gtnw": return "GTNW"
+        case "gtnwchess": return "GTNW Chess"
         case "casting": return "Casting Director"
         case "blompie", "blompie-mac": return "Blompie"
         case "cartest": return "CarTest"
@@ -133,7 +163,7 @@ enum GameNames {
 
 /// Per-game accent + SF Symbol, the same on cards, charts and chips.
 enum GameStyle {
-    static let order = ["gtnw", "blompie", "casting", "cartest", "stuntdriver", "mush"]
+    static let order = ["gtnw", "gtnwchess", "blompie", "casting", "cartest", "stuntdriver", "mush"]
 
     /// blompie-mac and blompie are one game on screen.
     static func key(_ id: String?) -> String {
@@ -143,6 +173,7 @@ enum GameStyle {
     static func hue(_ id: String?) -> Palette.RGB {
         switch key(id) {
         case "gtnw": return Palette.RGB(1.00, 0.52, 0.40)
+        case "gtnwchess": return Palette.RGB(0.90, 0.84, 0.70)      // ivory: the light squares
         case "blompie": return Palette.teal
         case "casting": return Palette.violet
         case "cartest": return Palette.blue
@@ -154,6 +185,7 @@ enum GameStyle {
     static func symbol(_ id: String?) -> String {
         switch key(id) {
         case "gtnw": return "globe.americas.fill"
+        case "gtnwchess": return "crown.fill"
         case "blompie": return "book.closed.fill"
         case "casting": return "theatermasks.fill"
         case "cartest": return "car.fill"
@@ -197,6 +229,10 @@ enum EventStyle {
         case "ticker": return "newspaper.fill"
         case "nova_commentary": return "sparkles"
         case "game_over": return "flag.checkered"
+        case "move", "ply": return level == "gold" ? "crown.fill" : "checkerboard.rectangle"
+        case "takeback": return "arrow.uturn.backward.circle.fill"
+        case "draw_offer": return "equal.circle.fill"
+        case "resign": return "flag.fill"
         case "game_start", "start": return "play.fill"
         case "crisis_decision": return "exclamationmark.bubble.fill"
         case "impeachment_track": return "building.columns.fill"
@@ -248,14 +284,14 @@ enum OutcomeStyle {
     static func label(_ outcome: String?, ended: Bool) -> String {
         guard ended else { return "LIVE" }
         let o = (outcome ?? "ended").lowercased()
-        return o == "victory" ? "WIN" : o == "defeat" ? "LOSS" : o.uppercased()
+        return o == "victory" || o == "win" ? "WIN" : o == "defeat" || o == "loss" ? "LOSS" : o.uppercased()
     }
     static func hue(_ outcome: String?, ended: Bool) -> Palette.RGB {
         guard ended else { return Palette.amber }
         switch (outcome ?? "").lowercased() {
-        case "victory": return Palette.gold
-        case "defeat": return Palette.RGB(0.95, 0.38, 0.40)
-        case "completed": return Palette.teal
+        case "victory", "win": return Palette.gold
+        case "defeat", "loss": return Palette.RGB(0.95, 0.38, 0.40)
+        case "completed", "draw": return Palette.teal
         default: return Palette.slate
         }
     }
@@ -414,6 +450,102 @@ enum GamesStats {
 
     /// Score as shown in the hall of fame: "9,617".
     static func score(_ x: Double?) -> String { x.map { Int($0.rounded()).formatted(.number.grouping(.automatic)) } ?? "—" }
+}
+
+// MARK: - 1.5 GTNW Chess rivalry (pure, tested)
+
+enum ChessStats {
+    /// The rivalry card shows once the hub has a chess block (a 1.4 hub has none).
+    static func show(_ s: GamesSnapshot?) -> Bool { s?.chess != nil }
+
+    /// Rivals as the hub sent them (humans first, then Nova), never more than `limit`.
+    static func rivals(_ c: GamesSnapshot.Chess?, limit: Int = 3) -> [GamesSnapshot.Rival] {
+        Array((c?.rivals ?? []).prefix(limit))
+    }
+
+    /// The opponent's name as shown: the hub's (already "Challenger" unless they consented), else by kind.
+    static func name(_ r: GamesSnapshot.Rival) -> String {
+        let n = NodeLines.clean(r.name, max: 32)
+        if !n.isEmpty { return n }
+        return r.kind == "nova" ? "Nova" : "Challenger"
+    }
+
+    /// "3–1–1" (W–D–L).
+    static func record(_ r: GamesSnapshot.Rival) -> String { "\(r.wins ?? 0)–\(r.draws ?? 0)–\(r.losses ?? 0)" }
+
+    struct Split: Equatable { var win: Double; var draw: Double; var loss: Double }
+
+    /// W/D/L shares for the head-to-head bar (nil before the first finished game).
+    static func split(_ r: GamesSnapshot.Rival) -> Split? {
+        let w = Double(r.wins ?? 0), d = Double(r.draws ?? 0), l = Double(r.losses ?? 0)
+        let t = w + d + l
+        return t == 0 ? nil : Split(win: w / t, draw: d / t, loss: l / t)
+    }
+
+    /// Little Mister's score vs this rival: wins + half the draws, over games (the ring).
+    static func score(_ r: GamesSnapshot.Rival) -> Double? {
+        let w = Double(r.wins ?? 0), d = Double(r.draws ?? 0), l = Double(r.losses ?? 0)
+        let t = w + d + l
+        return t == 0 ? nil : (w + d / 2) / t
+    }
+
+    /// "W2" / "L1" / "D3" / "—": the current streak from Little Mister's side.
+    static func streak(_ s: GamesSnapshot.Streak?) -> String {
+        guard let s, let n = s.n, n > 0, let r = s.result, let c = ["win": "W", "loss": "L", "draw": "D"][r] else { return "—" }
+        return "\(c)\(n)"
+    }
+    static func streakHue(_ s: GamesSnapshot.Streak?) -> Palette.RGB {
+        switch s?.result ?? "" {
+        case "win": return Palette.gold
+        case "loss": return Palette.RGB(0.95, 0.38, 0.40)
+        case "draw": return Palette.teal
+        default: return Palette.slate
+        }
+    }
+
+    /// "87" / "—": accuracy, whole percent.
+    static func acc(_ x: Double?) -> String {
+        guard let x, x.isFinite, (0...100).contains(x) else { return "—" }
+        return "\(Int(x.rounded()))"
+    }
+
+    /// Little Mister's side of a recent game and the other side ("Little Mister" when he played; else white/black).
+    static func sides(_ g: GamesSnapshot.ChessGame) -> (me: GamesSnapshot.ChessSide?, them: GamesSnapshot.ChessSide?) {
+        g.lm == "black" ? (g.black, g.white) : (g.white, g.black)
+    }
+
+    /// "vs Challenger" when Little Mister played, else "Challenger vs Nova".
+    static func opponentLine(_ g: GamesSnapshot.ChessGame) -> String {
+        let w = NodeLines.clean(g.white?.name, max: 32), b = NodeLines.clean(g.black?.name, max: 32)
+        guard g.lm == "white" || g.lm == "black" else { return "\(w.isEmpty ? "White" : w) vs \(b.isEmpty ? "Black" : b)" }
+        let them = NodeLines.clean(sides(g).them?.name, max: 32)
+        return "vs " + (them.isEmpty ? "Challenger" : them) + (g.level.map { " · \($0)" } ?? "")
+    }
+
+    /// The result chip: WIN / LOSS / DRAW from his side, else the board result ("1-0").
+    static func chip(_ g: GamesSnapshot.ChessGame) -> (String, Palette.RGB) {
+        switch g.lm_result ?? "" {
+        case "win": return ("WIN", Palette.gold)
+        case "loss": return ("LOSS", Palette.RGB(0.95, 0.38, 0.40))
+        case "draw": return ("DRAW", Palette.teal)
+        default: return (NodeLines.clean(g.result, max: 8).isEmpty ? "—" : NodeLines.clean(g.result, max: 8), Palette.slate)
+        }
+    }
+
+    /// "C50 Italian Game · checkmate · 29 moves".
+    static func detail(_ g: GamesSnapshot.ChessGame) -> String {
+        var bits: [String] = []
+        if let o = g.opening, !o.isEmpty { bits.append(o) }
+        if let t = g.termination, !t.isEmpty { bits.append(t) }
+        if let m = g.moves { bits.append(Fmt.plural(m, "move", "moves")) }
+        return NodeLines.clean(bits.joined(separator: " · "), max: 90)
+    }
+
+    /// Only Nova's own site opens (same rule as the "just published" ticker).
+    static func reviewLink(_ r: GamesSnapshot.Review?) -> URL? {
+        guard let s = r?.url, let u = URL(string: s), u.scheme == "https", u.host == "nova.digitalnoise.net" else { return nil }
+        return u
+    }
 }
 
 // MARK: - Model

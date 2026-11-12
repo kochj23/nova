@@ -25,6 +25,7 @@
 		3D665E8AB465560BD002F4F9 /* NovaConstellationCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91995B7ABB24BED7EAA8F220 /* NovaConstellationCore.swift */; };
 		3EF6FB7C912F3608D21DA6B0 /* NodeFacts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E94209F861B155CE2C865BE /* NodeFacts.swift */; };
 		3F4E3EA4CFA6489420CE542E /* NodeDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 545DEA8821093A5EFF1BC9A2 /* NodeDetailView.swift */; };
+		404B16B9FC9F538F0455A852 /* Games15ChessSevenCatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1231BA2DD1E1D1A55AA9A4 /* Games15ChessSevenCatTests.swift */; };
 		43CA717AADE1DF43514F2575 /* NovaConstellationCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91995B7ABB24BED7EAA8F220 /* NovaConstellationCore.swift */; };
 		43CEB11962D4E65D62500C0F /* Cluster.swift in Sources */ = {isa = PBXBuildFile; fileRef = C39A9ACD991F51B4B62E164E /* Cluster.swift */; };
 		46E3B0E9D4D2677C550804EC /* GamesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5098FB3A098F4C9779D941D /* GamesView.swift */; };
@@ -101,6 +102,7 @@
 		9E94209F861B155CE2C865BE /* NodeFacts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeFacts.swift; sourceTree = "<group>"; };
 		A49C3E6C79225425EF4D2D19 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A5098FB3A098F4C9779D941D /* GamesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GamesView.swift; sourceTree = "<group>"; };
+		AA1231BA2DD1E1D1A55AA9A4 /* Games15ChessSevenCatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Games15ChessSevenCatTests.swift; sourceTree = "<group>"; };
 		AB6ACCEC499C3BD244511037 /* ConstellationFleet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConstellationFleet.swift; sourceTree = "<group>"; };
 		ACA7F39CD05736028AF22DD1 /* NovaClusterMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NovaClusterMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AD5B8178B5F9959A6DD1BF24 /* NodeLines.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NodeLines.swift; sourceTree = "<group>"; };
@@ -153,6 +155,7 @@
 				39EF3ED1CA0A1D5F65E6E8DC /* Cluster11SevenCatTests.swift */,
 				109108D8DD81DDF87532EA87 /* ConstellationTests.swift */,
 				2B9FE16F978D370DAEFCF680 /* Games14SevenCatTests.swift */,
+				AA1231BA2DD1E1D1A55AA9A4 /* Games15ChessSevenCatTests.swift */,
 				D544160E1CF274A03F37A296 /* GamesTests.swift */,
 				DB64327D9566EC841382BB8D /* KioskTests.swift */,
 				FBCE191F06C5CBCA0FC76890 /* NodeFactsTests.swift */,
@@ -420,6 +423,7 @@
 				5CBF7074213855DAE8204857 /* ConstellationFleet.swift in Sources */,
 				B01B7B143DFE19B6C35422E1 /* ConstellationTests.swift in Sources */,
 				BA82F0D0BADCDFF400DDF84E /* Games14SevenCatTests.swift in Sources */,
+				404B16B9FC9F538F0455A852 /* Games15ChessSevenCatTests.swift in Sources */,
 				B0DC30AE9C769BDCE22AD9E2 /* GamesModel.swift in Sources */,
 				8968E515CA42A9978CD37529 /* GamesTests.swift in Sources */,
 				EE123F25D024845239A394A7 /* GamesView.swift in Sources */,
@@ -473,7 +477,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 10;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -487,7 +491,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.4.1;
+				MARKETING_VERSION = 1.5.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -594,7 +598,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 10;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -614,7 +618,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.4.1;
+				MARKETING_VERSION = 1.5.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;

@@ -440,7 +440,7 @@ xcodebuild -project NovaCluster.xcodeproj -scheme NovaClusterMac -configuration 
   -destination 'platform=macOS' -derivedDataPath <dd> test
 ```
 
-There are 95 XCTest cases, all passing in 1.4.1. They are organised in the house's 7 categories in `SecurityTests` … `FrameTests` (`Tests/NodeLinesTests.swift`), which `Tests/Cluster11SevenCatTests.swift` extends for 1.1.0 and `Tests/Games14SevenCatTests.swift` extends for the 1.4.0 Games screen (19 cases: Security 2, Performance 2, Retry 2, Unit 4, Integration 2, Functional 3, Frame 4), plus feature tests (`Tests/ConstellationTests.swift`, `Tests/KioskTests.swift`, `Tests/NodeFactsTests.swift`, `Tests/GamesTests.swift`, `Tests/PhoneLayoutTests.swift`). The constellation tests pin the shared hash and random stream so the screensaver's sky can't shift silently. The test bundle
+There are 110 XCTest cases, all passing in 1.5.0. They are organised in the house's 7 categories in `SecurityTests` … `FrameTests` (`Tests/NodeLinesTests.swift`), which `Tests/Cluster11SevenCatTests.swift` extends for 1.1.0 and `Tests/Games14SevenCatTests.swift` extends for the 1.4.0 Games screen (19 cases: Security 2, Performance 2, Retry 2, Unit 4, Integration 2, Functional 3, Frame 4) and `Tests/Games15ChessSevenCatTests.swift` for the 1.5.0 chess rivalry card (15 cases: Security 2, Performance 2, Retry 2, Unit 2, Integration 2, Functional 2, Frame 3), plus feature tests (`Tests/ConstellationTests.swift`, `Tests/KioskTests.swift`, `Tests/NodeFactsTests.swift`, `Tests/GamesTests.swift`, `Tests/PhoneLayoutTests.swift`). The constellation tests pin the shared hash and random stream so the screensaver's sky can't shift silently. The test bundle
 is not hosted in the app: it has no window, no live hub, and no real UserDefaults or Keychain. The
 sources under test are compiled straight into the bundle. The network is stubbed with a `URLProtocol`.
 
@@ -453,11 +453,12 @@ sources under test are compiled straight into the bundle. The network is stubbed
 | Integration | all ten nodes carry both lines · the cache goes only to the injected suite |
 | Functional | hub job text is shown verbatim · an older hub never gets an invented job · detail has everything |
 | Frame | height is fixed whatever the text · a narrow width still shows two lines |
+| Chess 1.5 | review link opens only nova.digitalnoise.net · opponent names only from the hub, cleaned, "Challenger" fallback · a 1.4 hub (no `chess`) shows no card · odd/partial chess blocks decode · W/D/L, score ring, streak, accuracy helpers · recent games read from Little Mister's side · the wide board with the card (full and empty) still fits TV / Mac / iPad without scrolling |
 | Games 1.4 | old (1.3) and new payloads decode · hostile text is cleaned, only mac/web become a badge · decode + derive is fast · timeline/week/totals/DEFCON/sparkline helpers · the model polls the new payload · the wide board fits a 1920×1080 TV, its 1740×960 safe area, a 1440×900 Mac window and an 1180×820 iPad without scrolling · iPhone and iPad portrait never overflow sideways |
 
 Screenshots of the Games board: run the tests with `TEST_RUNNER_NOVA_SHOTS_DIR=<dir>` (and optionally
 `TEST_RUNNER_NOVA_GAMES_JSON=<a saved /games payload>`); `testGames14Screenshots` writes Mac, TV, iPad
-(landscape + portrait), iPhone, empty and old-hub PNGs.
+(landscape + portrait), iPhone, empty and old-hub PNGs; `testChess15Screenshots` adds `chess-*` renders with the rivalry card.
 
 ## Release
 
@@ -491,19 +492,20 @@ Ultra at 1440×900 with live traffic, the app uses about 24–28 % of one core.
 | `NovaCluster/NodeLines.swift` | per-machine LLM-job + purpose lines (text, cleaning, fixed-height view) |
 | `NovaCluster/Views.swift` | root view (view switch), wordmark, header + odometer hero, side panel, footer, iPad settings sheet |
 | `NovaCluster/DashboardView.swift` | Minion-style dashboard: machine hues, traffic starfield, machine cards, lesson, totals |
-| `NovaCluster/GamesModel.swift` | `/games` payload (1.3 + 1.4, all optional), 5 s poller, `GameNames`, `GameStyle`, `EventStyle`, `OutcomeStyle`, `Defcon`, `GamesStats` |
-| `NovaCluster/GamesView.swift` | the Games screen: `GamesLayout`, `GamesBoard`, tiles, live table cards (timer, DEFCON gauge, approval sparkline), activity + 7-day charts, feed, today, fame, recent, system panel |
+| `NovaCluster/GamesModel.swift` | `/games` payload (1.3 + 1.4 + 1.5 `chess`, all optional), 5 s poller, `GameNames`, `GameStyle`, `EventStyle`, `OutcomeStyle`, `Defcon`, `GamesStats`, `ChessStats` |
+| `NovaCluster/GamesView.swift` | the Games screen: `GamesLayout`, `GamesBoard`, tiles, live table cards (timer, DEFCON gauge, approval sparkline), activity + 7-day charts, feed, today, fame, recent, system panel, chess rivalry card (`RivalRow`, `ScoreRing`, `WDLBar`, `ChessGameRow`, `ReviewLine`) |
 | `NovaCluster/PhoneLayout.swift` | iPhone layout: `DeviceLayout` unit, card columns, strip padding, `phoneScroll` |
 | `NovaCluster/Palette.swift` | palette, model-family hues, number and age formatting, dust layer |
 | `NovaClusterMac/MacSettings.swift` | macOS Settings window |
 | `NovaCluster/Assets.xcassets`, `NovaClusterMac/Assets.xcassets` | iPad and macOS app icons |
 | `Tests/NodeLinesTests.swift` | XCTest suite covering all 7 categories |
-| `Tests/GamesTests.swift`, `Tests/Games14SevenCatTests.swift` | Games payload, helpers, layout and rendered-board frame tests (+ optional screenshots) |
+| `Tests/GamesTests.swift`, `Tests/Games14SevenCatTests.swift`, `Tests/Games15ChessSevenCatTests.swift` | Games payload, helpers, layout and rendered-board frame tests (+ optional screenshots) |
 
 ## Version history
 
 | Version | Date | Notes |
 |---|---|---|
+| 1.5.0 (10) | 2026-11-11 | GTNW Chess on the Games screen: crown/ivory GameStyle, chess feed icons (live ply, takeback, move, draw offer, resign), WIN/LOSS/DRAW chips, and a CHESS RIVALRY card (Little Mister vs each opponent and vs Nova: score ring, W/D/L bar, current + longest streak, average accuracy, last games, Nova's newest review). Opponents are "Challenger" unless they consented (play.consent); hub `/games` 1.5; 110/110 tests pass |
 | 1.4.1 (8) | 2026-11-11 | Recent sessions: a session left open for more than 10 min shows a muted LEFT OPEN chip, not LIVE (same rule as live tables); 95/95 tests pass |
 | 1.4.0 (7) | 2026-11-11 | Games redesign: header tiles, live table cards (timer, APM, last event, GTNW DEFCON gauge + approval sparkline), 60-min activity chart, animated live feed, today per game, 7-day chart, hall of fame, AI/relay/DB panel; fits a 1080p TV; hub `/games` 1.4; 94/94 tests pass |
 | 1.3.0 (6) | 2026-11-10 | Games view: Games DB health, live and recent sessions, Casting Director AI calls, relay counters, game LLM jobs (hub `/games`) |

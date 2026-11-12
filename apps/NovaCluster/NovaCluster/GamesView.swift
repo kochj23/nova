@@ -11,6 +11,9 @@
 //  and the AI / relay / DB counters in one panel. Wide (Mac, iPad landscape, Apple TV) is three columns sized to fit
 //  a 1080p TV without scrolling; narrow (iPad portrait, iPhone) is one scrolling column. Nothing here takes focus,
 //  so the Apple TV's only focus stop stays the wordmark.
+//  1.5.0 (2026-11-11): the CHESS RIVALRY card (GTNW Chess): Little Mister's head-to-head vs each opponent and vs Nova
+//  (score ring, W/D/L bar, current + longest streak, average accuracy each side), the last games and Nova's newest
+//  review (Mac / iPad: tap opens it; never focusable on the TV). Wide: under the live feed, which gives up rows for it.
 //
 
 import Charts
@@ -35,6 +38,9 @@ struct GamesLayout: Equatable {
         return GamesLayout(u: u, wide: wide, phone: phone, tileColumns: wide ? 6 : 3,
                            todayColumns: wide ? 3 : (phone ? 2 : 3), feedRows: wide ? 15 : (phone ? 8 : 10))
     }
+
+    /// 1.5: the live feed's rows when the chess rivalry card shares its column (wide) — the board still fits a TV.
+    func feedRows(chess: Bool) -> Int { chess && wide ? 8 : feedRows }
 
     /// The app-wide alert strip and "just published" ticker float over the top centre of every view; the board
     /// starts below whichever of them is showing (points).
@@ -112,8 +118,11 @@ struct GamesBoard<Mark: View>: View {
                         todayPanel(width: left)
                     }
                     .frame(width: left)
-                    VStack(alignment: .leading, spacing: gap) { feedPanel }
-                        .frame(width: mid)
+                    VStack(alignment: .leading, spacing: gap) {
+                        feedPanel
+                        if ChessStats.show(s) { chessPanel }
+                    }
+                    .frame(width: mid)
                     VStack(alignment: .leading, spacing: gap) {
                         weekPanel
                         famePanel
@@ -125,6 +134,7 @@ struct GamesBoard<Mark: View>: View {
             } else {
                 liveTables(width: inner)
                 activity(width: inner)
+                if ChessStats.show(s) { chessPanel }
                 feedPanel
                 todayPanel(width: inner)
                 weekPanel
@@ -260,7 +270,7 @@ struct GamesBoard<Mark: View>: View {
     // MARK: Feed
 
     private var feedPanel: some View {
-        let feed = Array((s?.feed ?? []).prefix(layout.feedRows))
+        let feed = Array((s?.feed ?? []).prefix(layout.feedRows(chess: ChessStats.show(s))))
         return GamesPanel(title: "LIVE FEED", u: u, trailing: feed.isEmpty ? nil : "newest first") {
             if s?.feed == nil {
                 GamesEmpty(text: "The hub has no live feed yet.", u: u)
@@ -274,6 +284,36 @@ struct GamesBoard<Mark: View>: View {
                     }
                 }
                 .animation(.spring(duration: 0.55), value: feed.map(\.id))
+            }
+        }
+    }
+
+    // MARK: Chess rivalry (1.5)
+
+    private var chessPanel: some View {
+        let c = s?.chess
+        let rec = c?.record
+        let trailing = (c?.counted ?? 0) > 0
+            ? "\(rec?.wins ?? 0)W \(rec?.draws ?? 0)D \(rec?.losses ?? 0)L · acc \(ChessStats.acc(c?.accuracy?.you)) / \(ChessStats.acc(c?.accuracy?.them))"
+            : nil
+        return GamesPanel(title: "CHESS RIVALRY", u: u, trailing: trailing) {
+            let rivals = ChessStats.rivals(c, limit: layout.wide ? 2 : 3)
+            let recent = Array((c?.recent ?? []).prefix(layout.wide ? 3 : 4))
+            if rivals.isEmpty && recent.isEmpty {
+                HStack(spacing: 8 * u) {
+                    GameIcon(game: "gtnwchess", u: u, size: 22)
+                    GamesEmpty(text: "No GTNW Chess games yet. The first game starts the rivalry.", u: u)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 8 * u) {
+                    ForEach(rivals) { r in RivalRow(r: r, u: u) }
+                    if !recent.isEmpty {
+                        VStack(alignment: .leading, spacing: 4 * u) {
+                            ForEach(recent) { g in ChessGameRow(g: g, u: u, now: now ?? Date()) }
+                        }
+                    }
+                    if let review = c?.review, let url = ChessStats.reviewLink(review) { ReviewLine(review: review, url: url, u: u) }
+                }
             }
         }
     }
@@ -858,6 +898,139 @@ struct RecentRow: View {
             Text(GameNames.ago(p.last_seen, now: now)).font(.system(size: 9.5 * u, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.4)).frame(width: 52 * u, alignment: .trailing)
         }
+    }
+}
+
+/// 1.5: Little Mister vs one opponent: score ring, W/D/L bar, streaks, average accuracy.
+struct RivalRow: View {
+    let r: GamesSnapshot.Rival
+    let u: CGFloat
+    var body: some View {
+        let hue = GameStyle.hue("gtnwchess")
+        HStack(alignment: .center, spacing: 10 * u) {
+            ScoreRing(score: ChessStats.score(r), label: ChessStats.record(r), u: u)
+            VStack(alignment: .leading, spacing: 4 * u) {
+                HStack(spacing: 5 * u) {
+                    Image(systemName: r.kind == "nova" ? "sparkles" : "crown.fill").font(.system(size: 10 * u, weight: .semibold))
+                        .foregroundStyle(r.kind == "nova" ? Palette.violet.color() : hue.color())
+                    Text("Little Mister").font(.system(size: 12 * u, weight: .semibold)).foregroundStyle(Palette.text)
+                    Text("vs").font(.system(size: 10 * u, design: .serif)).italic().foregroundStyle(.white.opacity(0.45))
+                    Text(ChessStats.name(r)).font(.system(size: 12 * u, weight: .semibold))
+                        .foregroundStyle(r.kind == "nova" ? Palette.violet.color() : hue.color())
+                    Spacer(minLength: 4 * u)
+                    Text(Fmt.plural(r.games ?? 0, "game", "games")).font(.system(size: 9.5 * u, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.4))
+                }
+                .lineLimit(1)
+                WDLBar(split: ChessStats.split(r), u: u)
+                HStack(spacing: 10 * u) {
+                    HStack(spacing: 3 * u) {
+                        Text("STREAK").font(.system(size: 7.5 * u, weight: .medium)).tracking(1.1 * u).foregroundStyle(.white.opacity(0.38))
+                        Text(ChessStats.streak(r.streak)).font(.system(size: 10.5 * u, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(ChessStats.streakHue(r.streak).color())
+                    }
+                    Text("best run W\(r.longest?.wins ?? 0) · L\(r.longest?.losses ?? 0)")
+                    Text("acc \(ChessStats.acc(r.accuracy?.you)) vs \(ChessStats.acc(r.accuracy?.them))")
+                }
+                .font(.system(size: 9.5 * u, design: .monospaced)).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
+            }
+        }
+    }
+}
+
+/// Little Mister's score (wins + half the draws) as a ring, W–D–L inside.
+struct ScoreRing: View {
+    let score: Double?
+    let label: String
+    let u: CGFloat
+    var body: some View {
+        ZStack {
+            Circle().stroke(score == nil ? Color.white.opacity(0.1) : Palette.alert.opacity(0.7), lineWidth: 4 * u)
+            if let score {
+                Circle().trim(from: 0, to: score).stroke(Palette.gold.color(), style: StrokeStyle(lineWidth: 4 * u, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+            }
+            VStack(spacing: 0) {
+                Text(GamesStats.pct(score)).font(.system(size: 10.5 * u, weight: .medium, design: .monospaced)).foregroundStyle(Palette.text)
+                Text(label).font(.system(size: 6.5 * u, weight: .medium, design: .monospaced)).foregroundStyle(.white.opacity(0.45))
+            }
+        }
+        .frame(width: 46 * u, height: 46 * u)
+        .accessibilityElement().accessibilityLabel("Score \(GamesStats.pct(score)), \(label)")
+    }
+}
+
+/// Wins (gold) · draws (teal) · losses (red) as one bar.
+struct WDLBar: View {
+    let split: ChessStats.Split?
+    let u: CGFloat
+    var body: some View {
+        GeometryReader { g in
+            HStack(spacing: split == nil ? 0 : 1.5 * u) {
+                if let sp = split {
+                    if sp.win > 0 { Rectangle().fill(Palette.gold.color(0.9)).frame(width: max(2, g.size.width * sp.win - 1.5 * u)) }
+                    if sp.draw > 0 { Rectangle().fill(Palette.teal.color(0.75)).frame(width: max(2, g.size.width * sp.draw - 1.5 * u)) }
+                    if sp.loss > 0 { Rectangle().fill(Palette.RGB(0.95, 0.38, 0.40).color(0.8)) }
+                } else {
+                    Rectangle().fill(Color.white.opacity(0.08))
+                }
+            }
+            .clipShape(Capsule())
+        }
+        .frame(height: 6 * u)
+    }
+}
+
+/// One finished chess game: result chip, opponent, opening / ending, accuracy each side.
+struct ChessGameRow: View {
+    let g: GamesSnapshot.ChessGame
+    let u: CGFloat
+    let now: Date
+    var body: some View {
+        let chip = ChessStats.chip(g)
+        let (me, them) = ChessStats.sides(g)
+        HStack(spacing: 7 * u) {
+            Chip(text: chip.0, hue: chip.1, u: u).frame(width: 40 * u, alignment: .leading)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(ChessStats.opponentLine(g)).font(.system(size: 11 * u)).foregroundStyle(Palette.text.opacity(0.85))
+                Text(ChessStats.detail(g)).font(.system(size: 9 * u, design: .monospaced)).foregroundStyle(.white.opacity(0.45))
+            }
+            .lineLimit(1)
+            Spacer(minLength: 4 * u)
+            if me?.accuracy != nil || them?.accuracy != nil {
+                Text("\(ChessStats.acc(me?.accuracy))/\(ChessStats.acc(them?.accuracy))")
+                    .font(.system(size: 10 * u, design: .monospaced)).foregroundStyle(.white.opacity(0.6)).fixedSize()
+            }
+            Text(GameNames.ago(g.ended, now: now)).font(.system(size: 9.5 * u, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.4)).frame(width: 46 * u, alignment: .trailing)
+        }
+    }
+}
+
+/// Nova's newest GTNW Chess review. Mac / iPad: tap opens it (only nova.digitalnoise.net). Not focusable on the TV.
+struct ReviewLine: View {
+    let review: GamesSnapshot.Review
+    let url: URL
+    let u: CGFloat
+    @Environment(\.openURL) private var openURL
+    var body: some View {
+        HStack(spacing: 7 * u) {
+            Image(systemName: "sparkles").font(.system(size: 10 * u, weight: .semibold)).foregroundStyle(Palette.violet.color())
+            Text("NOVA'S REVIEW").font(.system(size: 8.5 * u, weight: .semibold)).tracking(1.2 * u).foregroundStyle(Palette.violet.color(0.85))
+            Text(NodeLines.clean(review.title, max: 90)).font(.system(size: 11 * u)).foregroundStyle(Palette.text.opacity(0.85))
+                .lineLimit(1).truncationMode(.tail)
+            Spacer(minLength: 4 * u)
+            #if !os(tvOS)
+            Image(systemName: "arrow.up.right.square").font(.system(size: 10 * u)).foregroundStyle(.white.opacity(0.45))
+            #endif
+        }
+        .contentShape(Rectangle())
+        #if !os(tvOS)
+        .onTapGesture { openURL(url) }
+        #endif
+        #if os(macOS)
+        .help(url.absoluteString)
+        #endif
     }
 }
 
