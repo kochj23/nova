@@ -8,7 +8,7 @@ nova_image_utils.generate_image(), generate_image.sh and nova_satire:
   1. harden_prompt(p)  — rewrites risky cue words and appends a POSITIVE style clause (FLUX has no negative
                          prompt; "natural proportionate faces" works far better than "no big noses").
      NEGATIVE          — extra negative terms for SDXL graphs.
-  2. screen_image(path) — a LOCAL vision model (Ollama on the Studio, qwen3-vl:30b, then a smaller fallback)
+  2. screen_image(path) — a LOCAL vision model (Ollama on the Studio, gemma3:27b — it caught all 6 regression originals; qwen3-vl:30b missed one and was 4x slower)
                          answers a strict 9-category rubric. FAIL-CLOSED: an image is usable only when a model
                          answered and every category is false. No cloud, image never leaves the LAN.
 
@@ -25,29 +25,36 @@ import time
 import urllib.request
 
 OLLAMA = os.environ.get("NOVA_VISION_URL", "http://192.168.1.6:11434") + "/api/chat"
-MODELS = [m for m in os.environ.get("NOVA_VISION_MODELS", "qwen3-vl:30b,qwen2.5vl:3b").split(",") if m]
-CATS = ["ethnic_religious_caricature", "racist_or_blackface", "sexist_or_demeaning", "nudity_or_sexual",
-        "hate_symbols", "gore", "disability_mockery", "real_person_degraded", "offensive_to_progressive_viewer"]
-
+MODELS = [m for m in os.environ.get("NOVA_VISION_MODELS", "gemma3:27b").split(",") if m]
+# Observable-attribute rubric (v2, 2026-11-12). v1 asked the model to JUDGE "is this an antisemitic caricature?" and
+# it said no to hook-nosed caricatures and Judenhut figures. Small vision models are far better at reporting what is
+# visibly there; the policy decision is made in code: ANY attribute true -> unsafe.
+ATTRS = {
+    "exaggerated_facial_features": "any face with an oversized, hooked or long nose, huge lips, bulging eyes or other cartoonishly exaggerated or grotesque features",
+    "religious_or_ethnic_headwear_or_dress": "anyone wearing pointed hats, skullcaps/kippot, sidelocks, prayer shawls, turbans, hijabs, monk/rabbi/priest/imam robes, sombreros, headdresses or other religious or ethnic attire",
+    "religious_or_ethnic_symbols": "Star of David, Hebrew or Arabic lettering, menorahs, crosses, crescents or other religious or ethnic symbols",
+    "money_near_people": "coins, cash, gold or money bags held by or piled near people",
+    "dark_skinned_cartoon_figure": "a cartoon, doll or illustrated figure with very dark or black skin, especially with exaggerated lips or eyes",
+    "ape_or_animal_features_on_people": "people drawn with ape, monkey or animal features, or a person shown next to an ape-like hand or animal in a mocking way",
+    "nudity_including_statues_or_art": "any bare breasts, nipples, buttocks or genitals, INCLUDING classical statues, sculptures and paintings, even small or in the background",
+    "statue_or_classical_figure": "any statue, sculpture or classical/Renaissance human figure at all",
+    "revealing_or_pinup": "lingerie, swimwear, cleavage, pin-up or glamour posing, suggestive poses",
+    "hate_symbol": "swastika, SS runes, KKK hood, confederate flag, noose or other hate symbol",
+    "blood_or_gore": "blood, wounds, corpses, skulls in a violent context",
+    "demeaning_or_mocking_a_group": "women, an ethnic, religious, national or disabled group shown as a joke, stereotype or in a demeaning way",
+    "real_identifiable_person": "a recognizable real or famous person or politician",
+    "devil_or_demonic_features_on_people": "horns, devil tails or demonic features on human figures",
+}
+CATS = list(ATTRS)
 RUBRIC = (
-    "You are a strict content-safety reviewer for a public website and YouTube channel. Look carefully at the image "
-    "(including statues, paintings, cartoons and background details). Answer each question true/false. Be conservative: "
-    "when in doubt answer true.\n"
-    "ethnic_religious_caricature: any exaggerated ethnic or religious stereotype or caricature, e.g. exaggerated or hooked "
-    "noses, Jewish stereotypes (hooked nose, sidelocks, money-grabbing), Hebrew/religious symbols used as a joke, or any "
-    "stereotyped facial features of a group.\n"
-    "racist_or_blackface: racist imagery, blackface, minstrel, ape/animal comparisons of people, stereotyped depiction of a race.\n"
-    "sexist_or_demeaning: sexist, objectifying or demeaning depiction of women or any group.\n"
-    "nudity_or_sexual: any nudity or sexual content, INCLUDING classical statues or paintings showing bare breasts, nipples, "
-    "buttocks or genitals, lingerie, cleavage, pin-up styling or suggestive poses.\n"
-    "hate_symbols: swastikas, SS runes, KKK hoods, confederate flags, other hate symbols.\n"
-    "gore: blood, wounds, dismemberment, corpses.\n"
-    "disability_mockery: mocking people with disabilities.\n"
-    "real_person_degraded: a recognizable real/famous person or politician shown in a degrading or mocking way.\n"
-    "offensive_to_progressive_viewer: anything else a reasonable progressive viewer would find offensive or tasteless.\n"
-    'Reply with ONLY JSON: {"description": "<one sentence describing people/figures in the image>", '
-    + ", ".join(f'"{c}": false' for c in CATS) + "}"
+    "You inspect images for a public website. Look carefully at EVERY figure, including small background details, "
+    "statues and artwork. For each item answer true if it is visibly present AT ALL, otherwise false. "
+    "When unsure, answer true.\n"
+    + "\n".join(f"{k}: {v}" for k, v in ATTRS.items())
+    + '\nReply with compact JSON only, no spaces or newlines: {"d":"<8-word description>",'
+    + ",".join(f'"{k}":false' for k in ATTRS) + "}"
 )
+NUM_PREDICT = 3000          # qwen3-vl thinks even with think=false; 400 tokens truncated the JSON (-> "unparsed")
 
 # FLUX ignores negatives, so the clause is phrased positively; SENTINEL makes harden_prompt idempotent.
 SENTINEL = "natural, proportionate, non-caricatured features"
@@ -77,11 +84,48 @@ def log(m):
         print(f"[image-safety {time.strftime('%H:%M:%S')}] {m}", file=sys.stderr, flush=True)
 
 
+# HARD BLOCK (prompt side): religious/ethnic/national groups depicted as people, and caricature-of-people styles.
+# Such a prompt is never rendered as asked: the group/style words are removed and the scene becomes people-free.
+GROUP_PEOPLE = re.compile(
+    r"\b(jews?|jewish|rabbis?|hasid\w*|orthodox|kippah|kippot|yarmulkes?|sidelocks|payot|muslims?|imams?|mullahs?|"
+    r"arabs?|arabian|sheikhs?|christians?|priests?|nuns?|monks?|popes?|cardinals?|bishops?|clergy\w*|vicars?|pastors?|"
+    r"preachers?|worshipp?ers?|congregations?|pilgrims?|hindus?|sikhs?|buddhists?|mormons?|amish|catholics?|"
+    r"protestants?|evangelicals?|mexicans?|africans?|asians?|chinese|japanese|koreans?|indians?|native americans?|"
+    r"indigenous|tribes?(?:men|people)?|tribal|gypsy|gypsies|romani|eskimos?|inuit|black (?:men|women|people|man|woman)|"
+    r"white (?:men|women|people)|ethnic\w*|races?|racial)\b", re.I)
+CARICATURE_STYLE = re.compile(
+    r"\b(caricatur\w*|claymation|clay ?figures?|plasticine|editorial (?:newspaper )?cartoon|political cartoon|"
+    r"exaggerated (?:features|faces?|noses?)|grotesque|big[- ]nosed|hook[- ]nosed|bobblehead|puppet)\b", re.I)
+PEOPLE_FREE = (" Depict the idea with objects, places, robots and animals only; there are no human figures, faces, "
+               "statues or religious garments in the image.")
+
+
+def blocked_reason(prompt: str):
+    """-> None, or why the prompt may not be rendered as written."""
+    g, c = GROUP_PEOPLE.search(prompt or ""), CARICATURE_STYLE.search(prompt or "")
+    if g or c:
+        return "; ".join(x for x in (f"group as people: {g.group(0)}" if g else "",
+                                     f"caricature style: {c.group(0)}" if c else "") if x)
+    return None
+
+
+def neutralize_prompt(prompt: str) -> str:
+    """Strip group/caricature words and force a people-free scene (only when blocked_reason())."""
+    p = GROUP_PEOPLE.sub("", prompt)
+    p = CARICATURE_STYLE.sub("illustration", p)
+    return re.sub(r"\s{2,}", " ", p).strip() + PEOPLE_FREE
+
+
 def harden_prompt(prompt: str) -> str:
-    """Rewrite risky cue words and append the positive safety clause (idempotent)."""
+    """Hard-block group/caricature prompts (people-free rewrite), rewrite risky cue words and append the positive
+    safety clause (idempotent)."""
     if not prompt or SENTINEL in prompt:
         return prompt
     p = prompt
+    why = blocked_reason(p)
+    if why:
+        log(f"prompt hard-blocked ({why}) — rendering a people-free version")
+        p = neutralize_prompt(p)
     for pat, repl in _SUBS:
         p = re.sub(pat, repl, p, flags=re.I)
     return re.sub(r"\s{2,}", " ", p).strip() + CLAUSE
@@ -100,9 +144,9 @@ def _b64(path, side=768):
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def _ask(path, model, urlopen=urllib.request.urlopen, timeout=240):
+def _ask(path, model, urlopen=urllib.request.urlopen, timeout=600):
     body = {"model": model, "stream": False, "format": "json", "keep_alive": "30m",
-            "options": {"temperature": 0, "num_predict": 400},
+            "options": {"temperature": 0, "num_predict": NUM_PREDICT},
             "messages": [{"role": "user", "content": RUBRIC, "images": [_b64(path)]}]}
     if model.startswith("qwen3"):
         body["think"] = False
@@ -134,7 +178,7 @@ def screen_image(path, models=None, ask=_ask, retries=2, sleep=time.sleep):
                 if flags == ["unparsed"] and attempt < retries:
                     continue
                 # an empty/unparseable answer after retries is treated as a refusal -> unsafe. It never falls through
-                # to a weaker model (qwen3-vl:30b went silent on an antisemitic caricature, 2026-11-12).
+                # to a weaker model (qwen3-vl:30b went silent on an antisemitic caricature and passed a racist cover, 2026-11-12; gemma3:27b rejected all 6 regression originals).
                 return (not flags), {"model": model, "flags": flags, "verdict": v}
             except Exception as e:  # noqa: BLE001 — network / model load hiccups
                 last = str(e)[:200]
@@ -148,10 +192,14 @@ def selftest():
     assert SENTINEL in harden_prompt("a cartoon of a greedy banker with a big nose")
     assert "big nose" not in harden_prompt("a man with a big nose").lower()
     assert harden_prompt(harden_prompt("x")) == harden_prompt("x")
+    assert blocked_reason("a rabbi and a priest walk into a bar") and blocked_reason("claymation office workers")
+    assert blocked_reason("a robot folding laundry") is None
+    hp = harden_prompt("an editorial cartoon of orthodox jewish bankers")
+    assert "jewish" not in hp.lower() and "no human figures" in hp
     assert "nude" not in harden_prompt("a nude statue").lower()
     assert verdict_flags({c: False for c in CATS}) == []
     assert verdict_flags({"description": "x"}) == ["unparsed"]
-    assert verdict_flags(dict({c: False for c in CATS}, gore="true")) == ["gore"]
+    assert verdict_flags(dict({c: False for c in CATS}, blood_or_gore="true")) == ["blood_or_gore"]
     assert "nose" in risky_terms("hooked nose") and not risky_terms("a robot folding laundry")
     print("selftest ok")
     return 0

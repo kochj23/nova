@@ -50,9 +50,9 @@ class TestSecurity(unittest.TestCase):
     def test_unsafe_and_unanswered_verdicts_fail_closed(self):
         with tempfile.TemporaryDirectory() as d:
             p = _png(d)
-            ok, info = nis.screen_image(p, models=["m"], ask=lambda *_: dict(CLEAN, ethnic_religious_caricature=True))
+            ok, info = nis.screen_image(p, models=["m"], ask=lambda *_: dict(CLEAN, exaggerated_facial_features=True))
             self.assertFalse(ok)
-            self.assertEqual(info["flags"], ["ethnic_religious_caricature"])
+            self.assertEqual(info["flags"], ["exaggerated_facial_features"])
             ok, _ = nis.screen_image(p, models=["m"], ask=lambda *_: {"description": "half an answer"}, sleep=lambda s: None)
             self.assertFalse(ok)
             self.assertFalse(nis.screen_image(str(Path(d) / "missing.png"), ask=lambda *_: CLEAN)[0])
@@ -109,7 +109,7 @@ class TestRetry(unittest.TestCase):
 class TestUnit(unittest.TestCase):
     def test_verdict_flags(self):
         self.assertEqual(nis.verdict_flags(CLEAN), [])
-        self.assertEqual(nis.verdict_flags(dict(CLEAN, nudity_or_sexual="true")), ["nudity_or_sexual"])
+        self.assertEqual(nis.verdict_flags(dict(CLEAN, nudity_including_statues_or_art="true")), ["nudity_including_statues_or_art"])
         self.assertEqual(nis.verdict_flags(None), ["unparsed"])
         self.assertEqual(nis.verdict_flags({}), ["unparsed"])
 
@@ -130,6 +130,30 @@ class TestUnit(unittest.TestCase):
 
     def test_selftest(self):
         self.assertEqual(nis.selftest(), 0)
+
+    def test_hard_block_groups_and_caricature_styles(self):
+        for p in ("an editorial cartoon of orthodox jewish bankers counting coins",
+                  "claymation office workers in a meeting",
+                  "a rabbi, a priest and an imam at a poker table",
+                  "a caricature of a politician with a big nose",
+                  "mexican men in sombreros napping"):
+            self.assertIsNotNone(nis.blocked_reason(p), p)
+            out = nis.harden_prompt(p).lower()
+            self.assertIn("no human figures", out)
+            out = out.split(" depict the idea")[0]          # the request itself, before the safety clauses
+            for w in ("jewish", "rabbi", "imam", "claymation", "caricature", "mexican", "orthodox"):
+                self.assertNotIn(w, out)
+        for p in ("a robot folding a fitted sheet", "a cat DJ at turntables", "server racks in a sauna"):
+            self.assertIsNone(nis.blocked_reason(p), p)
+            self.assertNotIn("no human figures", nis.harden_prompt(p))
+
+    def test_v2_rubric_is_observable_attributes(self):
+        for k in ("exaggerated_facial_features", "religious_or_ethnic_headwear_or_dress", "nudity_including_statues_or_art",
+                  "dark_skinned_cartoon_figure", "ape_or_animal_features_on_people", "money_near_people", "revealing_or_pinup"):
+            self.assertIn(k, nis.CATS)
+            self.assertIn(k, nis.RUBRIC)
+        self.assertIn("pointed hats", nis.RUBRIC)
+        self.assertGreaterEqual(nis.NUM_PREDICT, 2000)   # 400 truncated qwen3-vl's JSON -> every verdict "unparsed"
 
 
 class TestIntegration(unittest.TestCase):
@@ -171,7 +195,7 @@ class TestFunctional(unittest.TestCase):
         iu = _load("nova_image_utils")
         with tempfile.TemporaryDirectory() as d:
             renders = [_png(d, "bad.png"), _png(d, "good.png")]
-            verdicts = iter([(False, {"flags": ["ethnic_religious_caricature"]}), (True, {"flags": []})])
+            verdicts = iter([(False, {"flags": ["exaggerated_facial_features"]}), (True, {"flags": []})])
             seen_prompts = []
 
             def fake_gen(prompt, *a, **k):
@@ -205,6 +229,32 @@ class TestFunctional(unittest.TestCase):
         sat = _load("nova_satire")
         self.assertFalse(sat.safe_to_use("/x.png", screen=lambda p: (False, {"flags": ["gore"]})))
         self.assertTrue(sat.safe_to_use("/x.png", screen=lambda p: (True, {})))
+
+
+FIXTURES = Path(os.environ.get("NOVA_GATE_FIXTURES", "/Volumes/Data/AI/imgreview/gate_fixtures"))
+RECORDED = Path(__file__).resolve().parent / "fixtures" / "image_safety_gate_verdicts.json"
+
+
+class TestRegressionFixtures(unittest.TestCase):
+    """The 6 originals that reached the public site (2026-11-12). The images are kept OUT of git (never commit
+    offensive images); recorded model verdicts are in tests/fixtures. Each must be rejected for a real attribute,
+    never just 'unparsed'/'no_verdict'."""
+
+    def test_recorded_verdicts_reject_every_bad_fixture_for_a_real_reason(self):
+        rec = json.loads(RECORDED.read_text())
+        bad = {k: v for k, v in rec["verdicts"].items() if k.startswith("bad/")}
+        self.assertEqual(len(bad), 6)
+        for name, v in bad.items():
+            flags = nis.verdict_flags(v)
+            self.assertTrue(flags, name)
+            self.assertFalse(set(flags) & {"unparsed", "no_verdict"}, name)
+
+    @unittest.skipUnless(os.environ.get("NOVA_LIVE_VISION") == "1" and FIXTURES.exists(), "live vision run only")
+    def test_live_gate_rejects_bad_fixtures(self):
+        for f in sorted((FIXTURES / "bad").glob("*")):
+            ok, info = nis.screen_image(str(f))
+            self.assertFalse(ok, f.name)
+            self.assertFalse(set(info.get("flags") or []) & {"unparsed", "no_verdict"}, (f.name, info))
 
 
 class TestFrame(unittest.TestCase):

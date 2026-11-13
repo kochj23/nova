@@ -151,8 +151,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--slug"); ap.add_argument("--dry-run", action="store_true"); ap.add_argument("--check", action="store_true")
     ap.add_argument("--retire", metavar="VIDEO_ID", help="set an old video PRIVATE and remove it from the playlist")
-    ap.add_argument("--private-only", metavar="VIDEO_ID", nargs="+",
-                    help="content-safety hold: set PRIVATE only (stays in playlist, URL unchanged)")
+    ap.add_argument("--private-only", metavar="VIDEO_ID", nargs="+", action="extend",
+                    help="content-safety hold: set PRIVATE only (stays in playlist, URL unchanged). "
+                         "IDs may start with '-': pass them as --private-only=ID (repeatable)")
     ap.add_argument("--privacy", default="PUBLIC", choices=["PRIVATE", "UNLISTED", "PUBLIC"])
     a = ap.parse_args()
     if a.check:
