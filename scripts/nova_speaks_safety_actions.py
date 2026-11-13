@@ -132,7 +132,7 @@ def hide(cur, vids, reason_by_vid):
     cur.execute("""SELECT youtube_id FROM nova_speaks_hidden h WHERE result='OK'
                    OR (result IN ('CUT-PENDING','CUT-VERIFIED','LEFT-PRIVATE','CUT-FAILED','RESTORED-NOEXPOSURE','CUT-REVERTING','RESTORED-SHOTSCAN')
                        AND NOT EXISTS (SELECT 1 FROM image_video_exposure e WHERE e.youtube_id=h.youtube_id
-                                       AND e.ts > coalesce(h.cut_submitted_at, h.restored_at, h.hidden_at)))""")
+                                       AND e.ts > greatest(h.cut_submitted_at, h.restored_at, h.hidden_at)  -- verification covers exposures that existed when it ran))""")
     done = {r[0] for r in cur.fetchall()}
     todo = [v for v in dict.fromkeys(vids) if v not in done]
     if not todo or DRY:
