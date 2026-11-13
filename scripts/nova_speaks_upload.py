@@ -109,7 +109,7 @@ def session():
     return YTUploaderSession(jar)
 
 
-def set_private(s, vid):
+def set_private(s, vid, privacy="PRIVATE"):
     """Content-safety hold (2026-11-12): set PRIVATE via Studio metadata_update and change NOTHING else — the video stays
     in the playlist and keeps its URL, so it can be cleaned in the Studio editor and flipped back to PUBLIC.
     Returns True on UPDATE_SUCCESS."""
@@ -118,13 +118,13 @@ def set_private(s, vid):
     if not s._session_token: s._get_session_token()
     body = {"context": APIContext.from_session_data(data.channel_id, s._session_token, data.delegated_session_id).to_dict(),
             "delegationContext": APIDelegationContext(data.channel_id).to_dict(), "encryptedVideoId": vid,
-            "privacyState": {"newPrivacy": "PRIVATE"}}
+            "privacyState": {"newPrivacy": privacy}}
     r = s._session.post("https://studio.youtube.com/youtubei/v1/video_manager/metadata_update",
                         params={"key": data.innertube_api_key, "alt": "json"}, json=body, timeout=60)
     r.raise_for_status()
     j = r.json()
     res = (j.get("overallResult") or {}).get("resultCode", "")
-    log(f"private-only {vid}: {res or str(j)[:200]}")
+    log(f"{privacy.lower()}-only {vid}: {res or str(j)[:200]}")
     return res == "UPDATE_SUCCESS"
 
 

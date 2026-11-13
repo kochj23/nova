@@ -413,6 +413,12 @@ def chunks(text, words, length):
         else:
             groups.append(cur)
     ww = [(w, s, e) for w, s, e in words if w] or [(text, 0.0, length)]
+    for i in range(len(ww) - 2):            # Whisper looped on a hallucination ("Pat Pat Pat ..."): cut it off
+        if ww[i][0] == ww[i + 1][0] == ww[i + 2][0]:
+            ww = ww[:i] or [(text, 0.0, length)]; break
+    if (ww[-1][2] > length + 0.5 or any(b[1] < a[1] for a, b in zip(ww, ww[1:]))
+            or len(ww) > 1.3 * len(dw) + 3):  # Whisper looped on a hallucination ("Pat Pat Pat ...")
+        ww = [(text, 0.0, length)]    # Whisper timings ran past the clip (30 s window drift): spread by characters
     tot = sum(len(w) for w, _, _ in ww) or 1
     cum, acc = [], 0
     for w, s, e in ww:
@@ -617,12 +623,14 @@ def game_clip(mov, a, b, out, speed=1.0, overlays=(), crop=None):
     """Recording [a, b) -> 30 fps clip at `speed` (W x H: 1080p, or 1080x1920 for the vertical cut, where the game
     sits centred on a blurred fill of itself), with full-frame RGBA overlays (badge / lower third)."""
     if H > W:
-        fc0 = ((f"[0:v]crop={crop}," if crop else "[0:v]") + "split[s1][s2];"
+        fc0 = ((f"[0:v]crop={crop}," if crop else f"[0:v]crop=iw:ih-{TOPCUT}:0:{TOPCUT},") + "split[s1][s2];"
                f"[s1]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=40:2,eq=brightness=-0.2[bg];"
                f"[s2]scale={W}:{int(H * 0.40)}:force_original_aspect_ratio=decrease:flags=lanczos[fg];"
                f"[bg][fg]overlay=(W-w)/2:{int(H * 0.40)}-h/2,setpts=(PTS-STARTPTS)/{speed},fps={FPS}[v0];")
     else:
-        vf = (f"crop={crop}," if crop else "") + f"scale={W}:{H}:force_original_aspect_ratio=decrease:flags=lanczos,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setpts=(PTS-STARTPTS)/{speed},fps={FPS}"
+        # 2026-11-12: drop the top 56 px (28 pt) - macOS draws its purple "window is being shared" badge in the
+        # captured window's top-left corner (GTNW / GTNW Chess uploads still show it; left as posted).
+        vf = (f"crop={crop}," if crop else f"crop=iw:ih-{TOPCUT}:0:{TOPCUT},") + f"scale={W}:{H}:force_original_aspect_ratio=decrease:flags=lanczos,pad={W}:{H}:(ow-iw)/2:(oh-ih)/2,setpts=(PTS-STARTPTS)/{speed},fps={FPS}"
         fc0 = f"[0:v]{vf}[v0];"
     inputs = ["-ss", f"{a:.3f}", "-t", f"{(b - a):.3f}", "-i", mov]
     for o in overlays:
@@ -647,6 +655,7 @@ def concat(parts, out):
     lst.unlink()
 
 
+TOPCUT = 56               # px off the top of every 16:9 game clip (sharing badge)
 DUCK = 10 ** (-14 / 20)   # game audio under Nova's lines: -14 dB
 RAMP = 0.25               # seconds to duck down / come back up
 
@@ -868,7 +877,7 @@ def cmd_render(a):
         mux(vid, narr, out, layers, lufs=-14)
     else:
         mux(vid, narr, out)
-    srt(sorted(caps), OUT / f"{a.slug}-{a.kind}.srt")
+    srt(sorted(caps, key=lambda c: c[0]), OUT / f"{a.slug}-{a.kind}.srt")
     (work / "chapters.json").write_text(json.dumps(
         [(0.0, "Intro")] + [(at, beats[wavs.index(w)].get("label") or " ".join(beats[wavs.index(w)]["text"].split()[:6]))
                             for at, w in placements if at > 1.0]))
