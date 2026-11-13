@@ -92,7 +92,11 @@ GROUP_PEOPLE = re.compile(
     r"preachers?|worshipp?ers?|congregations?|pilgrims?|hindus?|sikhs?|buddhists?|mormons?|amish|catholics?|"
     r"protestants?|evangelicals?|mexicans?|africans?|asians?|chinese|japanese|koreans?|indians?|native americans?|"
     r"indigenous|tribes?(?:men|people)?|tribal|gypsy|gypsies|romani|eskimos?|inuit|black (?:men|women|people|man|woman)|"
-    r"white (?:men|women|people)|ethnic\w*|races?|racial)\b", re.I)
+    r"white (?:men|women|people)|ethnic\w*|races?|racial|"
+    # sacred figures/objects/rites: never rendered as jokes (religion bar, 2026-11-13)
+    r"jesus|christ|messiah|muhammad|mohammed|prophets?|buddhas?|saints?|angels?|gods?|goddess\w*|deit(?:y|ies)|"
+    r"divine|holy|sacred|priesthood|monaster\w*|crucifix\w*|altars?|haloe?s?|scriptures?|bibles?|qur'?an|koran|torah|"
+    r"prayers?|praying|meditat\w*|worship\w*|sermons?|baptis\w*|communion)\b", re.I)
 CARICATURE_STYLE = re.compile(
     r"\b(caricatur\w*|claymation|clay ?figures?|plasticine|editorial (?:newspaper )?cartoon|political cartoon|"
     r"exaggerated (?:features|faces?|noses?)|grotesque|big[- ]nosed|hook[- ]nosed|bobblehead|puppet)\b", re.I)
@@ -192,6 +196,7 @@ def selftest():
     assert SENTINEL in harden_prompt("a cartoon of a greedy banker with a big nose")
     assert "big nose" not in harden_prompt("a man with a big nose").lower()
     assert harden_prompt(harden_prompt("x")) == harden_prompt("x")
+    assert blocked_reason("the priesthood of combustion: Jesus blesses a V8") and blocked_reason("a robot meditating with a halo")
     assert blocked_reason("a rabbi and a priest walk into a bar") and blocked_reason("claymation office workers")
     assert blocked_reason("a robot folding laundry") is None
     hp = harden_prompt("an editorial cartoon of orthodox jewish bankers")
