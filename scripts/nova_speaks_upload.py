@@ -154,21 +154,24 @@ def main():
     ap.add_argument("--private-only", metavar="VIDEO_ID", nargs="+", action="extend",
                     help="content-safety hold: set PRIVATE only (stays in playlist, URL unchanged). "
                          "IDs may start with '-': pass them as --private-only=ID (repeatable)")
+    ap.add_argument("--public-only", metavar="VIDEO_ID", nargs="+", action="extend",
+                    help="undo a content-safety hold (false positive): set PUBLIC again; same ID rules as --private-only")
     ap.add_argument("--privacy", default="PUBLIC", choices=["PRIVATE", "UNLISTED", "PUBLIC"])
     a = ap.parse_args()
     if a.check:
         ok = session().has_valid_cookies(); log(f"cookies valid: {ok}"); return 0 if ok else 1
-    if a.private_only:
-        bad = [v for v in a.private_only if not re.fullmatch(r"[\w-]{11}", v)]
+    if a.private_only or a.public_only:
+        ids, priv = (a.private_only, "PRIVATE") if a.private_only else (a.public_only, "PUBLIC")
+        bad = [v for v in ids if not re.fullmatch(r"[\w-]{11}", v)]
         if bad: log(f"not video ids: {bad}"); return 2
         s = session(); fails = []
-        for v in a.private_only:
+        for v in ids:
             try:
-                ok = set_private(s, v)
+                ok = set_private(s, v, priv)
             except Exception as e:  # one bad id must not abort the batch
                 log(f"private-only {v} failed: {e}"); ok = False
             if not ok: fails.append(v)
-        for v in a.private_only: print(("FAIL " if v in fails else "OK ") + v)
+        for v in ids: print(("FAIL " if v in fails else "OK ") + v)
         return 1 if fails else 0
     if a.retire:
         if not re.fullmatch(r"[\w-]{11}", a.retire): log("not a video id"); return 2
