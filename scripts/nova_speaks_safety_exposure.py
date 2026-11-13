@@ -184,7 +184,8 @@ def run_once(frames):
                            timestamps=EXCLUDED.timestamps, youtube_id=EXCLUDED.youtube_id,
                            ts=CASE WHEN (image_video_exposure.confidence, image_video_exposure.timestamps, image_video_exposure.youtube_id)
                                    IS DISTINCT FROM (EXCLUDED.confidence, EXCLUDED.timestamps, EXCLUDED.youtube_id)
-                                   THEN now() ELSE image_video_exposure.ts END""",  # ts = 'new exposure' clock for the cut pass
+                                   THEN now() ELSE image_video_exposure.ts END
+                           WHERE image_video_exposure.link IS DISTINCT FROM 'shot_scan'""",  # ts = 'new exposure' clock for the cut pass; shot-scan rows carry exact shot occurrences and are never narrowed
                         (path, slug, v, conf.split(":")[-1], conf.split(":")[0], json.dumps({"spans_s": spans, "score": score}) if spans else None, cat, sev))
             if v:
                 d = reason_by_vid.setdefault(v, {"slug": slug, "reasons": set(), "paths": set(), "ids": set(), "cats": set(), "sev": 9})
