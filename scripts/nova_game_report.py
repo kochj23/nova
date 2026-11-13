@@ -117,7 +117,7 @@ NOT_SPECTATOR = "COALESCE(summary->>'spectator', '') <> 'true'"
 
 # (game, client) -> display name, and game -> what it is (for the prompt and the image).
 GAME_NAMES = {
-    ("gtnw", "mac"): "GTNW (Global Thermonuclear War)",
+    ("gtnw", "mac"): "GTNW (Global Thermal Nuclear War)",
     ("gtnw", "web"): "GTNW Lite",
     ("cartest", "mac"): "CarTest",
     ("cartest", "web"): "CarTest Web",
