@@ -70,6 +70,24 @@ def snap(spans, pauses, dur, limit=SNAP):
     return merge(out, pad=0, dur=dur)
 
 
+def union_ms(spans):
+    out = []
+    for a, b in sorted([int(a), int(b)] for a, b in spans):
+        if out and a <= out[-1][1]: out[-1][1] = max(out[-1][1], b)
+        else: out.append([a, b])
+    return out
+
+
+def removed_from_remaining(remaining, dur):
+    """complement of Studio's allRemainingSegments within [0, dur] -> the cuts already applied (ms)."""
+    out, t = [], 0
+    for a, b in sorted(remaining):
+        if a > t: out.append([t, a])
+        t = max(t, b)
+    if t < dur: out.append([t, dur])
+    return out
+
+
 def parse_hms(s):
     return sum(int(p) * m for p, m in zip(s.split(":"), (3600, 60, 1)))
 
@@ -200,7 +218,7 @@ def plan(cur, vid, slug):
     if not mp4 or not os.path.exists(mp4):
         return "LEFT-PRIVATE", None, None, "original render not on disk; cannot verify"
     import nova_speaks_safety_shots as shots
-    cur.execute(shots.READY_SQL, {"slug": slug})
+    cur.execute(shots.SCANNED_SQL, {"slug": slug})
     if not cur.fetchone():
         return "WAIT", None, None, "shot scan not finished / unreviewed flagged shots"
     dur = duration(mp4)
@@ -282,16 +300,15 @@ def run(max_n=None):
                 try:
                     e = st.edits(vid)
                     if not e.get("isOriginal", True):
-                        # already cut once (e.g. a newer bad shot appeared): revert to the original, re-plan after
-                        try:
-                            r = st.revert(vid)
-                        except Exception as ex:   # 2026-11-13: Studio answers FAILED_PRECONDITION for API reverts
-                            raise RuntimeError(f"already edited and revert refused ({str(ex)[:80]}); needs manual handling")
-                        cur.execute("UPDATE nova_speaks_hidden SET result='CUT-REVERTING', cut_submitted_at=now(), "
-                                    "cut_note=coalesce(cut_note,'')||%s WHERE youtube_id=%s",
-                                    (f" | revert submitted ({r.get('executionStatus')})", vid))
-                        log(f"{vid} already edited -> revert submitted ({r.get('executionStatus')})")
-                        last_submit = time.time(); continue
+                        # already cut once (a newer bad shot appeared). Studio edits are expressed on the ORIGINAL
+                        # timeline (allRemainingSegments), so re-edit with old cuts U new cuts; verification checks
+                        # served duration == original - union, which proves it rebuilt from the original.
+                        odur_e = int(e["originalVideoDurationMs"])
+                        old = removed_from_remaining([(x["start"]["millis"], x["end"]["millis"]) for x in e["allRemainingSegments"]], odur_e)
+                        spans_ms = union_ms(old + spans_ms)
+                        note += f"; re-edit: union with {len(old)} earlier cut(s)"
+                        if sum(b - a for a, b in spans_ms) > MAX_FRAC * odur_e:
+                            raise RuntimeError(f"re-edit union would remove > {MAX_FRAC:.0%} of the video; left private")
                     r = st.cut(vid, spans_ms)
                     if r.get("executionStatus") not in ("EDIT_EXECUTION_STATUS_SCHEDULED", "EDIT_EXECUTION_STATUS_DONE"):
                         raise RuntimeError(f"edit_video: {str(r)[:200]}")
@@ -314,7 +331,7 @@ def run(max_n=None):
 def verify(cur, vid, spans_ms, odur, spot=False):
     import nova_speaks_safety_shots as shots
     cur.execute("SELECT slug FROM nova_speaks_hidden WHERE youtube_id=%s", (vid,)); slug = cur.fetchone()[0]
-    cur.execute(shots.READY_SQL, {"slug": slug})
+    cur.execute(shots.SCANNED_SQL, {"slug": slug})
     if not cur.fetchone():
         return 0                                   # shot scan of this render not finished: verify later
     exp = odur / 1000 - sum(b - a for a, b in spans_ms) / 1000
@@ -354,6 +371,9 @@ def selftest():
     assert snap([[10, 20]], [5, 25], 30) == [[10, 20]]                  # nothing within 2 s: unchanged
     assert snap([[10, 20], [21, 25]], [20.8], 30) == [[10, 25]]          # snapping can merge spans
     assert parse_hms("00:04:17") == 257
+    assert removed_from_remaining([(0, 239500), (257500, 263680)], 263680) == [[239500, 257500]]
+    assert removed_from_remaining([(500, 1000)], 2000) == [[0, 500], [1000, 2000]]
+    assert union_ms([[239500, 257500], [250000, 260000], [1000, 2000]]) == [[1000, 2000], [239500, 260000]]
     assert "isRevert" in __doc__ and "trimmedOutSegments" in __doc__
     print("selftest ok"); return 0
 

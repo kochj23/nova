@@ -215,6 +215,11 @@ READY_SQL = """SELECT 1 FROM nova_speaks_shot_covered c WHERE c.slug=%(slug)s AN
   SELECT 1 FROM nova_speaks_shot_occ o JOIN nova_speaks_shot_scan s USING (shot_id) WHERE o.slug=%(slug)s
    AND NOT (s.screened_at IS NOT NULL AND (s.review LIKE 'CLAUDE-FP%%' OR (s.ok AND s.review IS NULL))))"""
 
+# cut pass: every shot screened and every flagged shot reviewed (confirmed ones become cut spans via exposures)
+SCANNED_SQL = """SELECT 1 FROM nova_speaks_shot_covered c WHERE c.slug=%(slug)s AND NOT EXISTS (
+  SELECT 1 FROM nova_speaks_shot_occ o JOIN nova_speaks_shot_scan s USING (shot_id) WHERE o.slug=%(slug)s
+   AND (s.screened_at IS NULL OR (s.ok IS NOT TRUE AND s.review IS NULL)))"""
+
 
 def confirm(ids, category, note):
     """Hand-confirmed bad shots -> bad set (image_safety_audit) + exposures from their exact occurrences."""
