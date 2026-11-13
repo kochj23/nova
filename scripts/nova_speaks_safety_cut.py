@@ -14,6 +14,7 @@ Per hidden video (nova_speaks_hidden.result='OK'):
   - spans = frame_match exposures of currently-bad images, padded 0.5 s, edges moved out to the nearest audio pause
     (<= 2 s), merged. Any direct_unverified exposure -> the ORIGINAL render is frame-matched in full against every bad
     original first: zero matches -> PUBLIC (RESTORED-NOEXPOSURE); matches become spans.
+  - waits until nova_speaks_safety_shots.py has covered the render and every shot has a clean/reviewed verdict
   - cut > 40 % of runtime, or no render to check -> LEFT-PRIVATE (listed, never flipped)
   - submit -> CUT-PENDING; once Studio reports EDITED: download the served video (yt-dlp, same cookies), frame-match
     against every bad original (thr 0.86) and check duration == original - cuts (+-1.5 s); clean -> --public-only,
@@ -153,6 +154,17 @@ def set_public(vid):
     return f"OK {vid}" in r.stdout
 
 
+def set_public_many(vids):
+    """-> {vid: ok}; 25 per upload-script call."""
+    out = {}
+    for i in range(0, len(vids), 25):
+        ch = vids[i:i + 25]
+        r = subprocess.run([PY_YT, UPL, *[f"--public-only={v}" for v in ch]], capture_output=True, text=True, timeout=900, cwd=str(HERE))
+        res = {l.split()[1]: l.split()[0] == "OK" for l in r.stdout.splitlines() if l.startswith(("OK ", "FAIL "))}
+        out.update({v: res.get(v, False) for v in ch})
+    return out
+
+
 def download(vid):
     WORK.mkdir(parents=True, exist_ok=True)
     out = WORK / f"{vid}.mp4"
@@ -182,13 +194,17 @@ def plan(cur, vid, slug):
     row = cur.fetchone(); mp4 = row and row[0]
     if not mp4 or not os.path.exists(mp4):
         return "LEFT-PRIVATE", None, None, "original render not on disk; cannot verify"
+    import nova_speaks_safety_shots as shots
+    cur.execute(shots.READY_SQL, {"slug": slug})
+    if not cur.fetchone():
+        return "WAIT", None, None, "shot scan not finished / unreviewed flagged shots"
     dur = duration(mp4)
     cur.execute(f"""SELECT e.image_path, e.confidence, e.timestamps FROM image_video_exposure e
                     WHERE e.youtube_id=%s AND e.image_path IN ({BAD_SQL})""", (vid,))
     rows = cur.fetchall()
     spans, unverified = [], False
     for _, conf, ts in rows:
-        if conf == "frame_match" and ts and ts.get("spans_s"): spans += [tuple(x) for x in ts["spans_s"]]
+        if ts and ts.get("spans_s"): spans += [tuple(x) for x in ts["spans_s"]]
         elif conf in ("direct_unverified",): unverified = True
     if unverified or not spans:
         _, _, hits = frame_hits(mp4)
@@ -205,7 +221,7 @@ def plan(cur, vid, slug):
 
 def run(max_n=None):
     c = db(); cur = c.cursor(); cur.execute(DDL)
-    st = Studio(); submitted = verified = 0; last_submit = 0.0
+    st = Studio(); submitted = verified = 0; last_submit = 0.0; waiting = {}   # vid -> last WAIT time
     while True:
         # 1) verify pending edits that Studio finished
         cur.execute("SELECT youtube_id, cut_spans_ms, orig_duration_ms FROM nova_speaks_hidden WHERE result='CUT-PENDING' ORDER BY cut_submitted_at")
@@ -220,15 +236,19 @@ def run(max_n=None):
         # 2) submit the next cut
         cur.execute(f"""SELECT h.youtube_id, h.slug FROM nova_speaks_hidden h WHERE h.result='OK'
                         AND h.youtube_id ~ '^[A-Za-z0-9_-]{{11}}$' ORDER BY h.hidden_at""")
-        todo = cur.fetchall()
-        if not todo and not pending: log(f"done: submitted {submitted}, verified {verified}"); return
+        todo = [r for r in cur.fetchall() if time.time() - waiting.get(r[0], 0) > 600]
+        if not todo and not pending:
+            if not waiting: log(f"done: submitted {submitted}, verified {verified}"); return
+            time.sleep(60); continue
         if todo and (max_n is None or submitted < max_n) and time.time() - last_submit >= SUBMIT_GAP:
             vid, slug = todo[0]
             try:
                 state, cuts, dur, note = plan(cur, vid, slug)
             except Exception as e:
                 state, cuts, dur, note = "LEFT-PRIVATE", None, None, f"plan failed: {e}"
-            if state == "NOEXPOSURE":
+            if state == "WAIT":
+                waiting[vid] = time.time(); continue
+            elif state == "NOEXPOSURE":
                 ok = set_public(vid)
                 cur.execute("UPDATE nova_speaks_hidden SET result=%s, restored_at=now(), cut_submitted_at=now(), cut_note=%s WHERE youtube_id=%s",
                             ("RESTORED-NOEXPOSURE" if ok else "CUT-FAILED", note + ("" if ok else "; --public-only failed"), vid))
@@ -265,6 +285,11 @@ def run(max_n=None):
 
 
 def verify(cur, vid, spans_ms, odur, spot=False):
+    import nova_speaks_safety_shots as shots
+    cur.execute("SELECT slug FROM nova_speaks_hidden WHERE youtube_id=%s", (vid,)); slug = cur.fetchone()[0]
+    cur.execute(shots.READY_SQL, {"slug": slug})
+    if not cur.fetchone():
+        return 0                                   # shot scan of this render not finished: verify later
     exp = odur / 1000 - sum(b - a for a, b in spans_ms) / 1000
     mp4 = download(vid)
     if not mp4:
@@ -272,9 +297,11 @@ def verify(cur, vid, spans_ms, odur, spot=False):
     try:
         got = duration(str(mp4)); n, top, hits = frame_hits(str(mp4))
         note = f"served {got:.2f}s (expected {exp:.2f}); {len(bad_templates())} bad originals, max {top:.3f}, hits {len(hits)}"
+        vok, vnote = shots.served_check(mp4, slug)
+        note += "; vision: " + vnote
         if spot and spans_ms:
             note += "; seam: " + seam_transcript(mp4, spans_ms[0][0] / 1000)[:400]
-        if hits or abs(got - exp) > DUR_TOL:
+        if hits or not vok or abs(got - exp) > DUR_TOL:
             cur.execute("UPDATE nova_speaks_hidden SET result='CUT-FAILED', cut_note=%s WHERE youtube_id=%s", (note, vid))
             log(f"{vid} CUT-FAILED: {note}"); return 0
         ok = set_public(vid)
