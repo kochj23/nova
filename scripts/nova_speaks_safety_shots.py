@@ -331,27 +331,41 @@ def findlive(ids, thr=0.80):
 
 
 def screen(jobs=6, limit=None):
-    """Vision-screen unscreened shots, the ones blocking the most held videos first."""
+    """Vision-screen unscreened shots, the ones blocking the most held videos first. Shots are claimed one at a time
+    (claimed_at, FOR UPDATE SKIP LOCKED), so several workers on different Ollama hosts (NOVA_VISION_URL) can share
+    the queue; a claim older than 20 min is retried."""
     sys.path.insert(0, str(Path.home() / ".openclaw/scripts"))
     from nova_image_safety import screen_image
-    cur = db().cursor()
-    cur.execute("""SELECT s.shot_id, s.path FROM nova_speaks_shot_scan s LEFT JOIN nova_speaks_shot_occ o USING (shot_id)
-                   LEFT JOIN nova_speaks_renders r ON r.slug=o.slug LEFT JOIN nova_speaks_hidden h ON h.youtube_id=r.youtube_id
-                   WHERE s.screened_at IS NULL GROUP BY 1, 2
-                   ORDER BY count(DISTINCT h.youtube_id) FILTER (WHERE h.result='HELD-SHOTSCAN') DESC, 1 LIMIT %s""", (limit,))
-    todo = cur.fetchall(); log(f"{len(todo)} shots to screen")
-    def one(row):
-        sid, path = row
-        ok, info = screen_image(path)
-        db().cursor().execute("UPDATE nova_speaks_shot_scan SET ok=%s, flags=%s, verdict=%s, screened_at=now() WHERE shot_id=%s",
-                              (ok, info.get("flags") or [], json.dumps(info, default=str), sid))
-        return ok
-    bad = 0
+    db().cursor().execute("ALTER TABLE nova_speaks_shot_scan ADD COLUMN IF NOT EXISTS claimed_at timestamptz")
+    done = [0, 0]
+    def claim():
+        cur = db().cursor()
+        cur.execute("""UPDATE nova_speaks_shot_scan SET claimed_at=now() WHERE shot_id = (
+                         SELECT s.shot_id FROM nova_speaks_shot_scan s WHERE s.screened_at IS NULL
+                           AND (s.claimed_at IS NULL OR s.claimed_at < now() - interval '20 min')
+                         ORDER BY (SELECT count(DISTINCT h.youtube_id) FROM nova_speaks_shot_occ o
+                                     JOIN nova_speaks_renders r ON r.slug=o.slug JOIN nova_speaks_hidden h ON h.youtube_id=r.youtube_id
+                                    WHERE o.shot_id=s.shot_id AND h.result='HELD-SHOTSCAN') DESC, s.shot_id
+                         LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING shot_id, path""")
+        return cur.fetchone()
+    def worker():
+        while limit is None or done[0] < limit:
+            row = claim()
+            if not row: return
+            sid, path = row
+            ok, info = screen_image(path)
+            if info.get("error") or set(info.get("flags") or []) & {"no_verdict", "unparsed"}:
+                # host hiccup (e.g. Metal OOM on the mini): not a verdict -> release the claim, another pass retries it
+                db().cursor().execute("UPDATE nova_speaks_shot_scan SET claimed_at=NULL WHERE shot_id=%s", (sid,))
+                log(f"shot {sid}: no complete verdict ({info.get('error') or info.get('flags')}); released"); time.sleep(30)
+                continue
+            db().cursor().execute("UPDATE nova_speaks_shot_scan SET ok=%s, flags=%s, verdict=%s, screened_at=now() WHERE shot_id=%s",
+                                  (ok, info.get("flags") or [], json.dumps(info, default=str), sid))
+            done[0] += 1; done[1] += not ok
+            if done[0] % 50 == 0: log(f"{done[0]} screened, {done[1]} flagged")
     with ThreadPoolExecutor(jobs) as ex:
-        for i, ok in enumerate(ex.map(one, todo), 1):
-            bad += not ok
-            if i % 200 == 0: log(f"{i}/{len(todo)} screened, {bad} flagged")
-    log(f"screened {len(todo)}, flagged {bad}")
+        for f in [ex.submit(worker) for _ in range(jobs)]: f.result()
+    log(f"screened {done[0]}, flagged {done[1]}")
 
 
 def status():

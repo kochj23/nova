@@ -130,7 +130,7 @@ def hide(cur, vids, reason_by_vid):
     # cut pass (2026-11-13): videos being cut / cut+verified / deliberately left private are owned by nova_speaks_safety_cut.py,
     # unless an exposure was recorded after the cut was submitted (a newly confirmed image) -> hide again.
     cur.execute("""SELECT youtube_id FROM nova_speaks_hidden h WHERE result='OK'
-                   OR (result IN ('CUT-PENDING','CUT-VERIFIED','LEFT-PRIVATE','CUT-FAILED','RESTORED-NOEXPOSURE')
+                   OR (result IN ('CUT-PENDING','CUT-VERIFIED','LEFT-PRIVATE','CUT-FAILED','RESTORED-NOEXPOSURE','CUT-REVERTING')
                        AND NOT EXISTS (SELECT 1 FROM image_video_exposure e WHERE e.youtube_id=h.youtube_id
                                        AND e.ts > coalesce(h.cut_submitted_at, h.hidden_at)))""")
     done = {r[0] for r in cur.fetchall()}

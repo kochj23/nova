@@ -6,7 +6,7 @@ Never deletes or re-uploads a video, never changes a URL, never touches the play
 cut: POST studio.youtube.com/youtubei/v1/video_editor/edit_video with
     {"externalVideoId": ID, "videoEdit": {"trimEdit": {"trimmedOutSegments": [{"start": {"millis": a}, "end": {"millis": b}}]}}}
 (same cookie session/context as metadata_update; Studio schedules the edit and re-processes the same video).
-Revert path: video_editor/get_last_published_edits {"encryptedVideoId": ID} shows remaining segments; Studio's own
+Revert path (automatic for already-edited videos, state CUT-REVERTING): video_editor/get_last_published_edits {"encryptedVideoId": ID} shows remaining segments; Studio's own
 "revert" is edit_video {"externalVideoId": ID, "endscreenEdit": {}, "adBreaksEdit": {"enableMidrollAds": false},
 "isRevert": true}.
 
@@ -144,6 +144,11 @@ class Studio:
     def edits(self, vid): return self.call("video_editor/get_last_published_edits", {"encryptedVideoId": vid})
     def status(self, vid): return self.call("video_editor/get_video_processing_status", {"encryptedVideoId": vid})
 
+    def revert(self, vid):
+        """Studio's own 'revert to original' (same video ID/URL); the original stays stored by YouTube."""
+        return self.call("video_editor/edit_video", {"externalVideoId": vid, "endscreenEdit": {},
+                                                     "adBreaksEdit": {"enableMidrollAds": False}, "isRevert": True})
+
     def cut(self, vid, spans_ms):
         segs = [{"start": {"millis": int(a)}, "end": {"millis": int(b)}} for a, b in spans_ms]
         return self.call("video_editor/edit_video", {"externalVideoId": vid, "videoEdit": {"trimEdit": {"trimmedOutSegments": segs}}})
@@ -233,6 +238,19 @@ def run(max_n=None):
                s.get("lastPublishedEditVersion") != s.get("lastTranscodesPublishedEditVersion"):
                 continue
             verified += verify(cur, vid, spans_ms, odur, spot=(verified % 25 == 0))
+        # 1b) reverted videos whose original is back -> re-plan (result OK); give up after 3 h
+        cur.execute("SELECT youtube_id, cut_submitted_at < now() - interval '3 hours' FROM nova_speaks_hidden WHERE result='CUT-REVERTING'")
+        for vid, stale in cur.fetchall():
+            try:
+                e, s = st.edits(vid), st.status(vid)
+            except Exception as ex: log(f"revert status {vid}: {ex}"); continue
+            if e.get("isOriginal") and s.get("lastPublishedEditVersion") == s.get("lastTranscodesPublishedEditVersion") \
+               and s.get("videoProcessingStatus") != "VIDEO_PROCESSING_STATUS_PROCESSING":
+                cur.execute("UPDATE nova_speaks_hidden SET result='OK', cut_spans_ms=NULL, cut_note=coalesce(cut_note,'')||' | reverted to original' WHERE youtube_id=%s", (vid,))
+                log(f"{vid} reverted to original -> re-plan")
+            elif stale:
+                cur.execute("UPDATE nova_speaks_hidden SET result='CUT-FAILED', cut_note=coalesce(cut_note,'')||' | revert did not complete in 3 h' WHERE youtube_id=%s", (vid,))
+                log(f"{vid} revert did not complete -> CUT-FAILED")
         # 2) submit the next cut
         cur.execute(f"""SELECT h.youtube_id, h.slug FROM nova_speaks_hidden h WHERE h.result='OK'
                         AND h.youtube_id ~ '^[A-Za-z0-9_-]{{11}}$' ORDER BY h.hidden_at""")
@@ -264,7 +282,16 @@ def run(max_n=None):
                 try:
                     e = st.edits(vid)
                     if not e.get("isOriginal", True):
-                        raise RuntimeError("video already has published edits; not stacking a second cut")
+                        # already cut once (e.g. a newer bad shot appeared): revert to the original, re-plan after
+                        try:
+                            r = st.revert(vid)
+                        except Exception as ex:   # 2026-11-13: Studio answers FAILED_PRECONDITION for API reverts
+                            raise RuntimeError(f"already edited and revert refused ({str(ex)[:80]}); needs manual handling")
+                        cur.execute("UPDATE nova_speaks_hidden SET result='CUT-REVERTING', cut_submitted_at=now(), "
+                                    "cut_note=coalesce(cut_note,'')||%s WHERE youtube_id=%s",
+                                    (f" | revert submitted ({r.get('executionStatus')})", vid))
+                        log(f"{vid} already edited -> revert submitted ({r.get('executionStatus')})")
+                        last_submit = time.time(); continue
                     r = st.cut(vid, spans_ms)
                     if r.get("executionStatus") not in ("EDIT_EXECUTION_STATUS_SCHEDULED", "EDIT_EXECUTION_STATUS_DONE"):
                         raise RuntimeError(f"edit_video: {str(r)[:200]}")
