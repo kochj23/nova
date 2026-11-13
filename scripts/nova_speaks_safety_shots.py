@@ -330,11 +330,15 @@ def findlive(ids, thr=0.80):
     return out
 
 
-def screen(jobs=6):
+def screen(jobs=6, limit=None):
+    """Vision-screen unscreened shots, the ones blocking the most held videos first."""
     sys.path.insert(0, str(Path.home() / ".openclaw/scripts"))
     from nova_image_safety import screen_image
     cur = db().cursor()
-    cur.execute("SELECT shot_id, path FROM nova_speaks_shot_scan WHERE screened_at IS NULL ORDER BY shot_id")
+    cur.execute("""SELECT s.shot_id, s.path FROM nova_speaks_shot_scan s LEFT JOIN nova_speaks_shot_occ o USING (shot_id)
+                   LEFT JOIN nova_speaks_renders r ON r.slug=o.slug LEFT JOIN nova_speaks_hidden h ON h.youtube_id=r.youtube_id
+                   WHERE s.screened_at IS NULL GROUP BY 1, 2
+                   ORDER BY count(DISTINCT h.youtube_id) FILTER (WHERE h.result='HELD-SHOTSCAN') DESC, 1 LIMIT %s""", (limit,))
     todo = cur.fetchall(); log(f"{len(todo)} shots to screen")
     def one(row):
         sid, path = row
@@ -377,7 +381,7 @@ def selftest():
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     for f in ("index", "cover", "prefilter", "screen", "restore", "findlive", "status", "selftest"): ap.add_argument(f"--{f}", action="store_true")
-    ap.add_argument("-j", type=int, default=6)
+    ap.add_argument("-j", type=int, default=6); ap.add_argument("--limit", type=int)
     ap.add_argument("--confirm", type=int, nargs="+", metavar="SHOT_ID"); ap.add_argument("--category", default="other")
     ap.add_argument("--note", default=""); ap.add_argument("--dry", action="store_true")
     a = ap.parse_args(argv)
@@ -385,7 +389,7 @@ def main(argv=None):
     if a.index: index()
     if a.cover: cover()
     if a.prefilter: prefilter()
-    if a.screen: screen(a.j)
+    if a.screen: screen(a.j, a.limit)
     if a.confirm: confirm(a.confirm, a.category, a.note)
     if a.findlive and not a.confirm: findlive([r for r, in _confirmed()])
     if a.restore: restore(a.dry)
