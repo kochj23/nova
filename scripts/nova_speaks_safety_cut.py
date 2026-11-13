@@ -334,6 +334,9 @@ def verify(cur, vid, spans_ms, odur, spot=False):
     cur.execute(shots.SCANNED_SQL, {"slug": slug})
     if not cur.fetchone():
         return 0                                   # shot scan of this render not finished: verify later
+    cur.execute(shots.EYED_SQL, {"slug": slug})
+    if not cur.fetchone():
+        return 0                                   # some kept shot not eye-reviewed yet: stays private until it is
     cur.execute(shots.SERVED_DDL)
     cur.execute("SELECT 1 FROM nova_speaks_served_review WHERE youtube_id=%s AND review IS NULL", (vid,))
     if cur.fetchone():

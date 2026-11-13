@@ -213,7 +213,15 @@ def cover():
 
 READY_SQL = """SELECT 1 FROM nova_speaks_shot_covered c WHERE c.slug=%(slug)s AND NOT EXISTS (
   SELECT 1 FROM nova_speaks_shot_occ o JOIN nova_speaks_shot_scan s USING (shot_id) WHERE o.slug=%(slug)s
-   AND NOT (s.screened_at IS NOT NULL AND (s.review LIKE 'CLAUDE-FP%%' OR (s.ok AND s.review IS NULL))))"""
+   AND NOT (s.screened_at IS NOT NULL AND s.eyed_at IS NOT NULL AND (s.review LIKE 'CLAUDE-FP%%' OR (s.ok AND s.review IS NULL))))"""
+
+# going PUBLIC also needs a human/Claude eye on every shot (vision misses political/religious mockery and on-screen text)
+EYED_SQL = """SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM nova_speaks_shot_occ o JOIN nova_speaks_shot_scan s USING (shot_id)
+  WHERE o.slug=%(slug)s AND s.eyed_at IS NULL AND coalesce(s.review,'') NOT LIKE 'CLAUDE-CONFIRMED%%')"""
+UNEYED_SQL = """SELECT s.shot_id, count(DISTINCT h.youtube_id) n FROM nova_speaks_shot_scan s JOIN nova_speaks_shot_occ o USING (shot_id)
+  JOIN nova_speaks_renders r ON r.slug=o.slug JOIN nova_speaks_hidden h ON h.youtube_id=r.youtube_id
+  WHERE s.eyed_at IS NULL AND s.screened_at IS NOT NULL AND coalesce(s.review,'') NOT LIKE 'CLAUDE-CONFIRMED%%'
+  GROUP BY 1 ORDER BY 2 DESC, 1"""
 
 # cut pass: every shot screened and every flagged shot reviewed (confirmed ones become cut spans via exposures)
 SCANNED_SQL = """SELECT 1 FROM nova_speaks_shot_covered c WHERE c.slug=%(slug)s AND NOT EXISTS (
@@ -449,12 +457,39 @@ def selftest():
     assert served_decision(S[0], Mr, rvw, rv(False))[0] == "pending"    # unknown + flagged -> Claude review
     assert served_decision(S[0], Mr, rvw, rv(True))[0] == "clean"
     assert served_decision(S[0], np.zeros((0, S.shape[1]), np.float32), [], rv(False))[0] == "pending"
+    gate_test()
     print("selftest ok"); return 0
+
+
+def gate_test():
+    """READY_SQL/EYED_SQL against the real tables inside a rolled-back transaction: a vision-clean shot without eyed_at blocks."""
+    import psycopg2
+    c = psycopg2.connect("host=localhost dbname=nova_ops user=kochj"); cur = c.cursor()
+    try:
+        slug = "__gate_test__"
+        cur.execute("INSERT INTO nova_speaks_shot_covered (slug, new_shots) VALUES (%s, 0)", (slug,))
+        cur.execute("INSERT INTO nova_speaks_shot_scan (shot_id, path, slug, sec, ok, flags, screened_at) VALUES (-1,'x',%s,0,true,'{}',now()), (-2,'y',%s,0,false,'{x}',now())", (slug, slug))
+        cur.execute("UPDATE nova_speaks_shot_scan SET review='CLAUDE-CONFIRMED test' WHERE shot_id=-2")
+        cur.execute("INSERT INTO nova_speaks_shot_occ VALUES (-1,%s,0,5), (-2,%s,5,9)", (slug, slug))
+        ok = lambda q: (cur.execute(q, {"slug": slug}), cur.fetchone())[1] is not None
+        assert not ok(READY_SQL) and not ok(EYED_SQL)                 # clean by vision only -> blocked
+        cur.execute("UPDATE nova_speaks_shot_scan SET eyed_at=now() WHERE shot_id=-1")
+        assert ok(EYED_SQL)                                          # confirmed shot needs no eye (it gets cut)
+        assert not ok(READY_SQL)                                     # but restore-as-is still needs every shot clean
+        cur.execute("UPDATE nova_speaks_shot_scan SET review='CLAUDE-FP', eyed_at=now() WHERE shot_id=-2")
+        assert ok(READY_SQL)
+    finally:
+        c.rollback(); c.close()
+
+
+def mark_eyed(ids):
+    db().cursor().execute("UPDATE nova_speaks_shot_scan SET eyed_at=now() WHERE shot_id = ANY(%s)", (list(ids),))
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    for f in ("index", "cover", "prefilter", "screen", "restore", "findlive", "status", "selftest"): ap.add_argument(f"--{f}", action="store_true")
+    for f in ("index", "cover", "prefilter", "screen", "restore", "findlive", "status", "selftest", "uneyed"): ap.add_argument(f"--{f}", action="store_true")
+    ap.add_argument("--eyed", type=int, nargs="+", metavar="SHOT_ID", help="mark shots eye-reviewed (contact sheet seen)")
     ap.add_argument("-j", type=int, default=6); ap.add_argument("--limit", type=int)
     ap.add_argument("--confirm", type=int, nargs="+", metavar="SHOT_ID"); ap.add_argument("--category", default="other")
     ap.add_argument("--note", default=""); ap.add_argument("--dry", action="store_true")
@@ -466,6 +501,9 @@ def main(argv=None):
     if a.screen: screen(a.j, a.limit)
     if a.confirm: confirm(a.confirm, a.category, a.note)
     if a.findlive and not a.confirm: findlive([r for r, in _confirmed()])
+    if a.eyed: mark_eyed(a.eyed)
+    if a.uneyed:
+        cur = db().cursor(); cur.execute(UNEYED_SQL); print(" ".join(str(r[0]) for r in cur.fetchall()))
     if a.restore: restore(a.dry)
     if a.status: status()
     return 0
