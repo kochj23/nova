@@ -269,9 +269,49 @@ def restore(dry=False):
     return ready
 
 
+SERVED_DDL = """CREATE TABLE IF NOT EXISTS nova_speaks_served_review (path text PRIMARY KEY, youtube_id text, slug text,
+  sec int, flags text[], verdict jsonb, review text, at timestamptz DEFAULT now())"""
+_REV = {}
+
+
+def still_sig(path):
+    """signature of a full-frame still, comparable with sig() of video frames."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import nova_speaks_framematch as fm
+    return sig(fm.templates(path)[0]).reshape(-1)
+
+
+def reviewed_index():
+    """-> (M, reviews): signatures of every Claude-reviewed still (shots + served frames), cached per path."""
+    cur = db().cursor(); cur.execute(SERVED_DDL)
+    cur.execute("""SELECT path, review FROM nova_speaks_shot_scan WHERE review IS NOT NULL
+                   UNION ALL SELECT path, review FROM nova_speaks_served_review WHERE review IS NOT NULL""")
+    rows = []
+    for p, r in cur.fetchall():
+        if p not in _REV:
+            try: _REV[p] = still_sig(p)
+            except Exception: continue
+        rows.append((p, r))
+    M = np.stack([_REV[p] for p, _ in rows]) if rows else np.zeros((0, 1536), np.float32)
+    return M, [r for _, r in rows]
+
+
+def served_decision(v, M, reviews, vision, thr=0.95):
+    """-> ('clean'|'bad'|'pending', info). A >= thr match to a Claude-reviewed still decides (CLAUDE-FP clean,
+    CLAUDE-CONFIRMED bad); otherwise vision decides, and a vision flag waits for Claude review."""
+    if len(M):
+        sc = M @ v; i = int(sc.argmax())
+        if sc[i] >= thr:
+            return ("clean" if reviews[i].startswith("CLAUDE-FP") else "bad"), {"review": reviews[i], "score": float(sc[i])}
+    ok, info = vision()
+    return ("clean" if ok else "pending"), info
+
+
 def served_check(mp4, slug):
     """Cut-pass check of a SERVED video: every second must be one of this render's vision-passed shots or an
-    already-passed image; uncovered runs are vision-screened. -> (ok, note)"""
+    already-passed image; uncovered runs are matched against Claude-reviewed stills, then vision-screened.
+    -> (True, note) clean | (False, note) confirmed-bad frame | (None, note) flagged frame(s) queued for review
+    in nova_speaks_served_review (the video stays CUT-PENDING and is re-verified once they are reviewed)."""
     sys.path.insert(0, str(Path(__file__).resolve().parent)); sys.path.insert(0, str(Path.home() / ".openclaw/scripts"))
     import nova_speaks_framematch as fm
     from nova_image_safety import screen_image
@@ -281,12 +321,20 @@ def served_check(mp4, slug):
     reps = [sig(np.load(FR / f"{sl}.npy")[sec]).reshape(-1) for sl, sec in cur.fetchall()]
     F = fm.frames(str(mp4)).astype(np.uint8); S = sig(F).reshape(len(F), -1)
     runs = uncovered_runs(S, [(0, len(S), r) for r in reps], clean_templates()[0])
+    M, reviews = reviewed_index(); vid = Path(mp4).stem; pending = []; fp = 0
     for a, b in runs:
-        out = WORK_SC / f"{Path(mp4).stem}-{a}.jpg"; WORK_SC.mkdir(parents=True, exist_ok=True)
+        out = WORK_SC / f"{vid}-{a}.jpg"; WORK_SC.mkdir(parents=True, exist_ok=True)
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{(a + b) // 2 + 0.5}", "-i", str(mp4), "-frames:v", "1", str(out)], timeout=120)
-        ok, info = screen_image(str(out))
-        if not ok: return False, f"served shot {a}-{b}s flagged {info.get('flags')} ({out})"
-    return True, f"{len(runs)} uncovered run(s) vision-clean"
+        d, info = served_decision(still_sig(out), M, reviews, lambda: screen_image(str(out)))
+        if d == "bad": return False, f"served shot {a}-{b}s matches {info} ({out})"
+        if d == "pending":
+            pending.append(f"{a}-{b}s {info.get('flags')}")
+            cur.execute("""INSERT INTO nova_speaks_served_review (path, youtube_id, slug, sec, flags, verdict) VALUES (%s,%s,%s,%s,%s,%s)
+                           ON CONFLICT (path) DO UPDATE SET flags=EXCLUDED.flags, verdict=EXCLUDED.verdict, review=NULL, at=now()""",
+                        (str(out), vid, slug, a, info.get("flags") or [], json.dumps(info, default=str)))
+        fp += "review" in info
+    if pending: return None, f"served shot(s) {', '.join(pending)} flagged; queued for Claude review"
+    return True, f"{len(runs)} uncovered run(s) clean ({fp} via Claude-reviewed stills)"
 
 
 LIB_DIRS = [Path.home() / "nova-journal/static/images", Path("/Volumes/nas/nova-satire/pool")]
@@ -394,6 +442,13 @@ def selftest():
     G = np.stack([np.roll(sm, k, axis=1) for k in range(20)] + [B] * 3).astype(np.uint8)  # slow drift, then cut to B
     SG = sig(G).reshape(len(G), -1); Z = np.zeros((0, SG.shape[1]), np.float32)
     assert uncovered_runs(SG, [(0, 23, SG[0])], Z, head=0, tail=0, own=0.99) == [(20, 23)]   # drift chained, B not
+    rv = lambda ok: (lambda: (ok, {"flags": [] if ok else ["x"]}))   # served_decision: reviewed stills first
+    Mr = np.stack([SG[0], S[15]]); rvw = ["CLAUDE-FP", "CLAUDE-CONFIRMED religion: x"]
+    assert served_decision(SG[0], Mr, rvw, rv(False))[0] == "clean"     # vision flag on a reviewed FP -> clean
+    assert served_decision(S[15], Mr, rvw, rv(True))[0] == "bad"        # matches a confirmed-bad still
+    assert served_decision(S[0], Mr, rvw, rv(False))[0] == "pending"    # unknown + flagged -> Claude review
+    assert served_decision(S[0], Mr, rvw, rv(True))[0] == "clean"
+    assert served_decision(S[0], np.zeros((0, S.shape[1]), np.float32), [], rv(False))[0] == "pending"
     print("selftest ok"); return 0
 
 

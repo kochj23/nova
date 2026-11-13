@@ -334,6 +334,10 @@ def verify(cur, vid, spans_ms, odur, spot=False):
     cur.execute(shots.SCANNED_SQL, {"slug": slug})
     if not cur.fetchone():
         return 0                                   # shot scan of this render not finished: verify later
+    cur.execute(shots.SERVED_DDL)
+    cur.execute("SELECT 1 FROM nova_speaks_served_review WHERE youtube_id=%s AND review IS NULL", (vid,))
+    if cur.fetchone():
+        return 0                                   # served frame awaiting Claude review: re-verified once reviewed
     exp = odur / 1000 - sum(b - a for a, b in spans_ms) / 1000
     mp4 = download(vid)
     if not mp4:
@@ -343,6 +347,8 @@ def verify(cur, vid, spans_ms, odur, spot=False):
         note = f"served {got:.2f}s (expected {exp:.2f}); {len(bad_templates())} bad originals, max {top:.3f}, hits {len(hits)}"
         vok, vnote = shots.served_check(mp4, slug)
         note += "; vision: " + vnote
+        if vok is None:                            # stays CUT-PENDING (private) until the queued frames are reviewed
+            log(f"{vid} awaiting review: {note}"); return 0
         if spot and spans_ms:
             note += "; seam: " + seam_transcript(mp4, spans_ms[0][0] / 1000)[:400]
         if hits or not vok or abs(got - exp) > DUR_TOL:
