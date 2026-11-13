@@ -526,7 +526,7 @@ def call_openrouter(system: str, user: str, model: str = "anthropic/claude-haiku
         proc = None
         try:
             proc = subprocess.Popen(
-                [claude_bin, "-p", "--model", cli_model, "--system-prompt", system],
+                [claude_bin, "-p", "--tools", "", "--strict-mcp-config", "--setting-sources", "", "--model", cli_model, "--system-prompt", system],  # ponytail: text-gen only, no tools (2026-11-12: haiku grepped 28k transcripts)
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, start_new_session=True, env=_env)
             try:
@@ -1589,6 +1589,9 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
         img_base = slug
     else:
         slug = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:60]
+        base, n = slug, 2
+        while (content_dir / f"{dt}-{slug}.md").exists():   # same-day titles sharing 60 chars must never overwrite
+            slug, n = f"{base}-{n}", n + 1
         filename = f"{dt}-{slug}.md"
         img_base = f"{dt}-{slug}"
 

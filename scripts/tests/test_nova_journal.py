@@ -416,6 +416,14 @@ class TestIntegration(unittest.TestCase):
         stubs["nova_articles_to_memory"].remember_article.assert_called_once_with(str(md))
         stubs["nova_weather_blurb"].weather_dateline_line.assert_called_once()
 
+    def test_same_day_same_title_never_overwrites(self):
+        with patch.dict(sys.modules, _lazy_stubs()), _quiet():
+            self.assertTrue(nj.publish_hugo("Twin Title Collision Check", BODY + "\nfirst", "nova", [], "d"))
+            self.assertTrue(nj.publish_hugo("Twin Title Collision Check", BODY + "\nsecond", "nova", [], "d"))
+        d, base = nj.HUGO_ROOT / "content/nova", f"{nj.today_str()}-twin-title-collision-check"
+        self.assertIn("first", (d / f"{base}.md").read_text())
+        self.assertIn("second", (d / f"{base}-2.md").read_text())
+
     def test_publish_hugo_stable_slug_degenerate_title_and_guard_block(self):
         stubs = _lazy_stubs()
         with patch.dict(sys.modules, stubs), _quiet():
