@@ -474,6 +474,14 @@ def call_openrouter(system: str, user: str, model: str = "anthropic/claude-haiku
     timeout: seconds before the whole claude process group is killed (default 240).
     The grounded longform expander passes a larger value for Sonnet (2026-10-06).
     """
+    # Fishbowl ground truth (Jordan 2026-10-19; wired here 2026-11-12): any call whose prompts touch the scene gets
+    # KNOWN_FACTS appended to its system prompt — one place covers every generator (fishbowl daily/opinion/roster,
+    # Watches and Friends, Friends, weekly/monthly roundups, digests, dossiers). No-op if already present. Fail-open.
+    try:
+        from nova_scene_facts import facts_for as _facts_for
+        system = (system or "") + _facts_for(system, user)
+    except Exception:  # noqa: BLE001
+        pass
     cli_model = ("haiku" if "haiku" in model else
                  "sonnet" if "sonnet" in model else
                  "opus" if "opus" in model else model)
@@ -1564,6 +1572,13 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
         except Exception as e:
             log(f"[ideal-reader] skipped ({e})")
 
+    try:  # Fishbowl ground-truth guard (nova_scene_facts, 2026-11-12): a paragraph that casts The Franchise Club /
+        # Watch Hangout as villains is regenerated once with the facts restated, else dropped. Fail-open.
+        from nova_scene_facts import guard as _scene_guard
+        title, body = _scene_guard(title, body, llm=lambda s_, u_: call_openrouter(s_, u_, max_tokens=1200, temperature=0.3),
+                                   log=log)
+    except Exception:  # noqa: BLE001
+        pass
     try:  # INFOWARS RULE (nova_channel_pools, 2026-10-19): every mention of it, expansion included, is labelled
         body = __import__("nova_channel_pools").label_claims(body)
     except Exception:  # noqa: BLE001

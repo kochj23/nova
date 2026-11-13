@@ -77,33 +77,10 @@ PEOPLE = [
      "channels": ["@TheCramaReels"]},
 ]
 
-# CURATED FACTS — ground truth from Jordan that the LLM must not get wrong by inferring from
-# noisy transcripts. Injected into both the dossier prompt and the daily article prompt.
-KNOWN_FACTS = (
-    "GROUND-TRUTH about the Fishbowl (from Jordan, who actually watches this scene — treat as FACT "
-    "and do NOT contradict it no matter what a transcript seems to imply; transcripts are noisy and "
-    "the bad actors spin their own narrative):\n"
-    "- MORAL ALIGNMENT: The Franchise Club crew (aka The Franchise / The Franchise Clubs) — Curly, "
-    "Mookie (@themookieverse), Pazuzu and the rest of that crew — are the GOOD GUYS in the Fishbowl / "
-    "hate streams: the reasonable, sympathetic side. Everyone in The Watch Hangout (@WatchHangout) is "
-    "likewise one of the GOOD GUYS and above reproach — never cast any of them as villains, grifters "
-    "or targets. Watch Nicholas is the "
-    "BAD GUY — the antagonist/villain of this scene. Frame them that way: Nicholas as the aggressor, "
-    "Franchise Club and Mookie as the ones pushed back against.\n"
-    "- Watch Nicholas and The Franchise Club are NOT friends and never have been — bitter ENEMIES "
-    "for YEARS. Any apparent friendliness is sarcasm, a truce, or Nicholas's spin.\n"
-    "- Do NOT cast The Franchise Club as a 'tyranny' or the villain — that inverts reality. If a "
-    "transcript frames the Franchise Club as the oppressor, that's the bad actor's framing, not the truth.\n"
-    "- Peter Piccolino (@Peterpic) is REGULAR WATCH NEWS — NOT Fishbowl and NOT hate-stream material "
-    "(Jordan 2026-10-19). Never mention him in a Fishbowl / Hate Streams piece, not even to say he was quiet. "
-    "In watch-news writing he is one of Jordan's MUST-WATCH channels: a new episode gets top billing "
-    "and real attention (what he restored/bought/sold, the watches, the numbers), warmly.\n"
-    "- Anthony Farrer (The Timepiece Gentleman, @Thetimepiecegentleman) is FISHBOWL / HATE-STREAM material, "
-    "never watch news. He pleaded guilty to wire and mail fraud, has been in federal custody since November "
-    "2023, and was sentenced to 70 months in federal prison for taking at least $5.6M from 40+ consignment "
-    "customers (IRS-CI release). Anything uploaded on his channels is ARCHIVE footage, not current events — "
-    "never describe him as currently dealing, streaming or posting."
-)
+# CURATED FACTS — Jordan's ground truth (Fishbowl moral alignment, Piccolino, Farrer). Moved 2026-11-12 to
+# nova_scene_facts.py, the single shared home: edit it THERE. nova_journal.call_openrouter now appends it to every
+# LLM call that touches the scene; re-exported here so `from nova_fishbowl_summaries import KNOWN_FACTS` keeps working.
+from nova_scene_facts import KNOWN_FACTS  # noqa: E402,F401
 
 
 def source_links(rows, limit=12):
