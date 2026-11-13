@@ -6,6 +6,7 @@ Policy (2026-09-09): every generated image passes through apply_image_safety(), 
 rewrites youth/undress cues to adult/clothed and appends a positive "adult, fully clothed,
 non-sexual" clause. This is the single chokepoint so ~40 prompt strings can't drift.
 """
+import os as _os; _os.environ.setdefault("NOVA_IMAGE_SCREEN", "0")   # offline: no vision screen (2026-11-12)
 import importlib.util, os, time
 import pytest
 

@@ -60,6 +60,8 @@ client_id = str(uuid.uuid4())
 # and the LAN client nova-core uses (2026-10-06). FLUX.1 BF16 vs SDXL handled there.
 sys.path.insert(0, SCRIPT_DIR)
 from nova_image_utils import comfy_workflow
+import nova_image_safety   # content-safety gate (2026-11-12): hardened prompt in, vision-screened image out
+PROMPT = nova_image_safety.harden_prompt(PROMPT)
 workflow = comfy_workflow(PROMPT, MODEL, int(WIDTH), int(HEIGHT), int(STEPS))
 
 # Submit to ComfyUI
@@ -117,6 +119,12 @@ while time.time() < deadline:
                 try:
                     with urllib.request.urlopen(view_url, timeout=30) as img_resp:
                         dest.write_bytes(img_resp.read())
+                    if os.environ.get("NOVA_IMAGE_SCREEN", "1") != "0":
+                        ok, info = nova_image_safety.screen_image(str(dest))
+                        if not ok:
+                            dest.unlink()
+                            print(f"ERROR: image rejected by content-safety screen: {info.get('flags') or info.get('error')}", file=sys.stderr)
+                            sys.exit(3)
                     # Also copy to SwarmUI output for compatibility
                     today = datetime.now().strftime("%Y-%m-%d")
                     out_dir = Path(OUTPUT_BASE) / today

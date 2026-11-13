@@ -23,6 +23,9 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+
+if os.path.dirname(os.path.abspath(__file__)) not in sys.path:   # sibling nova_image_safety, however we were loaded
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -301,6 +304,10 @@ def generate_image(prompt: str, width: int = COVER_WIDTH, height: int = COVER_HE
     if prompt and IMAGE_QUALITY_SUFFIX.strip() not in prompt:
         prompt = prompt.rstrip() + IMAGE_QUALITY_SUFFIX
     prompt = apply_image_safety(prompt)
+    # Content-safety gate (2026-11-12, antisemitic caricatures + nude statues reached the journal/videos):
+    # harden the prompt, then every render is screened by the local vision rubric before it is returned.
+    import nova_image_safety as _nis
+    prompt = _nis.harden_prompt(prompt)
 
     t0 = time.monotonic()
     base = comfyui_url()
@@ -311,6 +318,17 @@ def generate_image(prompt: str, width: int = COVER_WIDTH, height: int = COVER_HE
             _log(f"image budget exhausted ({left:.0f}s left) before attempt {attempt}")
             break
         result = _comfyui_generate(prompt, width, height, steps, model, section, base, budget=left)
+        if result and os.environ.get("NOVA_IMAGE_SCREEN", "1") != "0":
+            ok, info = _nis.screen_image(result)
+            if not ok:
+                _log(f"SAFETY: rejected {Path(result).name} ({info.get('flags')}) — re-rendering with a new seed")
+                try:
+                    Path(result).unlink()
+                except OSError:
+                    pass
+                result = None
+                time.sleep(1.1)   # comfy_workflow seeds from the clock
+                continue
         if result:
             _log(f"backend=comfyui ({base}) produced {Path(result).name} in "
                  f"{time.monotonic() - t0:.0f}s (attempt {attempt})")
@@ -446,7 +464,7 @@ def comfy_workflow(prompt: str, model_file: str, width: int, height: int, steps:
 
 _SDXL_NEGATIVE = ("blurry, low quality, distorted, watermark, text, logo, nudity, nude, nsfw, explicit, "
                   "nipples, sexual content, bare skin, revealing clothing, dark, underexposed, too dark, "
-                  "black image, nearly black, dim, murky, low light, pitch black, unlit")
+                  "black image, nearly black, dim, murky, low light, pitch black, unlit" + ", " + __import__("nova_image_safety").NEGATIVE)
 
 
 def _pick_model(model: str | None, section: str, steps: int) -> tuple[dict, str, int]:

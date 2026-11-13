@@ -2,6 +2,7 @@
 """Tests for nova_image_utils.py (ComfyUI client, LAN 2026-10-06; LOCAL ONLY 2026-10-19) — the 7 house
 categories (Security, Performance, Retry, Unit, Integration, Functional, Frame).
 Written by Jordan Koch (via Claude)."""
+import os as _os; _os.environ.setdefault("NOVA_IMAGE_SCREEN", "0")   # offline: no vision screen (2026-11-12)
 import importlib.util
 import io
 import ipaddress

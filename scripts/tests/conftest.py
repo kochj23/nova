@@ -19,6 +19,10 @@ import pytest
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
+# Offline: generate_image() screens every render with the Studio vision model (nova_image_safety, 2026-11-12).
+# Tests mock ComfyUI and must never reach Ollama; tests of the gate itself inject their own screen.
+os.environ.setdefault("NOVA_IMAGE_SCREEN", "0")
+
 # Pre-import psycopg2 for real before any test file can shadow it with a MagicMock.
 # test_dashboard.py patches sys.modules["psycopg2"] during server.py import at module
 # scope, which under importlib mode can leave the mock cached for subsequent test files.

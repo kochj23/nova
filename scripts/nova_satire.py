@@ -36,7 +36,9 @@ POOL_REL = "nova-satire/pool"
 JOURNAL = Path.home() / "nova-journal"
 MARKER = "<!-- satire-image -->"
 NO_TEXT = ("Affectionate, absurd satire. No readable text, no letters, no logos, no brand names, "
-           "no real or famous people, nothing sexual.")
+           "no real or famous people, nothing sexual. Characters are robots, animals or objects; any human face has "
+           "natural, proportionate features, never a caricature, and no ethnic, national or religious group, dress "
+           "or symbol is the joke. Statues and artworks are fully draped.")
 RECENT_VIDEOS = 10
 POOL_GAP_S = 45
 SKIP_SECTIONS = {"art", "start-here", "search", "about"}
@@ -171,15 +173,13 @@ SCENES = [
     ("time-capsule-cd", ["music", "90s", "nostalgia"], "archaeologists carefully excavating a CD wallet full of burned mixes"),
 ]
 
+# 2026-11-12 content-safety sweep: editorial-cartoon, claymation, pulp-cover, propaganda-parody and renaissance-oil
+# were dropped — FLUX turned them into big-nosed ethnic caricatures, propaganda-style tropes and nude classical
+# figures. Vaporwave lost its "marble" (it summoned nude statues). Do not re-add caricature styles.
 STYLES = [
-    ("editorial-cartoon", "a sharp editorial newspaper cartoon in ink and watercolor"),
     ("70s-magazine", "a 1970s magazine illustration with warm grain and airbrushed color"),
-    ("claymation", "a claymation still with visible fingerprints in the clay and soft studio light"),
-    ("pulp-cover", "a lurid 1950s pulp paperback cover painting"),
-    ("propaganda-parody", "a bold mid-century propaganda poster parody with flat shapes and dramatic angles"),
-    ("vaporwave", "a vaporwave scene with pastel neon, palm trees and glossy marble"),
+    ("vaporwave", "a vaporwave scene with pastel neon, palm trees and glossy tiles"),
     ("stock-photo-parody", "an over-lit glossy corporate stock photo parody"),
-    ("renaissance-oil", "a pompous Renaissance oil painting with dramatic chiaroscuro"),
     ("childrens-book", "a cozy children's picture-book illustration in gouache"),
     ("film-noir", "a moody black-and-white film noir still with venetian blind shadows"),
     ("pixel-art", "detailed 16-bit pixel art"),
@@ -273,6 +273,20 @@ def to_webp(src, dest, width=1200):
     return dest
 
 
+def safe_to_use(path, screen=None):
+    """Pre-activation gate (2026-11-12): the local vision rubric must pass before an image is inlined in an article
+    or activated in the pool. Fail-closed. NOVA_IMAGE_SCREEN=0 disables it (offline tests only)."""
+    if os.environ.get("NOVA_IMAGE_SCREEN", "1") == "0" and screen is None:
+        return True
+    if screen is None:
+        import nova_image_safety
+        screen = nova_image_safety.screen_image
+    ok, info = screen(str(path))
+    if not ok:
+        log(f"SAFETY: rejected {Path(str(path)).name}: {info.get('flags') or info.get('error')}")
+    return ok
+
+
 def render(prompt, gen=None):
     if gen is None:
         from nova_image_utils import generate_image as gen
@@ -299,8 +313,8 @@ def pool_fill(target=110, budget_s=3000, gen=None, conn=None, busy=comfy_busy, s
                 log("ComfyUI stayed busy — yielding; resume next run")
                 break
             png = render(prompt, gen)
-            if not png:
-                log(f"no image for {pkey} (will retry next run)")
+            if not png or not safe_to_use(png):
+                log(f"no safe image for {pkey} (will retry next run)")
                 continue
             rel = f"{POOL_REL}/{SCENES[i][0]}-{style}.webp"
             to_webp(png, NAS_ROOT / rel)
@@ -332,7 +346,7 @@ def article_brief(md, llm=None):
             llm = lambda s, u: nj.call_openrouter(s, u, model="anthropic/claude-haiku-4.5", max_tokens=400, timeout=120)
         out = llm("You design one funny, affectionate satirical image for a blog post by Nova, a sarcastic AI. "
                   "Output ONLY JSON: {\"prompt\": \"a vivid visual scene, 1-2 sentences, no text/letters/logos, "
-                  "no real or famous people, nothing sexual\", \"caption\": \"a witty one-line caption (max 110 chars)\", "
+                  "no real or famous people, nothing sexual; characters are robots, animals or objects, never human caricatures, no exaggerated facial features, no ethnic, national or religious groups, dress or symbols, no politicians\", \"caption\": \"a witty one-line caption (max 110 chars)\", "
                   "\"tags\": [\"3-6 lowercase topic words\"]}",
                   f"Title: {title}\nDescription: {desc}\nFirst lines: {md.split('---', 2)[-1][:600]}")
         j = json.loads(re.search(r"\{.*\}", out or "", re.S).group(0))
@@ -372,7 +386,7 @@ def satirize_article(md_path, gen=None, llm=None, cur=None, style=None):
     skey, sty = style or random.choice(STYLES)
     prompt = f"{sty} of {brief['prompt']}. {NO_TEXT}"
     png = render(prompt, gen)
-    if not png:
+    if not png or not safe_to_use(png):
         return None
     slug, section = p.stem, p.parent.name
     dest = to_webp(png, JOURNAL / "static/images/satire" / f"{slug}.webp")

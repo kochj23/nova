@@ -7,6 +7,7 @@ test_nova_image_utils_remote.py. Written by Jordan Koch (via Claude).
 
 Run: NOVA_TEST_QUIET=1 python3 -m pytest -q tests/test_nova_image_utils_7cat.py
 """
+import os as _os; _os.environ.setdefault("NOVA_IMAGE_SCREEN", "0")   # offline: no vision screen (2026-11-12)
 import subprocess
 import sys
 import tempfile
