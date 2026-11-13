@@ -940,25 +940,14 @@ class TestSpectator(unittest.TestCase):
             self.assertEqual((rec["status"], rec["spectator"], rec["game"]), ("published", True, "gtnw"))
             self.assertRegex(rec["day"], r"^\d{4}-\d{2}-\d{2}$")
 
-    def test_cap_three_per_game_per_day_rest_skipped_and_logged(self):
+    def test_no_daily_cap_every_ai_vs_ai_game_published(self):
         with tempfile.TemporaryDirectory() as d:
             nj, ops = fake_nj(Path(d), draft=SPECT_DRAFT), FakeOpsCursor()
             state = {}
             sessions = [spect_session(i) for i in range(5)] + [spect_session(9, game="cartest")]
             res = self._process(nj, ops, sessions, state)
-            self.assertEqual(res, ["published"] * 3 + ["skipped"] * 2 + ["published"])
-            self.assertIn("spectator cap", state[sessions[3]["id"]]["reason"])
-            self.assertTrue(any("spectator cap" in m for m in nj.logs))
-
-    # Retry: a failed draft doesn't eat a cap slot; a retry still publishes
-    def test_errors_do_not_count_toward_the_cap(self):
-        state = {f"x{i}": {"status": "error", "spectator": True, "game": "gtnw",
-                           "day": str(NOW().astimezone(gr.ZoneInfo("America/Los_Angeles")).date())} for i in range(5)}
-        self.assertIsNone(gr.spectator_cap_hit(state, spect_session(), dict(gr.DEFAULTS)))
-        state["y"] = {**state["x0"], "status": "claimed"}
-        state["z"] = {**state["x0"], "status": "live"}
-        state["w"] = {**state["x0"], "status": "published"}
-        self.assertTrue(gr.spectator_cap_hit(state, spect_session(), dict(gr.DEFAULTS)))
+            self.assertEqual(res, ["published"] * 6)
+            self.assertFalse(hasattr(gr, "spectator_cap_hit"))
 
     # Performance
     def test_spectator_facts_fast_on_5k_events(self):

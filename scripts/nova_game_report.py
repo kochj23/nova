@@ -41,9 +41,8 @@ git pull --rebase && git push` (GitHub Pages redeploys; the old text stays in gi
 
 AI VS AI (watch contract v2, 2026-11-12): spectator ("Watch AI play") sessions are recorded with player "AI vs AI",
 summary.spectator = true and summary.matchup = {"sides": [{side, kind, backend, model, label}]}. Every finished one
-gets an "AI vs AI" entry that names the models from the matchup (spectator_facts / build_spectator_prompt), capped at
-`spectator_daily_cap` (3) per game per Pacific day; the rest are marked skipped and logged, so auto-replay can't
-flood the journal. Spectator rows never count as his record: fetch_history and the rivalry exclude them (SQL
+gets an "AI vs AI" entry that names the models from the matchup (spectator_facts / build_spectator_prompt). No daily
+cap: Little Mister wants every one written up (a 3/day cap dropped games on 2026-11-12 and was removed). Spectator rows never count as his record: fetch_history and the rivalry exclude them (SQL
 NOT_SPECTATOR), and the watcher's account (summary.watcher) never reaches the sheet. Take-overs end the watch row
 'taken_over'; what he played after that is his own session, written up as usual.
 
@@ -110,7 +109,6 @@ DEFAULTS = {
         {"kind": "ollama", "url": "http://127.0.0.1:11434", "model": "qwen3:30b-a3b", "timeout": 420},
     ],
     "live_check_hours": 6,       # how long to keep checking a published URL before alerting
-    "spectator_daily_cap": 3,    # AI vs AI entries per game per Pacific day; the rest are skipped and logged
     "spectator_min_minutes": 0.0,  # autoplay can be fast: only min_actions applies to AI vs AI sessions
 }
 SPECTATOR_PLAYER = "AI vs AI"
@@ -1194,16 +1192,6 @@ def build_spectator_prompt(facts: dict) -> tuple[str, str]:
         f"--- FACT SHEET (the only source) ---\n{facts_text(facts)}\n\nWrite the column."
 
 
-def spectator_cap_hit(state: dict, s: dict, cfg: dict) -> str | None:
-    """'cap' reason when this game already has `spectator_daily_cap` AI vs AI entries (published or in flight)
-    on this Pacific day, else None."""
-    day = str((_parse(s.get("ended_at") or s.get("last_seen_at")) or _now()).astimezone(ZoneInfo("America/Los_Angeles")).date())
-    cap = int(cfg.get("spectator_daily_cap", 3))
-    n = sum(1 for k, r in state.items() if k != str(s["id"]) and isinstance(r, dict) and r.get("spectator")
-            and r.get("game") == s["game"] and r.get("day") == day and r.get("status") in ("published", "live", "claimed"))
-    return f"spectator cap: {cap} AI vs AI entries for {s['game']} on {day}" if n >= cap else None
-
-
 def facts_text(facts: dict, limit: int = 24000) -> str:
     txt = json.dumps({k: v for k, v in facts.items() if not str(k).startswith("_")}, indent=1, ensure_ascii=False,
                      default=str)
@@ -1819,8 +1807,6 @@ def process(s: dict, gcur, cur, state: dict, cfg: dict, dry_run: bool = False) -
     why = trivial_reason(s, cfg)
     if not why and not spect and s.get("game") == CHESS and chess_lm_side(s) is None:
         why = "Little Mister did not play in this game"
-    if not why and spect:
-        why = spectator_cap_hit(state, s, cfg)
     if why:
         if not dry_run:
             mark(cur, state, sid, "skipped", reason=why, game=s["game"], **tag)
