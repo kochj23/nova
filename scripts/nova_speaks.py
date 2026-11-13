@@ -364,7 +364,11 @@ def main():
     if a.script_only:
         print(str(script_txt)); return
 
-    # images: cover + given/generated/random recent renders
+    # images: cover + given/generated stills. Content-safety 2026-11-13: the render host's journal clone must be
+    # current (a stale clone still holds pre-neutralization originals), so fast-forward it or refuse to render.
+    jp = subprocess.run(["git", "-C", f"{HOME}/nova-journal", "pull", "--ff-only", "-q", "origin", "main"], capture_output=True, text=True, timeout=180)
+    if jp.returncode != 0:
+        sys.exit(f"SAFETY: journal clone could not fast-forward ({jp.stderr.strip()[:160]}) - refusing to render with possibly stale images")
     imgs = []
     cover = glob.glob(f"{HOME}/nova-journal/static/images/{section}/{slug}.webp")
     fm_cover = re.search(r'^\s*image:\s*"?(/images/[^"\s]+)', md, re.M)       # frontmatter cover when its name != slug
@@ -383,9 +387,7 @@ def main():
         # other recent covers from the same journal section (works on every render host, not just the Studio)
         others = [f for f in sorted(glob.glob(f"{HOME}/nova-journal/static/images/{section}/*.webp"), key=os.path.getmtime)[-16:] if f not in imgs]
         random.shuffle(others); imgs += others[: max(0, 5 - len(imgs))]
-    if len(imgs) < 3 and section != "art":
-        recent = sorted(glob.glob(f"{HOME}/.openclaw/workspace/*.png"), key=os.path.getmtime)[-12:]
-        random.shuffle(recent); imgs += recent[: max(0, 5 - len(imgs))]
+    # ponytail: random ~/.openclaw/workspace/*.png fallback REMOVED 2026-11-13 - raw unreviewed ComfyUI output put caricatures in videos. Never re-add.
     stills = []
     for i, im in enumerate(imgs):
         p = str(work / f"still{i}.png"); to_png(im, p); stills.append(p)
