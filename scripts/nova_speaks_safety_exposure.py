@@ -148,7 +148,7 @@ def run_once(frames):
         if orig:
             for t in fm.templates(orig):
                 T.append(fm.norm(t[: fm.H * 2 // 3]).ravel()); owner.append(len(imgs) - 1)
-    if not imgs: return 0
+    if not imgs: return hide_pass(cur, rows)   # nothing new to match; still re-hide from the DB
     T = np.array(T, np.float32).T if T else np.zeros((1, 0), np.float32)
     owner = np.array(owner)
     hits = {i: {} for i in range(len(imgs))}
@@ -196,6 +196,10 @@ def run_once(frames):
         if exp or not orig:
             print(f"{sev}/{cat} {Path(path).name[:60]} orig={'Y' if orig else 'N'} exposed={len(exp)} (frame {len(hits[i])})", flush=True)
     SCANNED.write_text(json.dumps(scanned))
+    return hide_pass(cur, rows, len(imgs))
+
+
+def hide_pass(cur, rows, nimgs=0):
     # hide set comes from the DB every pass, so earlier failures are retried
     cur.execute("""SELECT e.youtube_id, e.slug, e.image_path, e.category, e.severity, e.confidence FROM image_video_exposure e
                    WHERE (e.confidence IN ('frame_match','direct_unverified')
@@ -209,7 +213,7 @@ def run_once(frames):
         d["sev"] = min(d["sev"], PRI.get(cat, 2))
     order = sorted(reason_by_vid, key=lambda v: reason_by_vid[v]["sev"])
     n = act.hide(cur, order, reason_by_vid)
-    print(f"pass: {len(imgs)} images, {len(reason_by_vid)} exposed videos, {n} newly hidden", flush=True)
+    print(f"pass: {nimgs} images, {len(reason_by_vid)} exposed videos, {n} newly hidden", flush=True)
     return n
 
 
