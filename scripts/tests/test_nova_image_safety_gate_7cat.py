@@ -156,6 +156,46 @@ class TestUnit(unittest.TestCase):
         self.assertGreaterEqual(nis.NUM_PREDICT, 2000)   # 400 truncated qwen3-vl's JSON -> every verdict "unparsed"
 
 
+class TestMoneyNearPeople(unittest.TestCase):
+    """2026-11-13: '…the same twenty handles' — suited old men on a stage with scattered gold coins — passed the gate
+    (clean at 768 px) and was flagged at 512/1024 px and after the WebP re-encode."""
+
+    def test_people_plus_money_prompt_loses_the_money(self):
+        p = nis.harden_prompt("A dim repertory theater stage, six old men in suits around a glass fishbowl, "
+                              "gold coins and cash scattered at their feet")
+        body = p.split(nis.NO_MONEY.strip())[0].lower()
+        for w in ("coin", "cash", "gold"):
+            self.assertNotIn(w, body)
+        self.assertIn(nis.NO_MONEY.strip(), p)
+        self.assertIn("old men", p)
+
+    def test_money_without_people_and_people_without_money_untouched(self):
+        self.assertIn("gold coins", nis.harden_prompt("a treasure chest of gold coins on a beach").lower())
+        self.assertNotIn(nis.NO_MONEY.strip(), nis.harden_prompt("two women reading by a window"))
+        self.assertIn("golden", nis.harden_prompt("an old man walking in golden light").lower())
+
+    def test_strip_money_idempotent(self):
+        once = nis.strip_money("a king counting coins")
+        self.assertEqual(nis.strip_money(once), once)
+
+    def test_real_screen_checks_every_rendition_and_rejects_if_any_flags(self):
+        sides = []
+
+        def fake(path, model, side=768, **_):
+            sides.append(side)
+            return dict(CLEAN, money_near_people=(side == 512))
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(nis, "_ask", fake):
+            ok, info = nis.screen_image(_png(d), models=["m"], ask=nis._ask)
+        self.assertFalse(ok)
+        self.assertEqual(sides, [768, 512])
+        self.assertEqual(info["side"], 512)
+        self.assertEqual(info["flags"], ["money_near_people"])
+
+    def test_real_screen_passes_only_when_clean_at_all_sizes(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(nis, "_ask", lambda p, m, side=768, **_: CLEAN):
+            self.assertTrue(nis.screen_image(_png(d), models=["m"], ask=nis._ask)[0])
+
+
 class TestIntegration(unittest.TestCase):
     def test_ask_builds_local_ollama_request(self):
         captured = {}

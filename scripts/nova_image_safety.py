@@ -103,6 +103,26 @@ CARICATURE_STYLE = re.compile(
 PEOPLE_FREE = (" Depict the idea with objects, places, robots and animals only; there are no human figures, faces, "
                "statues or religious garments in the image.")
 
+# MONEY + PEOPLE (2026-11-13): money near (old) men is the antisemitic trope; the vision screen catches it only
+# on some renditions, so the prompt never asks for it. People/person-like figures + money terms -> money removed.
+MONEY = re.compile(r"\b(money|moneybags?|coins?|gold(?! ?(?:en|fish))\b|gold (?:bars?|bullion)|bullion|cash|bills|banknotes?|"
+                   r"dollars?|notes of money|treasure|riches|wealth|fortune|loot|payday|wads?|stacks? of (?:bills|cash))\b", re.I)
+PEOPLE = re.compile(r"\b(people|persons?|man|men|woman|women|guys?|gentlem[ae]n|ladies|crowds?|figures?|characters?|"
+                    r"faces?|kings?|queens?|bankers?|merchants?|businessm[ae]n|executives?|investors?|billionaires?|"
+                    r"tycoons?|politicians?|senators?|elders?|elderly|old (?:men|man)|grandpa|boys?|girls?|kids?|"
+                    r"children|child|audience|actors?|performers?|workers?|traders?|brokers?|officials?|suits)\b", re.I)
+NO_MONEY = " No money, coins, gold, cash or treasure appears anywhere in the image."
+
+
+def strip_money(prompt: str) -> str:
+    """When people (or person-like figures) and money share a prompt, drop the money terms."""
+    if not (prompt and MONEY.search(prompt) and PEOPLE.search(prompt)) or NO_MONEY in prompt:
+        return prompt
+    log("prompt has people + money — money removed")
+    p = MONEY.sub("", prompt)
+    p = re.sub(r"\b(of|with|and|full of|piles? of|heaps? of|scattered)\s+(?=[,.;]|$)", "", p)
+    return re.sub(r"\s{2,}", " ", p).strip() + NO_MONEY
+
 
 def blocked_reason(prompt: str):
     """-> None, or why the prompt may not be rendered as written."""
@@ -130,6 +150,7 @@ def harden_prompt(prompt: str) -> str:
     if why:
         log(f"prompt hard-blocked ({why}) — rendering a people-free version")
         p = neutralize_prompt(p)
+    p = strip_money(p)
     for pat, repl in _SUBS:
         p = re.sub(pat, repl, p, flags=re.I)
     return re.sub(r"\s{2,}", " ", p).strip() + CLAUSE
@@ -148,10 +169,10 @@ def _b64(path, side=768):
     return base64.b64encode(buf.getvalue()).decode()
 
 
-def _ask(path, model, urlopen=urllib.request.urlopen, timeout=600):
+def _ask(path, model, urlopen=urllib.request.urlopen, timeout=600, side=768):
     body = {"model": model, "stream": False, "format": "json", "keep_alive": "30m",
             "options": {"temperature": 0, "num_predict": NUM_PREDICT},
-            "messages": [{"role": "user", "content": RUBRIC, "images": [_b64(path)]}]}
+            "messages": [{"role": "user", "content": RUBRIC, "images": [_b64(path, side)]}]}
     if model.startswith("qwen3"):
         body["think"] = False
     req = urllib.request.Request(OLLAMA, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
@@ -168,11 +189,27 @@ def verdict_flags(v) -> list:
     return [c for c in CATS if str(v.get(c)).strip().lower() in ("true", "yes", "1")]
 
 
+# Renditions the real screen checks (2026-11-13): a borderline render passed at 768 px and was flagged at 512 px,
+# 1024 px and after the WebP re-encode the journal publishes. An image must be clean at every size.
+SIDES = (768, 512)
+
+
 def screen_image(path, models=None, ask=_ask, retries=2, sleep=time.sleep):
-    """-> (ok, info). ok only when a model returned a full verdict with every category false.
-    Retries each model with backoff, then falls back to the next model; no answer at all -> NOT ok."""
+    """-> (ok, info). ok only when a model returned a full verdict with every category false at every rendition
+    in SIDES (custom `ask` callables are called once, at the default size)."""
     if not path or not os.path.exists(path):
         return False, {"error": "missing file"}
+    if ask is _ask:
+        info = {}
+        for side in SIDES:
+            ok, info = _screen_once(path, models, lambda p, m, side=side: _ask(p, m, side=side), retries, sleep)
+            if not ok:
+                return False, dict(info, side=side)
+        return True, info
+    return _screen_once(path, models, ask, retries, sleep)
+
+
+def _screen_once(path, models, ask, retries, sleep):
     last = None
     for model in (models or MODELS):
         for attempt in range(retries + 1):
@@ -199,6 +236,10 @@ def selftest():
     assert blocked_reason("the priesthood of combustion: Jesus blesses a V8") and blocked_reason("a robot meditating with a halo")
     assert blocked_reason("a rabbi and a priest walk into a bar") and blocked_reason("claymation office workers")
     assert blocked_reason("a robot folding laundry") is None
+    rep = harden_prompt("A dim theater stage, six old men in suits stand around a fishbowl, gold coins scattered at their feet")
+    assert "coin" not in rep.lower().split("no money")[0] and NO_MONEY.strip() in rep
+    assert "gold coins" in harden_prompt("a pirate chest of gold coins on a beach").lower()   # no people: untouched
+    assert "golden" in harden_prompt("an old man in golden light").lower()
     hp = harden_prompt("an editorial cartoon of orthodox jewish bankers")
     assert "jewish" not in hp.lower() and "no human figures" in hp
     assert "nude" not in harden_prompt("a nude statue").lower()
