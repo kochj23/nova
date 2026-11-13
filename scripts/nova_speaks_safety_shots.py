@@ -124,7 +124,7 @@ def clean_templates():
     return _CLEAN
 
 
-def prefilter(thr=0.95):
+def prefilter(thr=0.92):   # a caricature variant scored 0.84 vs its original; 0.92 keeps margin
     """Shots that are the same picture as an image the v2 vision scan already passed (corr >= thr against its
     Ken Burns templates) get that verdict instead of another 2 x 30 s vision call. Anything else (workspace
     stills, stale-clone versions) still goes to vision."""
@@ -142,13 +142,21 @@ def prefilter(thr=0.95):
     log(f"prefilter: {n} shots matched an already-passed image")
 
 
-def uncovered_runs(S, occ_reps, T, own=0.85, clean=0.95, head=HEAD, tail=TAIL, min_run=2):
+def uncovered_runs(S, occ_reps, T, own=0.85, clean=0.95, head=HEAD, tail=TAIL, min_run=2, chain=0.9):
     """S [n, d] frame signatures; occ_reps [(a, b, rep_sig)]. A second is covered when it matches its own shot's
     still (>= own) or an already-passed image (>= clean). -> [(start, end)] runs of >= min_run uncovered seconds
     (single uncovered seconds are crossfades)."""
     n = len(S); cov = np.zeros(n, bool); cov[:head] = True; cov[max(head, n - tail):] = True
     for a, b, r in occ_reps:
         cov[a:b] |= (S[a:b] @ r) >= own
+    # continuity: Ken Burns drifts away from the mid-shot still, but 1 s neighbours of the same picture stay >= chain;
+    # a crossfade into a different picture breaks the chain.
+    nb = (S[1:] * S[:-1]).sum(axis=1) >= chain
+    for _ in range(2):
+        for i in range(1, n):
+            if not cov[i] and cov[i - 1] and nb[i - 1]: cov[i] = True
+        for i in range(n - 2, -1, -1):
+            if not cov[i] and cov[i + 1] and nb[i]: cov[i] = True
     u = np.where(~cov)[0]
     if len(u) and len(T):
         cov[u] |= (S[u] @ T.T).max(axis=1) >= clean
@@ -225,6 +233,14 @@ def confirm(ids, category, note):
                            SET timestamps=EXCLUDED.timestamps, confidence='frame_match', ts=now()""",
                         (path, slug, yid, json.dumps({"spans_s": [[float(a), float(b)] for a, b in spans], "score": 1.0}), category))
         log(f"shot {sid} confirmed bad ({category}); exposures written")
+    for sid, path, sc in findlive(ids):   # a variant may be live in the journal/pool: review by hand, then neutralize
+        print(f"LIVE-MATCH shot {sid} -> {path} ({sc:.3f})", flush=True)
+
+
+
+def _confirmed():
+    cur = db().cursor(); cur.execute("SELECT shot_id FROM nova_speaks_shot_scan WHERE review LIKE 'CLAUDE-CONFIRMED%%'")
+    return cur.fetchall()
 
 
 def restore(dry=False):
@@ -268,6 +284,52 @@ def served_check(mp4, slug):
     return True, f"{len(runs)} uncovered run(s) vision-clean"
 
 
+LIB_DIRS = [Path.home() / "nova-journal/static/images", Path("/Volumes/nas/nova-satire/pool")]
+
+
+def library_templates():
+    """Ken Burns templates of every journal static image + satire pool image, cached in STATE/library.npz and
+    refreshed for files whose mtime changed (so neutralized-in-place images are re-read)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import nova_speaks_framematch as fm
+    cache = STATE / "library.npz"; old = {}
+    if cache.exists():
+        z = np.load(cache, allow_pickle=True)
+        for p, m, t in zip(z["paths"], z["mtimes"], z["tpl"]): old[p] = (m, t)
+    paths, mtimes, tpl = [], [], []
+    for d in LIB_DIRS:
+        for f in d.rglob("*"):
+            if f.suffix.lower() not in (".webp", ".png", ".jpg", ".jpeg"): continue
+            m = f.stat().st_mtime
+            if str(f) in old and old[str(f)][0] == m: t = old[str(f)][1]
+            else:
+                try: t = np.stack([fm.norm(x[:24]).reshape(-1) for x in fm.templates(f)]).astype(np.float32)
+                except Exception: continue
+            paths.append(str(f)); mtimes.append(m); tpl.append(t)
+    obj = np.empty(len(tpl), object); obj[:] = tpl
+    np.savez(cache, paths=np.array(paths), mtimes=np.array(mtimes), tpl=obj)
+    return paths, tpl
+
+
+def findlive(ids, thr=0.80):
+    """Confirmed shot stills vs EVERY journal/pool image: a variant may be live on the site. -> [(shot, path, score)]"""
+    paths, tpl = library_templates()
+    owner = np.concatenate([[i] * len(t) for i, t in enumerate(tpl)]); T = np.vstack(tpl)
+    cur = db().cursor(); out = []
+    for sid in ids:
+        cur.execute("SELECT slug, sec FROM nova_speaks_shot_scan WHERE shot_id=%s", (sid,)); slug, sec = cur.fetchone()
+        F = np.load(FR / f"{slug}.npy")
+        v = sig(F[sec]).reshape(-1)
+        sc = T @ v
+        best = {}
+        for k in np.where(sc >= thr)[0]:
+            best[owner[k]] = max(best.get(owner[k], 0), float(sc[k]))
+        for i, scv in sorted(best.items(), key=lambda x: -x[1]):
+            out.append((sid, paths[i], scv)); log(f"shot {sid} ~ {paths[i]} ({scv:.3f})")
+    log(f"findlive: {len(out)} library match(es) for {len(ids)} shot(s), {len(paths)} library images")
+    return out
+
+
 def screen(jobs=6):
     sys.path.insert(0, str(Path.home() / ".openclaw/scripts"))
     from nova_image_safety import screen_image
@@ -305,12 +367,16 @@ def selftest():
     S = sig(F).reshape(len(F), -1)
     assert uncovered_runs(S, [(0, 30, S[0])], np.zeros((0, S.shape[1]), np.float32), head=0, tail=0) == [(10, 20)]
     assert uncovered_runs(S, [(0, 30, S[0])], S[15][None], head=0, tail=0) == []          # known-clean covers it
+    yy, xx = np.mgrid[:36, :64]; sm = 127 + 60 * np.sin(xx / 5) + 60 * np.cos(yy / 4)  # smooth picture
+    G = np.stack([np.roll(sm, k, axis=1) for k in range(20)] + [B] * 3).astype(np.uint8)  # slow drift, then cut to B
+    SG = sig(G).reshape(len(G), -1); Z = np.zeros((0, SG.shape[1]), np.float32)
+    assert uncovered_runs(SG, [(0, 23, SG[0])], Z, head=0, tail=0, own=0.99) == [(20, 23)]   # drift chained, B not
     print("selftest ok"); return 0
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    for f in ("index", "cover", "prefilter", "screen", "restore", "status", "selftest"): ap.add_argument(f"--{f}", action="store_true")
+    for f in ("index", "cover", "prefilter", "screen", "restore", "findlive", "status", "selftest"): ap.add_argument(f"--{f}", action="store_true")
     ap.add_argument("-j", type=int, default=6)
     ap.add_argument("--confirm", type=int, nargs="+", metavar="SHOT_ID"); ap.add_argument("--category", default="other")
     ap.add_argument("--note", default=""); ap.add_argument("--dry", action="store_true")
@@ -321,6 +387,7 @@ def main(argv=None):
     if a.prefilter: prefilter()
     if a.screen: screen(a.j)
     if a.confirm: confirm(a.confirm, a.category, a.note)
+    if a.findlive and not a.confirm: findlive([r for r, in _confirmed()])
     if a.restore: restore(a.dry)
     if a.status: status()
     return 0
