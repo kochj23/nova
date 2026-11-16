@@ -2,7 +2,7 @@
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import nova_synology_cycle as c  # noqa: E402
@@ -87,6 +87,45 @@ class Flow(unittest.TestCase):
              patch.object(c, "notify"), patch.object(c.power, "set_expected_off") as flag:
             self.assertFalse(c.sleep_now(False))
             flag.assert_not_called()
+
+
+class Churn(unittest.TestCase):
+    CFG = {"soft_deletes": True, "churn_prefixes": {"nas": ["frigate/"]}}
+
+    def _cfg(self, k, d=None):
+        return self.CFG.get(k, d)
+
+    def test_backup_passes_churn_and_purges(self):
+        run = MagicMock(return_value=Mock(returncode=0, stdout="ok", stderr=""))
+        with patch.object(c, "cfg", side_effect=self._cfg), patch.object(c.subprocess, "run", run), \
+             patch.object(c, "ssh", return_value=(0, "")) as ssh:
+            self.assertTrue(c.backup(False))
+            nas_cmd = run.call_args_list[0][0][0]
+            self.assertIn("--soft-deletes", nas_cmd)
+            self.assertEqual(nas_cmd[nas_cmd.index("--churn-prefix") + 1], "frigate/")
+            self.assertEqual(ssh.call_count, 1)                 # only nas has churn
+            self.assertIn("/volume1/nas/#nova_deleted/", ssh.call_args[0][0])
+            self.assertTrue(ssh.call_args[0][0].rstrip("'").endswith("/frigate"))
+
+    def test_purge_rejects_traversal_and_empty(self):
+        with patch.object(c, "ssh") as ssh:
+            c.purge_churn_now("nas", ["../etc", "a/../b", "/", ""], False)
+            ssh.assert_not_called()
+
+    def test_failed_share_is_not_purged(self):
+        run = MagicMock(return_value=Mock(returncode=1, stdout="", stderr="x"))
+        with patch.object(c, "cfg", side_effect=self._cfg), patch.object(c.subprocess, "run", run), \
+             patch.object(c, "ssh") as ssh:
+            self.assertFalse(c.backup(False))
+            ssh.assert_not_called()
+
+    def test_soft_off_means_no_delete_flags(self):
+        run = MagicMock(return_value=Mock(returncode=0, stdout="", stderr=""))
+        with patch.object(c, "cfg", side_effect=lambda k, d=None: d), \
+             patch.object(c.subprocess, "run", run), patch.object(c, "ssh") as ssh:
+            c.backup(False)
+            self.assertNotIn("--soft-deletes", run.call_args_list[0][0][0])
+            ssh.assert_not_called()
 
 
 if __name__ == "__main__":

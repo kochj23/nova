@@ -10,8 +10,9 @@ Steps
               /volume1 is mounted. Clears the expected_off flag (nova_synology_power) so monitors
               watch it again while it is up.
   2. BACKUP   nova_nas_localdiff_reverse.py --apply (full diff, UNAS -> Synology) for each share.
-              Same per-share lock as before. Soft deletes only when service_config
-              synology_cycle.soft_deletes = true.
+              Same per-share lock as before. Soft deletes when service_config
+              synology_cycle.soft_deletes = true; churn_prefixes ({share: [prefix]}) are exempt
+              from the 1% cap AND purged at once (disposable); real data keeps the 30-day hold.
   3. CLOUD    Cloud Sync health (connection_table.error != 0 -> warning: off-site is broken).
               Wait at least CLOUD_MIN_WAIT, then until its history log has been quiet for
               CLOUD_QUIET; give up waiting at CLOUD_MAX_WAIT (power off anyway, warn).
@@ -79,7 +80,7 @@ def ssh(cmd, timeout=60):
 
 
 def is_up():
-    rc, out = ssh("test -d /volume1/docker/nas && echo up", timeout=20)
+    rc, out = ssh("test -d /volume1/nas/frigate && echo up", timeout=20)  # local replica volume
     return rc == 0 and "up" in out
 
 
@@ -124,24 +125,48 @@ def wake(dry):
     return False
 
 
-def soft_deletes_enabled():
+def cfg(key, default=None):
+    """service_config(service='synology_cycle', key) -> jsonb value, or default."""
     try:
         import psycopg2
         with psycopg2.connect(power.DSN, connect_timeout=5) as c, c.cursor() as cur:
-            cur.execute("SELECT value FROM service_config WHERE service='synology_cycle' AND key='soft_deletes'")
+            cur.execute("SELECT value FROM service_config WHERE service='synology_cycle' AND key=%s", (key,))
             row = cur.fetchone()
-            return bool(row) and row[0] is True
+            return row[0] if row else default
     except Exception:
-        return False
+        return default
+
+
+def soft_deletes_enabled():
+    return cfg("soft_deletes") is True
+
+
+def purge_churn_now(share, prefixes, dry):
+    """Churn (camera segments, pg WAL/dumps) is disposable by design: drop today's soft-deleted
+    copies at once instead of holding them 30 days. At ~330 GB/day of Frigate churn a 30-day hold
+    would pin ~10 TB. Real data keeps the 30-day hold in #nova_deleted/<date>/."""
+    day = time.strftime("%Y-%m-%d")
+    for p in prefixes:
+        p = p.strip("/")
+        if not p or ".." in p.split("/"):
+            continue
+        target = f"/volume1/{share}/#nova_deleted/{day}/{p}"
+        log(f"purge churn now: {target}")
+        if not dry:
+            ssh(f"sudo -n rm -rf -- '{target}'", timeout=3600)
 
 
 def backup(dry):
     ok = True
-    extra = ["--soft-deletes"] if soft_deletes_enabled() else []
+    soft = soft_deletes_enabled()
+    churn = cfg("churn_prefixes", {}) or {}
     for share in SHARES:
+        prefixes = churn.get(share, []) if soft else []
+        extra = (["--soft-deletes"] + [x for p in prefixes for x in ("--churn-prefix", p)]) if soft else []
         cmd = [sys.executable, str(SCRIPTS / "nova_nas_localdiff_reverse.py"), "--apply", *extra, share]
         log("run: " + " ".join(cmd[1:]))
         if dry:
+            purge_churn_now(share, prefixes, dry)
             continue
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=BACKUP_TIMEOUT)
@@ -149,6 +174,8 @@ def backup(dry):
             log(f"{share}: rc={r.returncode} " + " | ".join(tail))
             if r.returncode not in (0, 3):      # 3 = another layer holds the lock (not a failure)
                 ok = False
+            elif prefixes:
+                purge_churn_now(share, prefixes, dry)
         except subprocess.TimeoutExpired:
             log(f"{share}: timed out after {BACKUP_TIMEOUT}s")
             ok = False
