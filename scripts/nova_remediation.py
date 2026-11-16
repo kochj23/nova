@@ -68,7 +68,7 @@ IMPACTFUL = "impactful"
 ACTIONS = {
     "restart_ollama": {
         "tier": SAFE,
-        "argv": ["launchctl", "kickstart", "-k", "gui/501/net.digitalnoise.llama-server"],
+        "argv": ["sudo", "-n", "launchctl", "kickstart", "-k", "system/net.digitalnoise.ollama"],
         "desc": "Kickstart (restart) the local llama/ollama launchd service to clear a wedged GPU inference server.",
     },
     "restart_notifier": {
@@ -109,6 +109,7 @@ ACTIONS = {
 # (host, root_category). Steps run in order; safe first, impactful last (gated).
 RUNBOOKS = {
     ("Office-M4-2", "gpu"): ["restart_ollama", "reboot_host"],
+    ("Office-M4-2", "memory"): ["restart_ollama"],  # RAM pressure -> recycle the model-pinning server (added 2026-11-15)
     ("Office-M4-2", "tunnel"): ["restart_cloudflared"],  # Cloudflare tunnel down -> reconnect
 }
 RUNBOOKS.update({("nova-core8", c): v for (h, c), v in list(RUNBOOKS.items()) if h == "Office-M4-2"})  # Studio renamed 2026-11-04

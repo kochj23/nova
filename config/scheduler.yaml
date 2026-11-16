@@ -32,20 +32,20 @@ tasks:
   house_facts:                     # six-month build #1 — device firmware/IP/room/port ledger (needs local Mosquitto + HA Keychain token)
     script: nova_house_facts.py
     schedule: every 15m
-    timeout: 120
+    timeout: 180
     overlap: skip
   live_docs:                       # six-month build #6 — regenerate workspace IDENTITY/SOUL/USER.md with live values
     script: nova_live_docs.py
     args: ["--write-workspace"]
     schedule: every 1h
-    timeout: 60
+    timeout: 135
     overlap: skip
   # ── Every 5 minutes ─────────────────────────────────────────────────────
 
   protect_monitor:
     script: nova_protect_monitor.py
     schedule: every 2m
-    timeout: 120
+    timeout: 270
     overlap: skip
 
   app_watchdog:
@@ -54,14 +54,20 @@ tasks:
     # checks) — was wrongly offloaded to .2 scheduler-core in Wave A (2026-07-14), where
     # no local Ollama exists -> week of flapping "App Watchdog Alert (host studio)" incidents.
     schedule: every 5m
-    timeout: 60
+    timeout: 202
+    overlap: skip
+
+  ram_guard:                       # 2026-11-15: page BEFORE an inference node OOMs (Ollama pinned ~157GB on .6 until jetsam killed the browser). Signals: jetsam pressure-level + free% + swap (swap trusted only when corroborated — it lags on macOS). CRITICAL recycles the ollama daemon. macOS-local like app_watchdog: runs on .6 (only .6 can ssh-probe itself; .2 = publickey denied). Fail-open: an unreachable probe never pages.
+    script: nova_ram_guard.py
+    schedule: every 10m
+    timeout: 120
     overlap: skip
 
   prober:                          # synthetic end-to-end probes (real HTTP/memory/embed/PG)
     script: nova_prober.py
     schedule: every 2m
     args: ["--once", "--quiet"]
-    timeout: 202
+    timeout: 303
     overlap: skip
 
 
@@ -70,19 +76,19 @@ tasks:
     script: nova_chp_traffic.py
     schedule: every 5m
     args: ["--quiet"]
-    timeout: 180
+    timeout: 270
     overlap: skip
 
   sky_watcher:
     script: nova_sky_watcher.py
     schedule: every 10m
-    timeout: 90
+    timeout: 202
     overlap: skip
 
   imessage_watch:
     script: nova_imessage.py
     schedule: every 10m
-    timeout: 120
+    timeout: 180
     overlap: skip
 
 
@@ -92,7 +98,7 @@ tasks:
     script: nova_cc_stats_publish.py
     args: ["--once"]
     schedule: every 10m
-    timeout: 180
+    timeout: 270
     overlap: skip
 
   article_watchdog:
@@ -199,7 +205,7 @@ tasks:
   the_shine:                         # every 5m — Jordan-silence check-in escalation. DISABLED by service_config the_shine/enabled=false: observe-only, contacts nobody
     script: nova_shine.py
     schedule: every 5m
-    timeout: 120
+    timeout: 180
     overlap: skip
 
   meshtastic_watch:                  # out-of-band LoRa alert if the critical services vanish
@@ -222,7 +228,7 @@ tasks:
     script: nova_negative_space.py
     args: ["--alert"]
     schedule: every 30m
-    timeout: 120
+    timeout: 180
     overlap: skip
 
   identity_graph:                    # cross-modal co-occurrence graph (ble/wifi/person/face/zone)
@@ -236,7 +242,7 @@ tasks:
     script: nova_tracker_watch.py
     args: ["--hours", "24", "--min-hours-present", "6", "--alert"]
     schedule: every 2h
-    timeout: 120
+    timeout: 180
     overlap: skip
 
   identity_link:                     # proposes device->person ownership from co-presence (phi)
@@ -249,7 +255,7 @@ tasks:
   wifi_presence:                     # resolves WiFi clients to NAMED people — presence had 8 signals and 1 real name
     script: nova_wifi_presence.py
     schedule: every 2m
-    timeout: 90
+    timeout: 202
     overlap: skip
 
 
@@ -299,13 +305,13 @@ tasks:
   rogue_ap_sentinel:                 # catch OUR OWN gear broadcasting open/misconfigured WiFi (the Bose SoftAP incident 2026-07-31). Flags open/weak APs whose BSSID /40-matches a LAN device + UniFi is_rogue; alerts on CHANGE to #nova-alerts; feeds the alert-patterns report. Neighbor open APs ignored.
     script: nova_rogue_ap_sentinel.py
     schedule: every 15m
-    timeout: 60
+    timeout: 135
     overlap: skip
 
   watchtower:                        # watch EVERYTHING on the network: device liveness (learned-baseline, wired-only, active-ping-confirmed) + per-FEED dead-man's-switch (climate/hue/weather/air/mesh/ha_sensors) + scene-aware (smart-home judged by hue reachable/feeds, not presence). Root-cause-collapses a down coordinator into its stale feeds. Alert-on-change to #nova-alerts; records net_liveness time-series for the weekly Network-Health report. Built after the 2026-07-17 PoE Zigbee coordinator wedge sat dark 14 days unnoticed (pinged fine, feed dead). Distinct from nova_network_sentinel.py (NMAP/IDS).
     script: nova_watchtower.py
     schedule: every 5m
-    timeout: 120
+    timeout: 180
     overlap: skip
 
   partition_ensure:                  # DAILY: pre-create the next 3 months of monthly telemetry partitions for every monthly-partitioned table. Prevents the 2026-08-01 storm (missing _202608 partitions -> all inserts failed at 00:00 Aug 1 -> a dozen "sensor is broken" negative-space alerts + soil/storage gaps). Idempotent; alerts on-change ONLY when it actually had to create one (i.e. pre-creation lapsed).
@@ -344,21 +350,21 @@ tasks:
     script: nova_unas_monitor.py
     args: ["--json"]
     schedule: every 30m
-    timeout: 60
+    timeout: 135
     overlap: skip
 
   homekit_outlets:                 # ingest HomeKit "Outlet In Use" signals (27 Eve sockets) + left-on alerts (#682)
     script: nova_homekit_outlets.py
     args: ["--alert"]
     schedule: every 5m
-    timeout: 60
+    timeout: 202
     overlap: skip
 
   home_reachability:               # flag HomeKit rooms gone dark: controller-wide vs one network segment (2026-10-09)
     script: nova_home_reachability.py
     args: []
     schedule: every 15m
-    timeout: 90
+    timeout: 202
     overlap: skip
 
   # ── Observability collectors (Grafana data layer) ──────────────────────
@@ -371,7 +377,7 @@ tasks:
     # nova-core2" episode). Canonical fleet names live in dns_records with locked=true.
     script: nova_dns_sync.py
     schedule: every 5m   # was 1h; cluster node names follow Ethernet <-> Wi-Fi (2026-10-20)
-    timeout: 120
+    timeout: 180
     overlap: skip
 
 
@@ -379,7 +385,7 @@ tasks:
   hue_history:                     # append-only Hue time-series: color/ct/brightness/on + est. power
     script: nova_hue_history.py
     schedule: every 2m
-    timeout: 90
+    timeout: 202
     overlap: skip
 
 
@@ -524,7 +530,7 @@ tasks:
   daily_threat_assessment:                # inbound-email threat scan + rollup of fishbowl/airwaves/security reports -> #nova-info
     script: nova_daily_threat_assessment.py
     schedule: cron 0 10 * * *              # 10am -- trails fishbowl_daily/operations_security/local_airwaves so rollup links resolve
-    timeout: 1200                          # 2026-10-15: had been stretched 900->1350->2025 chasing serial Sonnet scoring; Haiku x4 concurrent ran 510s (21 msgs). Budget: 300s Mail scrape + ~60 msgs*38s/4 + article.
+    timeout: 2700                          # 2026-10-15: had been stretched 900->1350->2025 chasing serial Sonnet scoring; Haiku x4 concurrent ran 510s (21 msgs). Budget: 300s Mail scrape + ~60 msgs*38s/4 + article.
     overlap: skip
 
 
@@ -653,7 +659,7 @@ tasks:
   task_sentinel:
     script: nova_task_sentinel.py
     schedule: every 15m
-    timeout: 120
+    timeout: 180
     overlap: skip
 
   # Keep the Linux fleet's Claude CLI logged in (2026-08-07). The headless claude CLI on .2
@@ -666,6 +672,7 @@ tasks:
   # One render at a time on the Studio GPU; state in nova_ops.nova_speaks_renders; done -> #nova-claude.
   nova_speaks_sweep:
     script: nova_speaks_sweep.py
+    enabled: false                   # PAUSED 2026-11-13: nova_speaks.py workspace-PNG fallback pulls unreviewed ComfyUI outputs into videos; resume after fallback removed + shot scan
     schedule: every 10m
     timeout: 1800                    # 2026-10-15: was 300 — a sweep that reaps a render scp's + uploads it to YouTube (2-16 min); 14 timeouts/4d killed uploads mid-way (done rows left without youtube_id). Matches the in-script upload timeout; overlap: skip keeps it single.
     overlap: skip
@@ -697,7 +704,7 @@ tasks:
   claude_token_watch:
     script: nova_claude_token_watch.py
     schedule: every 1h
-    timeout: 100
+    timeout: 150
     overlap: skip
 
   # 6:30am daily operations review — reads 24h of the alert channels, separates real problems
@@ -759,7 +766,7 @@ tasks:
     script: nova_livetv.py
     args: ["whats-on"]
     schedule: every 15m
-    timeout: 120
+    timeout: 180
     overlap: skip
 
 
@@ -921,7 +928,7 @@ tasks:
     script: nova_mesh_churn_report.py
     schedule: every 30m
     args: ["--collect"]
-    timeout: 60
+    timeout: 135
     overlap: skip
 
   mesh_churn_report:
@@ -951,7 +958,7 @@ tasks:
   llm_ping:                          # 2026-09-26 Jordan: real one-token pings to every LLM node -> ranking the gateway routes by
     script: nova_llm_ping.py
     schedule: every 5m
-    timeout: 120
+    timeout: 180
     overlap: skip
 
   dashboard_look:                  # Nova reads her own Grafana dashboards with a local vision model (2026-10-01)
@@ -965,7 +972,7 @@ tasks:
   cluster_render:                  # wish #60 / queue #3113 tier 1 — Grafana nova-cluster kiosk -> PNG on the UNAS for the Apple TVs (via .7 Photos)
     script: nova_cluster_render.py
     schedule: every 5m
-    timeout: 120
+    timeout: 180
     overlap: skip
   yt_likes_poll:                   # every 15 min: new ids on Jordan's YouTube Liked list -> nova_ops.yt_likes.first_seen (= like time; YouTube exposes none). Safari session -> .6 only. Feeds liked_music.
     script: nova_liked_music.py
@@ -1037,14 +1044,14 @@ tasks:
   model_warm:                      # keep the placement in service_config(nova_model_warm.placement) RESIDENT fleet-wide — chat TTFT was 31 s of model reloads
     script: nova_model_warm.py
     schedule: every 10m
-    timeout: 900
+    timeout: 3037
     overlap: skip
 
   # ---- 2026-10-12 ----
   sdr_placement:                   # load-balance SDR tuners like the LLMs: priority targets -> best healthy tuner (nova-sdr-actuator applies on .86/.5)
     script: nova_sdr_placement.py
     schedule: every 2m
-    timeout: 120
+    timeout: 180
     overlap: skip
 
   wifi_guard:                      # judge the nova-core7 passive Wi-Fi survey vs our UniFi BSSIDs: evil twins + deauth floods
@@ -1084,7 +1091,7 @@ tasks:
     script: nova_relationship.py
     args: ["stretch"]
     schedule: cron 17 * * * *
-    timeout: 120
+    timeout: 180
     overlap: skip
   good_thing:                      # daily 19:30 — one evidenced good thing -> good_things (affect's 20:00 run reads it)
     script: nova_relationship.py
@@ -1202,13 +1209,13 @@ tasks:
     script: nova_tma1.py
     args: ["--run"]
     schedule: every 15m
-    timeout: 120
+    timeout: 180
     overlap: skip
   bottle_wake:                     # every 30 min — The Bottle: a wake packet for any gap over 6 h (gasp runs on planned outages)
     script: nova_bottle.py
     args: ["--wake"]
     schedule: every 30m
-    timeout: 120
+    timeout: 180
     overlap: skip
   pendulum:                        # every 6 h — The Pendulum: days until disks, PG and certs run out, with range and acceleration
     script: nova_disk_forecast.py
@@ -1336,13 +1343,13 @@ tasks:
     script: nova_capability_ledger.py
     args: ["--blast"]
     schedule: cron 30 7 * * 1
-    timeout: 120
+    timeout: 180
     overlap: skip
   haven_drill_watchdog:            # every 5m — no-op unless a live Haven drill is overdue; then restores the kill switch
     script: nova_haven_drill.py
     args: ["--watchdog"]
     schedule: every 5m
-    timeout: 60
+    timeout: 202
     overlap: skip
   # === Documentary organs (Jordan 2026-10-15) — need the journal on disk / Studio scheduler beat ===
   tahiti_check:                    # Endless Summer: absence claims -> searched? window vs cycle? direct checks; monthly digest
@@ -1361,7 +1368,7 @@ tasks:
     script: nova_blood_test.py
     args: ["--beat"]
     schedule: every 30m
-    timeout: 30
+    timeout: 100
     overlap: skip
   # ---- 2026-10-15 plan (60 items) ----
   chaos_proofs:                    # #46b weekly sandboxed re-proof that never-red monitors can go red
@@ -1374,7 +1381,7 @@ tasks:
     script: nova_wargame_live.py
     args: ["--watchdog"]
     schedule: every 5m
-    timeout: 120
+    timeout: 180
     overlap: skip
   weekly_retro:                    # #57 Sun 17:00 — Nova's retro -> <=3 claude_queue items; latest for the 18:00 digest
     script: nova_hotwash.py
@@ -1382,11 +1389,11 @@ tasks:
     schedule: cron 0 17 * * 0
     timeout: 300
     overlap: skip
-  media_reingest:                  # nightly: re-transcribe TV/video with LOCAL MLX Whisper — lost speech first, then most-watched; supersedes, never deletes (2026-10-15)
+  media_reingest:                  # daytime (no-fans-at-night, Jordan 2026-10-23; was nightly cron 0 23): re-transcribe TV/video with LOCAL MLX Whisper — lost speech first, then most-watched; supersedes, never deletes (2026-10-15)
     script: nova_media_reingest.py
     args: ["--scheduled", "--hours", "7"]
     enabled: false                 # 2026-10-28 Jordan: "Make the rest of the cluster sweat ... I need some available bandwidth on this machine" — the Studio stops transcribing; media_reingest_minions (Studio in exclude_nodes) does it all
-    schedule: cron 0 23 * * *
+    schedule: cron 0 9 * * *
     timeout: 25500
     overlap: skip
     gpu_heavy: true
@@ -1418,7 +1425,7 @@ tasks:
     script: nova_python_guard.py
     args: ["--repair", "--quiet"]
     schedule: every 1h
-    timeout: 600
+    timeout: 900
     overlap: skip
   work_lessons:                    # Nova's work reader: lessons, not dialogue (Jordan 2026-10-15). Fills free nova-core10 slots (2) and its own Ollama (net.digitalnoise.ollama-bulk :11436, 3 slots) concurrently, else one Studio call at a time; backs off when embeddings slow; per-tier switches service_config work_lessons/backfill_enabled_{A,B,C}
     script: nova_work_lessons.py
@@ -1430,7 +1437,7 @@ tasks:
     script: nova_beliefs.py
     args: ["--promote"]
     schedule: cron 50 */2 * * *
-    timeout: 1500
+    timeout: 3375
     overlap: skip
   belief_offer_news:               # 2026-10-30 Jordan: news lessons that >= service_config beliefs/news_min_newsrooms professional newsrooms reached independently (principle clause, nomic cos >= 0.75) are offered as belief candidates; belief_promote still decides. nova_beliefs.py --offer-news
     script: nova_beliefs.py
@@ -1466,14 +1473,14 @@ tasks:
     script: nova_lessons_daily.py
     args: ["--scheduled"]
     schedule: cron 45 17 * * *
-    timeout: 900
+    timeout: 1350
     overlap: skip
 
   top_lessons:                     # daily 06:00 — "Top 10 lessons — <date>" in /operations: best new lessons of 24h, cause, belief verdict (Jordan 2026-11-01)
     script: nova_top_lessons.py
     args: ["--scheduled"]
     schedule: cron 0 6 * * *
-    timeout: 1200
+    timeout: 2700
     overlap: skip
 
   # === Journal: corrections column + topic studies (Jordan 2026-10-19) ===
@@ -1493,6 +1500,7 @@ tasks:
 
   satire_pool:                       # 2026-10-19 (Jordan): >=100 satirical images for Nova Speaks videos (nova_satire.py SCENES x STYLES); local ComfyUI only, yields whenever anything else is queued; resumable (PG satire_images), flock single-instance; a no-op once the pool is full
     script: nova_satire.py
+    enabled: false                   # PAUSED 2026-11-13: GPU reserved for Nova Speaks shot-scan; resume when shot scan completes
     args: ["--pool", "110", "--budget", "1700"]
     schedule: every 30m
     timeout: 1800
@@ -1500,6 +1508,7 @@ tasks:
     gpu_heavy: true
   satire_articles:                   # 2026-10-19 (Jordan): one tailored satirical image inline in every new article (queued by publish_hugo -> satire_article_queue), then a 7-day backfill once the pool has 100; commits explicit paths under the journal push lock
     script: nova_satire.py
+    enabled: false                   # PAUSED 2026-11-13: GPU reserved for Nova Speaks shot-scan; resume when shot scan completes
     args: ["--articles", "--days", "7", "--limit", "10", "--budget", "1500"]
     schedule: every 30m
     timeout: 1800
@@ -1507,6 +1516,7 @@ tasks:
     gpu_heavy: true
   fix_missing_images:                # 2026-10-19 (Jordan: covers LOCAL only, OpenRouter retired for images). Backfills any journal post that published without a cover (or with a missing/0-byte one) on the Studio's ComfyUI FLUX.1 dev; explicit-path commit under the journal push lock. Big Brother also runs it hourly with a 540 s budget, but BB died 2026-10-16 (EX_CONFIG) and no cover was backfilled for 3 days — this keeps it scheduler-owned. flock = single instance.
     script: nova_fix_missing_images.py
+    enabled: true                    # RESUMED 2026-11-12 after content-safety gate v2 (5a73f18): every render screened by gemma3:27b + prompt hard block
     args: ["--limit", "12", "--budget", "1700"]
     schedule: every 3h
     timeout: 1800
