@@ -362,7 +362,7 @@ class TestRetry(unittest.TestCase):
             out = real("http://127.0.0.1:11434", "qwen3:30b-a3b", "s", "u")
         self.assertEqual(out, "TITLE: X\n\nbody")
         self.assertNotIn("num_ctx", seen.get("options", {}))
-        self.assertEqual(seen["keep_alive"], -1)
+        self.assertEqual(seen["keep_alive"], "30m")  # 2026-11-16: batch report must not pin models forever (Studio OOM)
 
     def test_games_connect_retries_with_backoff(self):
         import psycopg2

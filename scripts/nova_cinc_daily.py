@@ -174,6 +174,30 @@ def collect_inventory(node):
 
 # ── Step 2: Apply Updates ─────────────────────────────────────────────────────
 
+PINNED_DYLIB_CHECK = r"""
+B=/opt/homebrew/bin/brew
+for f in $($B list --pinned 2>/dev/null); do
+  p=$($B --prefix "$f" 2>/dev/null) || continue
+  for b in "$p"/bin/*; do
+    file "$b" 2>/dev/null | grep -q Mach-O || continue
+    otool -L "$b" 2>/dev/null | awk 'NR>1{print $1}' | grep '^/opt/homebrew' | while read -r l; do
+      [ -e "$l" ] || echo "$f: missing $(basename "$l")"
+    done
+  done
+done | sort -u
+"""
+
+
+def check_pinned_dylibs(host, user):
+    """Return ['<formula>: missing <lib>', ...] for pinned Homebrew formulae whose binaries
+    reference a /opt/homebrew dylib that no longer exists. [] if healthy or the probe failed
+    (fail-open: an unreachable host is reported elsewhere, not as a broken pin)."""
+    rc, out, _ = ssh_cmd(host, user, PINNED_DYLIB_CHECK, timeout=120)
+    if rc != 0:
+        return []
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
 def apply_updates(node):
     """Apply OS/package updates to a node."""
     name = node["node_name"]
@@ -217,7 +241,7 @@ def apply_updates(node):
         # node is pinned too: Claude Code runs on Homebrew node, and FDA grants are
         # path-specific — a node upgrade orphans the grant and breaks /Volumes/Data
         # access from the Claude session (the "fixed it, breaks next day" loop). 2026-06-28.
-        CRITICAL_PINS = "postgresql@17 pgbouncer mosquitto python@3.12 python@3.14 node"
+        CRITICAL_PINS = "postgresql@17 pgbouncer mosquitto python@3.12 python@3.14"  # node unpinned 2026-11-16: pin + nightly upgrade of its dylib deps broke it 3x (dyld). Claude Code is native, so node no longer needs a stable path for FDA.
         log(f"  {name}: Pinning critical infra ({CRITICAL_PINS}) + running brew upgrade...")
         rc, out, _ = ssh_cmd(host, user,
                              f"/opt/homebrew/bin/brew pin {CRITICAL_PINS} 2>/dev/null; "
@@ -228,6 +252,23 @@ def apply_updates(node):
             log(f"  {name}: {out.strip()[:200]}")
         else:
             log(f"  {name}: All packages up to date")
+
+        # 2026-11-16: a pinned formula is NOT protected from its dylib deps being upgraded
+        # underneath it — node broke 3x this way (dyld "Library not loaded"), llama.cpp once.
+        # After every upgrade, verify each pinned formula's Mach-O binaries still resolve their
+        # /opt/homebrew deps. Alert only (no auto-repair): python pins exist for FDA path stability.
+        broken = check_pinned_dylibs(host, user)
+        if broken:
+            msg = "; ".join(broken)[:900]
+            log(f"  {name}: BROKEN pinned formulae after brew upgrade: {msg}")
+            try:
+                import nova_notify
+                nova_notify.notify(f"CINC: pinned brew formula broken on {name}",
+                                   f"{msg}\nFix: brew unpin <f> && brew upgrade <f> && brew pin <f> "
+                                   "(check why it is pinned first).",
+                                   level="warning", category="cinc", source="nova_cinc_daily")
+            except Exception as e:  # never let alerting break the CINC run
+                log(f"  {name}: notify failed: {e}")
 
     # Record updates in PG
     if updates_applied:

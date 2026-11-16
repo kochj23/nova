@@ -1381,7 +1381,7 @@ _THINK_RE = re.compile(r"<think>.*?</think>", re.S)
 
 def ollama_chat(url: str, model: str, system: str, user: str, timeout: int = 420) -> str | None:
     """One non-streaming chat on a local ollama server (server-default context, thinking off)."""
-    body = json.dumps({"model": model, "stream": False, "think": True, "keep_alive": -1,
+    body = json.dumps({"model": model, "stream": False, "think": True, "keep_alive": "30m",
                        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
                        "options": {"temperature": 0.8}}).encode()
     req = urllib.request.Request(url.rstrip("/") + "/api/chat", data=body,
