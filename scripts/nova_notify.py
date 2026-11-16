@@ -50,6 +50,18 @@ def notify(title, body=None, level="info", category=None, source=None,
         _stable = re.sub(r"\d[\d:.,%\s/_-]*", "#", str(title)).strip()[:80]
         dedup_key = f"auto:{source}:{category or '-'}:{_stable}"
 
+    # Nightly power schedule (2026-11-16): a node that is OFF ON PURPOSE (nova_power_schedule,
+    # e.g. bedroom nodes 22:00-10:00) must not page. Downgrade, don't drop — it stays in the feed.
+    if level in ("warning", "critical"):
+        try:
+            import nova_power_schedule
+            node = nova_power_schedule.mentioned_off_node(f"{title}\n{body or ''}")
+            if node:
+                meta = dict(meta or {}, scheduled_off=node, original_level=level)
+                level = "info"
+        except Exception:
+            pass  # fail-open: alert as usual
+
     payload = {
         "source": source, "level": level, "category": category,
         "title": str(title)[:500], "body": (str(body) if body is not None else None),
