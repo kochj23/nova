@@ -284,6 +284,13 @@ tasks:
   # never rsync concurrently; exit 3 = another layer holds the lock (not a failure). Telemetry: nova-backup:<share>:
   # reverse | reverse-incr | reverse-watch. Soft deletes (#nova_deleted/<date>/, 30d purge, anti-wipe guards) exist
   # behind --soft-deletes and are OFF pending Jordan. --allow-deletes (hard delete) stays disabled everywhere.
+  synology_cycle:                      # 2026-11-16 Jordan's cold-replica flow: WoL the Synology -> full UNAS->Synology diff (both shares) -> wait for Cloud Sync (GoogleDriveBackups = the off-site copy; >=60m, then 10m quiet, 4h cap) -> poweroff. Monitors skip it while service_config synology_cycle.expected_off=true. Never powers off on a failed step, an rsync, or a RAID scrub/rebuild. GO-LIVE: after a real poweroff+WoL test, enable this AND disable nas_localdiff_reverse + nas_reverse_incremental + nova-nas-watchd.
+    enabled: false
+    script: nova_synology_cycle.py
+    schedule: cron 0 2 * * *
+    timeout: 32400
+    overlap: skip
+
   nas_localdiff_reverse:               # UNAS-primary cutover 2026-09-10: REVERSE mirror UNAS->Synology, nightly FULL diff (layer 3). Self-defers (exit 0, no writes) while the Synology RAID resyncs. Additive. 2026-10-17: records real files/bytes (was files=list size, bytes=0); skips files modified <60 s ago; exits 1 on a failed copy. The ~100k files/night it used to report were real new data (frigate NVR ~92k segments/day + pg WAL/dumps), now copied during the day by layers 1-2.
     enabled: true
     script: nova_nas_localdiff_reverse.py

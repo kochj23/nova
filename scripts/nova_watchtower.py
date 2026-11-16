@@ -182,9 +182,16 @@ def evaluate():
                 WHERE tier = ANY(%s) AND sw_port IS NOT NULL AND ip <> ''
                   AND last_online > now() - make_interval(mins => %s)
             """, (list(LIVENESS_TIERS), RECENT_ONLINE_MIN))
+            try:                                   # Synology is a cold replica: off on purpose
+                import nova_synology_power as _syn # most of the day (nova_synology_cycle.py)
+                syn_off = _syn.expected_off()
+            except Exception:
+                syn_off = False
             for r in cur.fetchall():
                 if r["mac"] in active:
                     continue                       # still online
+                if syn_off and r["ip"] == "192.168.1.11":
+                    continue                       # deliberately powered off by the cycle
                 if ping_ok(r["ip"]):
                     continue                       # answers ping despite UniFi — not down
                 problems[f"down:{r['mac']}"] = ("device_down", r["name"], r["tier"],

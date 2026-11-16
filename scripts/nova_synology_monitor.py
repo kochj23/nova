@@ -1669,6 +1669,14 @@ def main():
     parser.add_argument("--json", action="store_true", help="Full status as JSON")
     args = parser.parse_args()
 
+    try:  # cold replica: nova_synology_cycle.py powers it off on purpose most of the day
+        import nova_synology_power
+        if nova_synology_power.expected_off():
+            log("Synology deliberately powered off by nova_synology_cycle — skipping")
+            return
+    except Exception:
+        pass  # fail-open: monitor as usual
+
     try:
         with SynoSession() as session:
             if args.status:
