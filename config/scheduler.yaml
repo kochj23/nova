@@ -1529,3 +1529,9 @@ tasks:
     timeout: 1800
     overlap: skip
     gpu_heavy: true
+  gtnw_world_brief:                  # 2026-11-16: daily GTNW "world brief" from the last 7 days of RSS-fed memories (nova_memories, metadata.type gov_rss/reddit). Deterministic keyword/co-occurrence scoring, no LLM, ~3 s. Upserts games DB (192.168.1.5:5433) play.world_brief(day, brief jsonb) as role gtnw (Keychain nova-games-pg/gtnw). Contract: agent_docs scripts "GTNW world brief". --dry-run / --selftest.
+    script: nova_gtnw_world_brief.py
+    enabled: true
+    schedule: cron 35 5 * * *
+    timeout: 300
+    overlap: skip
