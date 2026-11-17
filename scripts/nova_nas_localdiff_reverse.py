@@ -704,6 +704,15 @@ def main(argv=None):
     incr = a.mode == "incremental"
     QUIET["on"] = incr
     os.makedirs(TMP, exist_ok=True)
+    # 2026-11-16: the Synology is a cold replica (nova_synology_cycle). While it is off on purpose there is
+    # nothing to copy to: a clean skip, not a failure (and no alert every 15 minutes).
+    try:
+        import nova_synology_power
+        if a.apply and not a.force and nova_synology_power.expected_off():
+            print("skipped cleanly: Synology is off on purpose (synology_cycle.expected_off)", flush=True)
+            return 0
+    except ImportError:
+        pass
     if a.apply and not a.force and synology_resyncing():
         # Clean, EXPECTED skip — not a failure. Return 0 so the scheduler doesn't treat the
         # deferral as a failing job for the (multi-day) duration of a resync.
