@@ -191,9 +191,14 @@ def write_list(path, rels):
 
 
 def synology_resyncing():
-    """Is the Synology RAID mid-resync? We write to it, so don't during a resync."""
+    """Is the Synology RAID rebuilding or degraded? We write to it, so don't while it is.
+
+    2026-11-04: only a rebuild (recovery/reshape) or a degraded array ([UUU_]) gates writes. The DSM
+    monthly data scrub shows as `resync =` (sync_action=repair) on a healthy [8/8] array and runs ~9
+    days at the throttled 10 MB/s; gating on it stopped all UNAS->Synology replication from
+    2026-11-03 00:00 (Oct scrub: Oct 3-11). md handles writes during a scrub; it only slows it down."""
     r = ssh(SYNO, "cat /proc/mdstat", 30, capture_output=True, text=True)
-    return bool(re.search(r"(resync|recovery)\s*=", r.stdout))
+    return bool(re.search(r"(recovery|reshape)\s*=", r.stdout) or re.search(r"\[U*_[U_]*\]", r.stdout))
 
 
 # ── telemetry + marker (PG) ──────────────────────────────────────────────────

@@ -119,7 +119,7 @@ def claude_env(base: dict | None = None) -> dict:
 def claude_generate(user: str, system: str | None = None,
                     model: str = "sonnet", timeout: int = 240) -> str:
     prompt = user if not system else f"[System instructions]\n{system}\n\n[Task]\n{user}"
-    cmd = [resolve_claude_bin(), "-p"]   # ClaudeCLIMissing (a FileNotFoundError) if absent
+    cmd = [resolve_claude_bin(), "-p", "--tools", "", "--strict-mcp-config", "--setting-sources", ""]   # text-gen only, no tools (2026-11-12 runaway grep); ClaudeCLIMissing (a FileNotFoundError) if absent
     if model:
         cmd += ["--model", model]
     # Prompt goes over stdin, not argv -- a big prompt (e.g. fishbowl channel churn data)

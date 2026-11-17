@@ -1211,6 +1211,9 @@ async def collect_agents(redis_client: aioredis.Redis) -> dict:
         return {name: {"status": "unknown", "error": str(e)} for name in AGENTS}
 
 
+_workspace_size_cache: dict = {}   # workspace path -> (ts, bytes)
+
+
 async def collect_multi_agents() -> dict:
     """Collect status for the new multi-agent architecture (chat, research, home).
 
@@ -1247,13 +1250,17 @@ async def collect_multi_agents() -> dict:
         workspace_chars = 0
         if workspace_path:
             wp = Path(workspace_path)
-            if wp.exists():
+            hit = _workspace_size_cache.get(workspace_path)
+            if hit and time.time() - hit[0] < 600:      # ponytail: was a full rglob every 2.5 s poll
+                workspace_chars = hit[1]
+            elif wp.exists():
                 for f in wp.rglob("*"):
                     if f.is_file():
                         try:
                             workspace_chars += f.stat().st_size
                         except OSError:
                             pass
+                _workspace_size_cache[workspace_path] = (time.time(), workspace_chars)
 
         # Count active sessions
         sessions_dir = AGENTS_DIR / agent_id / "sessions"
@@ -1659,6 +1666,7 @@ def _claude_price_for(model: str) -> tuple[float, float, float, float]:
 
 _claude_usage_cache: dict = {}
 _claude_usage_ts: float = 0
+_claude_file_cache: dict = {}   # path -> (mtime, size, {model: [in, out, cache_w, cache_r]})
 
 
 def collect_claude_usage() -> dict:
@@ -1670,50 +1678,66 @@ def collect_claude_usage() -> dict:
     """
     global _claude_usage_cache, _claude_usage_ts
     now = time.time()
-    if now - _claude_usage_ts < 60:
+    if now - _claude_usage_ts < 300:
         return _claude_usage_cache
     try:
         agg = {"sessions": 0, "input_tokens": 0, "output_tokens": 0,
                "cache_creation_tokens": 0, "cache_read_tokens": 0, "cost": 0.0}
         by_model: dict = {}
-        if CLAUDE_PROJECTS_DIR.exists():
-            for jf in CLAUDE_PROJECTS_DIR.rglob("*.jsonl"):
+        # ponytail: per-file cache keyed on (mtime, size); only new/changed transcripts are re-parsed.
+        # It used to re-parse all ~28k transcripts every 60 s on the event loop (~40-70% CPU).
+        seen = set()
+        files = list(CLAUDE_PROJECTS_DIR.rglob("*.jsonl")) if CLAUDE_PROJECTS_DIR.exists() else []
+        for jf in files:
+            key = str(jf)
+            seen.add(key)
+            try:
+                st = jf.stat()
+            except OSError:
+                continue
+            hit = _claude_file_cache.get(key)
+            if hit and hit[0] == st.st_mtime and hit[1] == st.st_size:
+                per_model = hit[2]
+            else:
+                per_model = {}
                 try:
                     with jf.open() as fh:
                         for line in fh:
+                            if '"usage"' not in line:
+                                continue
                             try:
-                                obj = _json.loads(line)
+                                msg = (_json.loads(line).get("message") or {})
                             except Exception:
                                 continue
-                            msg = obj.get("message") or {}
                             u = msg.get("usage")
-                            if not isinstance(u, dict):
-                                continue
                             model = msg.get("model", "")
-                            if not model or model == "<synthetic>":
+                            if not isinstance(u, dict) or not model or model == "<synthetic>":
                                 continue
-                            inp = u.get("input_tokens", 0) or 0
-                            out = u.get("output_tokens", 0) or 0
-                            cw = u.get("cache_creation_input_tokens", 0) or 0
-                            cr = u.get("cache_read_input_tokens", 0) or 0
-                            ri, ro, rcw, rcr = _claude_price_for(model)
-                            cost = inp * ri + out * ro + cw * rcw + cr * rcr
-                            agg["input_tokens"] += inp
-                            agg["output_tokens"] += out
-                            agg["cache_creation_tokens"] += cw
-                            agg["cache_read_tokens"] += cr
-                            agg["cost"] += cost
-                            bm = by_model.setdefault(
-                                model, {"sessions": 0, "input_tokens": 0,
-                                        "output_tokens": 0, "cost": 0.0,
-                                        "provider": "claude"})
-                            bm["input_tokens"] += inp
-                            bm["output_tokens"] += out
-                            bm["cost"] += cost
+                            t = per_model.setdefault(model, [0, 0, 0, 0])
+                            t[0] += u.get("input_tokens", 0) or 0
+                            t[1] += u.get("output_tokens", 0) or 0
+                            t[2] += u.get("cache_creation_input_tokens", 0) or 0
+                            t[3] += u.get("cache_read_input_tokens", 0) or 0
                 except Exception:
                     continue
+                _claude_file_cache[key] = (st.st_mtime, st.st_size, per_model)
+            for model, (inp, out, cw, cr) in per_model.items():
+                ri, ro, rcw, rcr = _claude_price_for(model)
+                cost = inp * ri + out * ro + cw * rcw + cr * rcr
+                agg["input_tokens"] += inp
+                agg["output_tokens"] += out
+                agg["cache_creation_tokens"] += cw
+                agg["cache_read_tokens"] += cr
+                agg["cost"] += cost
+                bm = by_model.setdefault(model, {"sessions": 0, "input_tokens": 0, "output_tokens": 0,
+                                                 "cost": 0.0, "provider": "claude"})
+                bm["input_tokens"] += inp
+                bm["output_tokens"] += out
+                bm["cost"] += cost
+        for gone in set(_claude_file_cache) - seen:
+            del _claude_file_cache[gone]
         # Count distinct transcript files as "sessions".
-        agg["sessions"] = sum(1 for _ in CLAUDE_PROJECTS_DIR.rglob("*.jsonl")) if CLAUDE_PROJECTS_DIR.exists() else 0
+        agg["sessions"] = len(files)
         result = {"status": "ok", "by_provider": {"claude": agg}, "by_model": by_model}
         _claude_usage_cache = result
         _claude_usage_ts = now
