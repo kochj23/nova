@@ -258,11 +258,38 @@ MESH_FIX = {
     "nova-core2": (SSH + ["kochj@192.168.1.86", "sudo -n systemctl restart nova-mesh-agent"]),
     "nova-core3": (SSH + ["kochj@192.168.1.5", "sudo -n systemctl restart nova-mesh-agent"]),
     "nova-core4": (SSH + ["kochj@192.168.1.250", "sudo -n launchctl kickstart -k system/net.digitalnoise.nova-mesh-agent"]),  # M1/macOS since 2026-10-27
-    "nuk": (SSH + ["kochj@192.168.1.10", "sudo -n systemctl restart nova-mesh-agent"]),
+    "nova-core5": (SSH + ["kochj@192.168.1.10", "sudo -n systemctl restart nova-mesh-agent"]),
     "tv-movies-mini": (SSH + ["kochj@192.168.1.7", "sudo -n launchctl kickstart -k system/net.digitalnoise.nova-mesh-agent"]),
     "mac-mini": (SSH + ["kochj@192.168.1.77", "launchctl kickstart -k gui/501/net.digitalnoise.nova-mesh-agent"]),  # .77 = wired (.251 is Wi-Fi); agent is a GUI LaunchAgent, not system/
     "mac-studio": ["sudo", "-n", "launchctl", "kickstart", "-k", "system/net.digitalnoise.daemon.nova-mesh-agent"],
 }
+
+
+POWER_BOOT_GRACE_MIN = 20  # same grace nova_notify gives a node after its scheduled power-on
+
+
+def scheduled_off_nodes():
+    """Nodes inside their nightly off window (service_config node_power_schedule.nodes,
+    {name: {off: "HH:MM", on: "HH:MM"}}) plus the boot grace. A node that fails to wake
+    falls out of this set after the grace and is checked/escalated normally."""
+    raw = pg("SELECT value FROM service_config WHERE service='node_power_schedule' AND key='nodes'")
+    try:
+        nodes = json.loads(raw) if raw else {}
+    except Exception as e:
+        log(f"node_power_schedule unreadable: {e}")
+        return set()
+    now = datetime.now()
+    cur = now.hour * 60 + now.minute
+    out = set()
+    for name, w in nodes.items():
+        try:
+            off = int(w["off"][:2]) * 60 + int(w["off"][3:5])
+            on = (int(w["on"][:2]) * 60 + int(w["on"][3:5]) + POWER_BOOT_GRACE_MIN) % 1440
+        except Exception:
+            continue
+        if (off <= cur < on) if off < on else (cur >= off or cur < on):
+            out.add(name)
+    return out
 
 
 def check_heartbeats():
@@ -283,9 +310,15 @@ def check_heartbeats():
         log(f"node_down_pending unreadable: {e}")
     known = [n for n in stale if n in down]
     stale = [n for n in stale if n not in down]
+    sched = [n for n in stale if n in scheduled_off_nodes()]
+    stale = [n for n in stale if n not in sched]
     if not stale:
-        record("heartbeats", "PENDING", None,
-               f"known down, awaiting physical power cycle: {','.join(known)}")
+        parts = []
+        if known:
+            parts.append(f"known down, awaiting physical power cycle: {','.join(known)}")
+        if sched:
+            parts.append(f"scheduled power-off (service_config node_power_schedule): {','.join(sched)}")
+        record("heartbeats", "PENDING" if known else "ok", None, "; ".join(parts))
         return
     for node in stale:
         if node in MESH_FIX:
