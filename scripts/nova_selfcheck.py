@@ -451,14 +451,23 @@ def mount_problem(path, want_src):
         return f"on {src} (want {want_src})"
     if "read-only" in opts:
         return f"read-only ({src})"
-    probe = os.path.join(path, ".nova_write_probe")
+    # Probe a SUBDIRECTORY, not the volume root. 2026-11-17: /Volumes/Data is an NFS export with
+    # all_squash and a 0777 root, so a root write succeeds while every subtree write is refused —
+    # this check stayed green ("mounts: ok" at 06:02, 12:02) straight through an outage that denied
+    # reads and writes all day. EACCES in a subtree we own is a server refusing us, which is the
+    # failure, so it is no longer exempted. And the export is async: without fsync we only prove the
+    # local cache accepted the bytes, which is how a half-day of work was lost that morning.
+    probe_dir = os.path.join(path, ".nova_probe")
+    probe = os.path.join(probe_dir, f"w.{os.getpid()}")
     try:
+        os.makedirs(probe_dir, exist_ok=True)
         with open(probe, "w") as f:
             f.write("ok")
+            f.flush()
+            os.fsync(f.fileno())             # force it to the server, not just the write cache
         os.remove(probe)
     except OSError as e:
-        if e.errno != errno.EACCES:          # root-owned volume root is fine; a server refusing writes is not
-            return f"write failed: {e.strerror} ({src})"
+        return f"write failed: {e.strerror} ({src})"
     return None
 
 
