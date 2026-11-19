@@ -221,6 +221,21 @@ def check_backups():
     if not bad:
         record("backups", "ok")
         return
+    # Synology (.11, the replica) known dead and awaiting a physical power cycle: the rerun cannot
+    # help and escalating every 6h is noise. Only while it is ALSO unreachable, so recovery is seen.
+    # (2026-11-18: .11 lost link on Rack15-Pro-48PoE port 7 at 2026-11-16 17:15, no DSM shutdown log.)
+    try:
+        down = set()
+        if NODE_DOWN_PENDING.exists() and time.time() - NODE_DOWN_PENDING.stat().st_mtime < 48 * 3600:
+            down = set(json.loads(NODE_DOWN_PENDING.read_text()).get("nodes", []))
+        if "synology" in down and subprocess.run(["ping", "-c", "2", "-t", "3", "192.168.1.11"],
+                                                 capture_output=True).returncode != 0:
+            record("backups", "PENDING", None,
+                   f"stale: {','.join(bad)}; Synology 192.168.1.11 is DOWN (listed in node_down_pending.json) — "
+                   "awaiting physical power cycle, no rerun/escalation. Remove 'synology' from that file once it is back.")
+            return
+    except Exception as e:
+        log(f"backups node_down check failed: {e}")
     # One rerun attempt per day — the agent now clears its own stale locks
     marker = STATE_DIR / "selfcheck_backup_rerun.ts"
     if marker.exists() and time.time() - marker.stat().st_mtime < 20 * 3600:
