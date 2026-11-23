@@ -32,6 +32,7 @@ from pathlib import Path
 
 HOME = Path.home()
 OUT_DIR = Path(os.environ.get("NOVA_SPEAKS_OUT", "/Volumes/nas/nova-fs/videos/review"))
+SHIPPED = ".speaks-shipped"   # marker nova_speaks_sweep.dispatch writes into a remote host's shipped journal copy
 VOICE = os.environ.get("NOVA_SPEAKS_VOICE", "Gracie Wise")   # XTTS speaker name, or a path to a reference .wav
 TTS_HOME = "/Volumes/Data/AI/tts"
 W, H = 1920, 1080
@@ -257,7 +258,8 @@ def lower_third(text, path):
     from PIL import Image, ImageDraw, ImageFont
     im = Image.new("RGBA", (W, H), (0, 0, 0, 0)); d = ImageDraw.Draw(im)
     f = ImageFont.truetype(FONT, 40) if FONT else ImageFont.load_default()
-    tw = d.textlength(text, font=f)
+    text = " ".join(text.split())        # a heading with a newline: textlength/anchor raise on multiline text (Pillow 11/12)
+    l, _, r, _ = d.textbbox((0, 0), text, font=f); tw = r - l
     d.rectangle([60, H - 150, 60 + tw + 60, H - 70], fill=(11, 15, 26, 190))
     d.rectangle([60, H - 150, 68, H - 70], fill=(139, 92, 246, 255))
     d.text((90, H - 110), text, fill=(202, 211, 245), font=f, anchor="lm")
@@ -366,9 +368,16 @@ def main():
 
     # images: cover + given/generated stills. Content-safety 2026-11-13: the render host's journal clone must be
     # current (a stale clone still holds pre-neutralization originals), so fast-forward it or refuse to render.
-    jp = subprocess.run(["git", "-C", f"{HOME}/nova-journal", "pull", "--ff-only", "-q", "origin", "main"], capture_output=True, text=True, timeout=180)
-    if jp.returncode != 0:
-        sys.exit(f"SAFETY: journal clone could not fast-forward ({jp.stderr.strip()[:160]}) - refusing to render with possibly stale images")
+    # Remote hosts (core2/core7/mini) hold no clone, only a sweep-shipped copy: the sweep wipes its static/images, ships
+    # the current covers from the Studio's up-to-date clone and writes SHIPPED (2026-11-23: 12 renders failed on "not a git repository").
+    if (HOME / "nova-journal" / ".git").exists():
+        jp = subprocess.run(["git", "-C", f"{HOME}/nova-journal", "pull", "--ff-only", "-q", "origin", "main"], capture_output=True, text=True, timeout=180)
+        if jp.returncode != 0:
+            sys.exit(f"SAFETY: journal clone could not fast-forward ({jp.stderr.strip()[:160]}) - refusing to render with possibly stale images")
+    elif (HOME / "nova-journal" / SHIPPED).exists():
+        log(f"journal: sweep-shipped copy ({(HOME / 'nova-journal' / SHIPPED).read_text().strip()[:80]})")
+    else:
+        sys.exit(f"SAFETY: {HOME}/nova-journal is neither a git clone nor a sweep-shipped copy ({SHIPPED}) - refusing to render with possibly stale images")
     imgs = []
     cover = glob.glob(f"{HOME}/nova-journal/static/images/{section}/{slug}.webp")
     fm_cover = re.search(r'^\s*image:\s*"?(/images/[^"\s]+)', md, re.M)       # frontmatter cover when its name != slug
@@ -454,8 +463,21 @@ def main():
     silent = str(work / "video_silent.mp4")
     subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(work / "clips.txt"), "-c", "copy", silent], check=True)
     out = OUT_DIR / f"NovaSpeaks-{slug}{('-'+a.suffix) if a.suffix else ''}.mp4"
-    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", silent, "-itsoffset", "4", "-i", narration, "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-shortest", str(out)], check=True)
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", silent, "-itsoffset", "4", "-i", narration, "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-shortest", str(work / "final.mp4")], check=True)
+    to_out(work / "final.mp4", out)
     return finish(out, total, qstats, rstats, segs, stills, subject, url, slug, a.suffix)
+
+
+def to_out(src, out):
+    """Mux on local disk, then copy to the NAS review dir with retries: ffmpeg writing straight to the CIFS share died
+    with 'Error closing file: Resource temporarily unavailable' (core2 2026-10-27, exit 245)."""
+    import shutil
+    for i in range(4):
+        try:
+            shutil.copyfile(src, str(out) + ".part"); os.replace(str(out) + ".part", out); os.remove(src); return
+        except OSError as e:
+            if i == 3: raise
+            log(f"copy to {out} failed ({e}); retry in 20 s"); time.sleep(20)
 
 
 def finish(out, total, qstats, rstats, segs, stills, subject, url, slug, suffix):
@@ -510,7 +532,8 @@ def assemble_with_clips(work, segs, songs, stills, title, url, subject, slug, su
     # audio padded with silence to the picture's length, so the end card is not cut off
     subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", silent, "-itsoffset", "4", "-i", sound,
                     "-filter_complex", "[1:a]apad[a]", "-map", "0:v", "-map", "[a]",
-                    "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", str(out)], check=True)
+                    "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", str(work / "final.mp4")], check=True)
+    to_out(work / "final.mp4", out)
     log(f"clip mode: {len(songs)} song clips, {len(segs)} paragraphs")
     return out
 

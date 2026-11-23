@@ -282,7 +282,19 @@ def dispatch(cur, hosts):
             for root in (JOURNAL, ORIGIN_CACHE):    # ORIGIN_CACHE: covers of articles taken from origin/main's tree
                 own = [root / "static/images" / section / f"{slug}.webp"] + ([root / "static" / fm.group(1).lstrip("/")] if fm else [])
                 covers += [c for c in own if c.exists() and c.name not in {x.name for x in covers}]
-            for cv in covers: copy_to(h, str(cv), f"{h['journal_dir']}/static/images/{section}/{cv.name}")
+            if h["ssh"]:
+                # a remote host has no clone, only what we ship: start its images from scratch every dispatch so nothing stale
+                # (pre-neutralization originals) survives, and only ship from a Studio clone that is level with origin/main
+                behind = _jgit("rev-list", "--count", "HEAD..origin/main").stdout.strip()
+                if behind != "0":
+                    log(f"journal clone {behind or '?'} behind origin/main — not shipping covers to {h['host']} this sweep"); continue
+                sh(h, f"rm -rf {shlex.quote(h['journal_dir'] + '/static/images')}")
+            for cv in covers:
+                root = ORIGIN_CACHE if str(cv).startswith(str(ORIGIN_CACHE)) else JOURNAL      # keep the repo-relative path
+                copy_to(h, str(cv), f"{h['journal_dir']}/{cv.relative_to(root)}")
+            if h["ssh"]:
+                head = _jgit("rev-parse", "--short", "HEAD").stdout.strip()
+                sh(h, f"echo {shlex.quote(f'shipped {time.strftime('%Y-%m-%d %H:%M')} from Studio journal {head}')} > {shlex.quote(h['journal_dir'] + '/.speaks-shipped')}")
             # satire pool (Jordan 2026-10-19): relevance + least-recently-used picks, none from the last 10 videos;
             # the renderer falls back to section covers when this is empty
             extra = ""
@@ -307,7 +319,10 @@ def dispatch(cur, hosts):
                      f"NOVA_SPEAKS_OUT={shlex.quote(h['out_dir'])} {h['env'] or ''} {shlex.quote(h['python'])} nova_speaks.py "
                      f"--article {shlex.quote(rart)} --url {shlex.quote(url)}{extra}")
             # fully detached: nothing in the background job keeps the ssh channel open, so this returns at once with the pid
-            cmd = (f"mkdir -p {shlex.quote(os.path.dirname(lp))}; nohup bash -c {shlex.quote(inner)} > {shlex.quote(lp)} 2>&1 < /dev/null & echo $!")
+            # own session (perl setsid, then exec: the pid stays the render's): on the Studio the render was in the scheduler's
+            # process group, so every scheduler restart killed it (Studio renders "died" at 2-6 h, loky semaphore warning)
+            cmd = (f"mkdir -p {shlex.quote(os.path.dirname(lp))}; nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' "
+                   f"bash -c {shlex.quote(inner)} > {shlex.quote(lp)} 2>&1 < /dev/null & echo $!")
             rc, out = sh(h, cmd, timeout=120)
             pid = int(out.strip().splitlines()[-1])
             cur.execute("UPDATE nova_speaks_renders SET status='rendering', host=%s, pid=%s, log_path=%s, started_at=now() WHERE slug=%s", (h["host"], pid, lp, slug))
