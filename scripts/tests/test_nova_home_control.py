@@ -256,3 +256,41 @@ class TestAppleTvDashboard(unittest.TestCase):          # queue #3113 tier 2
             out = hc.show_dashboard("kitchen")
         self.assertFalse(out["screensaver"])
         self.assertIn("idle time", out["note"])
+
+
+class TestNovaReel(unittest.TestCase):          # 2026-11-23: tv <room> reel [<name>] -> NovaReel deep link
+    def test_novareel_url(self):
+        self.assertEqual(hc.novareel_url(""), "novareel://play")
+        self.assertEqual(hc.novareel_url("  Cocktail   Party "), "novareel://play?reel=Cocktail%20Party")
+        self.assertEqual(hc.novareel_url("Tom & Jerry/1+1"), "novareel://play?reel=Tom%20%26%20Jerry%2F1%2B1")
+        with self.assertRaises(ValueError):
+            hc.novareel_url("x" * 61)
+
+    def test_every_tv_entity_has_an_ha_title(self):
+        self.assertEqual(set(hc.APPLE_TVS.values()), set(hc.TV_HA_TITLES))
+
+    def test_play_reel_wakes_then_launches_without_secrets_on_argv(self):
+        seen = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"] = cmd
+            return MagicMock(stdout='{"ok": true, "installed": true, "launched": "novareel://play?reel=Party"}\n', stderr="")
+        with patch.object(hc, "_ha_service", return_value=(True, 200)) as ha, patch.object(hc.time, "sleep"), \
+                patch("subprocess.run", side_effect=fake_run):
+            out = hc.play_reel("Living Room", "Party")
+        ha.assert_called_once_with("remote", "turn_on", {"entity_id": "remote.living_room"})
+        self.assertTrue(out["ok"])
+        self.assertEqual(seen["cmd"][0], hc.PYATV_PYTHON)
+        self.assertEqual(seen["cmd"][-3:], ["Living Room", "novareel://play?reel=Party", "com.kochj.NovaReel"])
+
+    def test_play_reel_reports_helper_failure(self):
+        with patch.object(hc, "_ha_service", return_value=(True, 200)), patch.object(hc.time, "sleep"), \
+                patch("subprocess.run", return_value=MagicMock(stdout="", stderr="Traceback: boom")):
+            out = hc.play_reel("office")
+        self.assertFalse(out["ok"])
+        self.assertIn("boom", out["error"])
+        self.assertEqual(out["url"], "novareel://play")
+
+    def test_play_reel_unknown_room(self):
+        with self.assertRaises(ValueError):
+            hc.play_reel("garage", "Party")

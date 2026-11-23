@@ -292,6 +292,7 @@ def _system_prompt(agent_id: str, bootstrap_docs: str) -> str:
         "meta (Nova system metrics), queue (Claude's task queue), devices (all network devices).\n"
         "- When asked to control AV devices (Bose soundbars, Onkyo receivers), use home_control.\n"
         "- When asked to show the dashboard / Nova on a TV, use show_dashboard with the room.\n"
+        "- When asked to play a reel / party videos / NovaReel on a TV, use play_reel with the room and reel name.\n"
         "- You have a shared_observations table where Claude leaves notes for you. Check it when asked about "
         "Claude's work, shared context, or what's been happening operationally.\n"
         "- STANDING TO DECLINE (Jordan, 2026-09-14): within his redlines you may decline, defer, or say "

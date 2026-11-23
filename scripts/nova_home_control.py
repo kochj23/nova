@@ -16,6 +16,7 @@ CLI usage:
   nova_home_control.py onkyo living_room zone2 volume 25
   nova_home_control.py scene movie
   nova_home_control.py scene goodnight
+  nova_home_control.py tv office reel Cocktail Party
   nova_home_control.py weather
   nova_home_control.py status
 
@@ -1126,18 +1127,118 @@ def show_dashboard(room: str) -> dict:
     return out
 
 
+# ── Apple TV: play a NovaReel reel (2026-11-23) ──
+# NovaReel (github.com/kochj23/NovaReel, bundle com.kochj.NovaReel) is Jordan's tvOS app that loops videos from the
+# TV's iCloud Photos albums full screen. It answers novareel://play?reel=<name> (saved reel) and novareel://play
+# (last used reel). pyatv 0.18 Companion launch_app opens the URL (HA's pinned pyatv 0.17 times out on tvOS 26), so
+# this shells out to /Volumes/Data/venvs/pyatv018. Companion credentials are read inside that subprocess from Home
+# Assistant's own apple_tv config entries (never put on argv, never copied anywhere). If the URL launch is refused it
+# falls back to launching the bundle id (= the reel last used on that TV).
+NOVAREEL_BUNDLE = "com.kochj.NovaReel"
+PYATV_PYTHON = "/Volumes/Data/venvs/pyatv018/bin/python"
+HA_CONFIG_ENTRIES = Path.home() / "homeassistant" / "config" / ".storage" / "core.config_entries"
+TV_HA_TITLES = {   # HA remote entity -> apple_tv config entry title (the TV's own name)
+    "remote.office": "Office",
+    "remote.kitchen_2": "Kitchen (2)",
+    "remote.living_room": "Living Room",
+    "remote.master_bedroom_4": "Master Bedroom (4)",
+    "remote.dylans_room_2": "Dylan’s Room (2)",
+    "remote.outside": "Outside",
+}
+REEL_NAME_MAX = 60
+
+# Runs under pyatv 0.18. argv: <ha config entries path> <entry title> <url> <bundle id>. Prints one JSON line.
+_ATV_LAUNCH_HELPER = r'''
+import asyncio, json, sys
+import pyatv
+from pyatv.const import Protocol
+path, title, url, bundle = sys.argv[1:5]
+def out(**kw):
+    print(json.dumps(kw)); sys.exit(0)
+try:
+    entries = json.load(open(path))["data"]["entries"]
+    entry = next(e for e in entries if e["domain"] == "apple_tv" and e["title"] == title)
+except Exception as e:
+    out(ok=False, error=f"no Home Assistant apple_tv entry for {title}: {e}")
+async def main():
+    loop = asyncio.get_running_loop()
+    confs = await pyatv.scan(loop, hosts=[entry["data"]["address"]], timeout=5)
+    if not confs:
+        out(ok=False, error=f"{title} did not answer at {entry['data']['address']}")
+    conf = confs[0]
+    for proto, cred in (entry["data"].get("credentials") or {}).items():
+        if cred:
+            conf.set_credentials(Protocol(int(proto)), cred)
+    atv = await pyatv.connect(conf, loop)
+    try:
+        apps = await asyncio.wait_for(atv.apps.app_list(), 10)
+        if not any(a.identifier == bundle for a in apps):
+            out(ok=False, installed=False, error=f"NovaReel ({bundle}) is not installed on {title}")
+        try:
+            await asyncio.wait_for(atv.apps.launch_app(url), 8)
+            out(ok=True, installed=True, launched=url)
+        except Exception as e:
+            await asyncio.wait_for(atv.apps.launch_app(bundle), 8)
+            out(ok=True, installed=True, launched=bundle, note=f"deep link refused ({type(e).__name__}); opened the app, which resumes its last reel")
+    finally:
+        atv.close()
+try:
+    asyncio.run(main())
+except SystemExit:
+    raise
+except Exception as e:
+    out(ok=False, error=f"{type(e).__name__}: {e}")
+'''
+
+
+def novareel_url(reel: str = "") -> str:
+    """Pure: reel name -> NovaReel deep link (blank = resume the last used reel)."""
+    from urllib.parse import quote
+    name = " ".join((reel or "").split())
+    if len(name) > REEL_NAME_MAX:
+        raise ValueError(f"reel name longer than {REEL_NAME_MAX} characters")
+    return f"novareel://play?reel={quote(name, safe='')}" if name else "novareel://play"
+
+
+def play_reel(room: str, reel: str = "") -> dict:
+    """Wake the room's Apple TV and open NovaReel on a saved reel (or its last used reel)."""
+    import json
+    import subprocess
+    ent = tv_entity(room)
+    url = novareel_url(reel)
+    title = TV_HA_TITLES[ent]
+    ok_on, _ = _ha_service("remote", "turn_on", {"entity_id": ent})
+    time.sleep(2)
+    out = {"room": room, "entity": ent, "tv": title, "url": url, "woke": ok_on}
+    try:
+        r = subprocess.run([PYATV_PYTHON, "-I", "-c", _ATV_LAUNCH_HELPER, str(HA_CONFIG_ENTRIES), title, url,
+                            NOVAREEL_BUNDLE], capture_output=True, text=True, timeout=22)
+        line = (r.stdout.strip().splitlines() or [""])[-1]
+        out.update(json.loads(line) if line.startswith("{") else
+                   {"ok": False, "error": (r.stderr.strip() or "pyatv helper printed nothing")[-300:]})
+    except (OSError, subprocess.TimeoutExpired) as e:
+        out.update(ok=False, error=f"pyatv launch failed: {e}")
+    return out
+
+
 def _cli_tv(args: list) -> None:
-    """Handle: tv <room> dashboard"""
-    if len(args) < 2 or args[1].lower() not in ("dashboard", "show_dashboard"):
-        print(f"Usage: tv <room> dashboard   rooms: {', '.join(sorted(set(APPLE_TVS)))}")
+    """Handle: tv <room> dashboard | tv <room> reel [<reel name>]"""
+    action = args[1].lower() if len(args) >= 2 else ""
+    if action not in ("dashboard", "show_dashboard", "reel", "play_reel"):
+        print(f"Usage: tv <room> dashboard | tv <room> reel [<reel name>]   rooms: {', '.join(sorted(set(APPLE_TVS)))}")
         sys.exit(1)
     try:
-        result = show_dashboard(args[0])
+        if action in ("reel", "play_reel"):
+            result = play_reel(args[0], " ".join(args[2:]))
+            ok = result.get("ok", False)
+        else:
+            result = show_dashboard(args[0])
+            ok = result["woke"]
     except ValueError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
     print(_format_result(result))
-    sys.exit(0 if result["woke"] else 1)
+    sys.exit(0 if ok else 1)
 
 
 def _format_result(result) -> str:
@@ -1157,6 +1258,7 @@ def main():
         print("  nova_home_control.py onkyo <device> <command> [value]")
         print("  nova_home_control.py scene <name>")
         print("  nova_home_control.py tv <room> dashboard   (Apple TV: show the Nova Cluster dashboard)")
+        print("  nova_home_control.py tv <room> reel [<reel name>]   (Apple TV: play a NovaReel reel)")
         print("  nova_home_control.py weather")
         print("  nova_home_control.py status")
         print("")

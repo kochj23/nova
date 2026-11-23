@@ -222,6 +222,18 @@ TOOL_REGISTRY: dict[str, dict] = {
         },
         "required": ["room"],
     },
+    "play_reel": {
+        "description": "Play a NovaReel video reel on a room's Apple TV (Jordan's tvOS app that loops videos from "
+                       "the TV's iCloud Photos albums full screen, e.g. for a cocktail party). Wakes the TV and "
+                       "opens the saved reel by name; with no reel it resumes the last one played on that TV. Rooms: "
+                       "office, kitchen, living_room, master_bedroom, dylans_room, outside. Use for 'put the cocktail "
+                       "party reel on in the living room', 'start NovaReel in the kitchen'.",
+        "parameters": {
+            "room": {"type": "string", "description": "Room of the Apple TV: office, kitchen, living_room, master_bedroom, dylans_room, outside"},
+            "reel": {"type": "string", "description": "Saved reel name, e.g. 'Cocktail Party' (optional: blank = last used reel)"},
+        },
+        "required": ["room"],
+    },
     "set_dial": {
         "description": "See or change Nova's personality dials (humor, snark, proactivity, bluntness, profanity, verbosity). Use when Jordan says e.g. 'set humor to 60', 'profanity off', 'show dials', 'reset snark'.",
         "parameters": {
@@ -338,7 +350,7 @@ _TOOL_TOPIC = {
     "scheduler_trigger": r"\b(run|trigger|kick|start|fire|schedule|task|job|rerun|re-run)\b",
     "memory_quality": r"\b(clean|cleanup|clean up|quality|purge|dedupe|tidy)\b",
     "set_dial": r"\b(dial|dials|humor|humour|snark|snarky|proactiv\w*|blunt\w*|profan\w*|swear\w*|verbos\w*|wordy|funn\w*)\b",
-    "run_script": r"\b(run|script|execute|exec|restart|start|stop|kill|check|scene|volume|mute|unmute|soundbar|speaker|receiver|tv|dashboard|music|movie|goodnight|bedtime|turn|power|play)\b",
+    "run_script": r"\b(run|script|execute|exec|restart|start|stop|kill|check|scene|volume|mute|unmute|soundbar|speaker|receiver|tv|dashboard|reel|novareel|music|movie|goodnight|bedtime|turn|power|play)\b",
 }
 _ASK_RE = re.compile(
     r"\b(please|pls|can you|could you|would you|will you|go ahead|do it|make it so|i need you to|i want you to|"
@@ -418,6 +430,13 @@ async def dispatch_tool(ctx: GatewayContext, tool_name: str, tool_params: dict,
         if not room:
             return "[error: room required]"
         tool_name, tool_params = "run_script", {"script": "nova_home_control.py", "args": ["tv", room, "dashboard"]}
+    if tool_name == "play_reel":                # NovaReel: same nova_home_control.py run_script path as show_dashboard
+        room = re.sub(r"[^a-z_]", "", (tool_params.get("room") or "").strip().lower().replace(" ", "_"))
+        if not room:
+            return "[error: room required]"
+        reel = " ".join(re.sub(r"[^\w '&+.\-\u2019]", "", str(tool_params.get("reel") or "")).split())[:60]
+        tool_name, tool_params = "run_script", {"script": "nova_home_control.py",
+                                                "args": ["tv", room, "reel"] + ([reel] if reel else [])}
     if tool_name == "home_control":
         try:
             args = home_control_args(tool_params.get("device", ""), tool_params.get("action", ""))

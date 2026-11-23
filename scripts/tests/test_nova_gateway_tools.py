@@ -256,6 +256,29 @@ class TestRulePath20261008(unittest.TestCase):
                                                                       "args": ["tv", "office", "power"]}))
         self.assertTrue(_run(tl.dispatch_tool(_ctx(), "show_dashboard", {"room": ""})).startswith("[error"))
 
+    def test_play_reel_is_run_script_tv_reel_and_matches_its_notify_rule(self):   # NovaReel 2026-11-23
+        import nova_gateway.autonomy as au
+        seen = []
+
+        async def check(pool, tool, channel, params):
+            seen.append((tool, params)); return "auto"
+        ctx = _ctx(); ctx.pg_pool = object()
+        with mock.patch("nova_gateway.autonomy.check_autonomy", check), \
+                mock.patch.object(tl, "cell_gate", return_value=("allow", "")), \
+                mock.patch.object(tl, "_tool_run_script", mock.AsyncMock(return_value="ran")):
+            _run(tl.dispatch_tool(ctx, "play_reel", {"room": "Living Room", "reel": "Cocktail Party; rm -rf $(x)"}))
+            _run(tl.dispatch_tool(ctx, "play_reel", {"room": "kitchen"}))
+        self.assertEqual(seen[0], ("run_script", {"script": "nova_home_control.py",
+                                                  "args": ["tv", "living_room", "reel", "Cocktail Party rm -rf x"]}))
+        self.assertEqual(seen[1][1]["args"], ["tv", "kitchen", "reel"])
+        pat = r'^\{"args": \["tv", "[a-z_]+", "reel"(, "[\w \'&+.\-\u2019]{1,60}")?\], "script": "nova_home_control\.py"\}$'
+        with mock.patch.object(au, "_cache", {("__scoped__", "run_script"): [("*", re.compile(pat), "notify", 10)]}):
+            for args in (["tv", "office", "reel"], ["tv", "office", "reel", "Cocktail Party"]):
+                self.assertEqual(au.scoped_level("run_script", "slack", {"script": "nova_home_control.py", "args": args}), "notify")
+            self.assertIsNone(au.scoped_level("run_script", "slack", {"script": "nova_home_control.py",
+                                                                      "args": ["tv", "office", "reel", 'a"], "x": "']}))
+        self.assertTrue(_run(tl.dispatch_tool(_ctx(), "play_reel", {"room": ""})).startswith("[error"))
+
     def test_only_readonly_extended_tools_can_merge(self):
         reg = {}
         with mock.patch.object(tl.os, "access", return_value=True):
