@@ -226,7 +226,10 @@ def check_backups():
     # (2026-11-18: .11 lost link on Rack15-Pro-48PoE port 7 at 2026-11-16 17:15, no DSM shutdown log.)
     try:
         down = set()
-        if NODE_DOWN_PENDING.exists() and time.time() - NODE_DOWN_PENDING.stat().st_mtime < 48 * 3600:
+        # No 48h expiry here (unlike heartbeats): the live ping below is the guard, so the entry
+        # suppresses only while .11 is really down. 2026-11-22: the 48h expiry re-escalated a still-dead
+        # Synology every 2 days (11-20, 11-22) with a misleading "telemetry" hint.
+        if NODE_DOWN_PENDING.exists():
             down = set(json.loads(NODE_DOWN_PENDING.read_text()).get("nodes", []))
         if "synology" in down and subprocess.run(["ping", "-c", "2", "-t", "3", "192.168.1.11"],
                                                  capture_output=True).returncode != 0:
