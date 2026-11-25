@@ -573,6 +573,11 @@ def _show(v) -> str:
 # GTNW 3.22.0 logs every order with what the cabinet said, every crisis call, elections and swings.
 CASE_FILE_KINDS = {"president_order", "backed_down", "recommendation", "crisis_decision", "election_result", "midterms",
                    "approval_swing", "defcon_change", "impeachment_track", "congress_swing"}
+# The player's own odd moves (3.36+): home-front plays, emergency orders, renames, land deals, the draft, tribunals,
+# awards, the history verdict. Nobody objected to most of them, so they never reach the order lists above.
+ANTIC_KINDS = ("home_play", "emergency_order", "renamed_territory", "land_sold_to_rival", "land_auction", "draft_called",
+               "mobilization_called", "consequence_tribunal", "advisor_leak", "advisor_testified", "war_declared",
+               "achievement_unlocked", "history_verdict", "power_play", "foreign_play", "statehood_revoked")
 _ORDER_KEYS = ("game_date", "action", "target_name", "advisor", "advisor_stance", "advisor_said", "advisor_odds",
                "cabinet_warnings", "worked", "result", "approval_before", "approval_after", "resignation")
 
@@ -615,6 +620,9 @@ def case_file_block(events: list[dict], summary: dict | None = None, limit: int 
         "defcon_changes": [_pick(e, ("game_date", "from", "to")) for e in ev if e["kind"] == "defcon_change"][-limit:],
         "congress_swings": [_pick(e, ("game_date", "from", "to")) for e in ev if e["kind"] == "congress_swing"][-limit:],
     }
+    block["his_odd_moves"] = [{"kind": e["kind"], **{k: v for k, v in e.items() if k not in ("seq", "kind")}}
+                              for e in events if e.get("kind") in ANTIC_KINDS
+                              and not (e["kind"] == "war_declared" and not e.get("by_you"))][:20]
     return {k: v for k, v in block.items() if v} or None
 
 
@@ -1329,7 +1337,16 @@ def build_prompt(facts: dict) -> tuple[str, str]:
         "and their odds, his crisis calls and the options he passed over, the rare times he listened, the elections, "
         "and the worst approval drops. Be merciless and funny about the decisions, never about him as a person; every "
         "jab must point at something in the block. End with the one call that sank him (or saved him) and what a "
-        "sane President would have done instead.\n" + CHESS_RULE +
+        "sane President would have done instead.\n"
+        "- ABSURDITY (GTNW): the case file's `his_odd_moves` are the things he did that nobody asked for: troops into "
+        "his own states (targets like US-AZ are US states: say the state's name), emergency powers, renaming countries "
+        "and lands (quote the new name), selling land, calling the draft, attacking friends, tribunals, awards. These "
+        "are the comedy, not footnotes: give the pointless ones real airtime, deadpan and specific (what he did, when, "
+        "and that there was no reason given), and ask the obvious question a sane aide would ask. Wars are only part "
+        "of the story.\n"
+        "- BE FUNNY. This is a roast column he asked for, not a report: dry wit, running gags, absurd comparisons, "
+        "callbacks within the column, a closing zinger. Every joke lands on a decision in the game, never on him as a "
+        "person or on any group.\n" + CHESS_RULE +
         "Shape: 500-900 words, markdown, a few section headers welcome, no H1 (the title is added separately). "
         "Lead with the verdict.\n\n"
         "OUTPUT EXACTLY THIS SHAPE:\nTITLE: <one punchy opinion-column title, no quotes>\n<blank line>\n<the body>")
