@@ -1346,7 +1346,7 @@ def build_prompt(facts: dict) -> tuple[str, str]:
         "of the story.\n"
         "- BE FUNNY. This is a roast column he asked for, not a report: dry wit, running gags, absurd comparisons, "
         "callbacks within the column, a closing zinger. Every joke lands on a decision in the game, never on him as a "
-        "person or on any group.\n" + CHESS_RULE +
+        "person or on any group. Never use religion, faith, clergy or religious words as a punchline, even when he plays a religious state such as Vatican City: the jokes stay on his decisions as head of state.\n" + CHESS_RULE +
         "Shape: 500-900 words, markdown, a few section headers welcome, no H1 (the title is added separately). "
         "Lead with the verdict.\n\n"
         "OUTPUT EXACTLY THIS SHAPE:\nTITLE: <one punchy opinion-column title, no quotes>\n<blank line>\n<the body>")
