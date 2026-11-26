@@ -577,7 +577,12 @@ CASE_FILE_KINDS = {"president_order", "backed_down", "recommendation", "crisis_d
 # awards, the history verdict. Nobody objected to most of them, so they never reach the order lists above.
 ANTIC_KINDS = ("home_play", "emergency_order", "renamed_territory", "land_sold_to_rival", "land_auction", "draft_called",
                "mobilization_called", "consequence_tribunal", "advisor_leak", "advisor_testified", "war_declared",
-               "achievement_unlocked", "history_verdict", "power_play", "foreign_play", "statehood_revoked")
+               "achievement_unlocked", "history_verdict", "power_play", "foreign_play", "statehood_revoked",
+               # GTNW 3.37: the Holy See's statecraft when he leads Vatican City (diplomacy and humanitarian work only)
+               "holy_see_mediation", "holy_see_peace_talks", "holy_see_back_channel", "holy_see_appeal", "holy_see_envoys",
+               "holy_see_teaching", "holy_see_treaty", "holy_see_humanitarian", "holy_see_visit", "holy_see_interfaith",
+               "holy_see_debt_relief", "holy_see_relations", "holy_see_un_address", "holy_see_resignation",
+               "holy_see_war_held", "holy_see_reform")
 _ORDER_KEYS = ("game_date", "action", "target_name", "advisor", "advisor_stance", "advisor_said", "advisor_odds",
                "cabinet_warnings", "worked", "result", "approval_before", "approval_after", "resignation")
 
